@@ -138,16 +138,16 @@ __kernel void k_sw(const __global numtyp4 *restrict x_,
                    const __global int *restrict map,
                    const __global int *restrict elem2param,
                    const int nelements,
-                   const __global int * dev_nbor, 
-                   const __global int * dev_packed, 
-                   __global acctyp4 *restrict ans, 
-                   __global acctyp *restrict engv, 
-                   const int eflag, const int vflag, const int inum, 
+                   const __global int * dev_nbor,
+                   const __global int * dev_packed,
+                   __global acctyp4 *restrict ans,
+                   __global acctyp *restrict engv,
+                   const int eflag, const int vflag, const int inum,
                    const int nbor_pitch, const int t_per_atom) {
   __local int n_stride;
   int tid, ii, offset;
   atom_info(t_per_atom,ii,tid,offset);
-  
+
   acctyp energy=(acctyp)0;
   acctyp4 f;
   f.x=(acctyp)0; f.y=(acctyp)0; f.z=(acctyp)0;
@@ -166,9 +166,9 @@ __kernel void k_sw(const __global numtyp4 *restrict x_,
     numtyp4 ix; fetch4(ix,i,pos_tex); //x_[i];
     int itype=ix.w;
     itype=map[itype];
-    
+
     for ( ; nbor<nbor_end; nbor+=n_stride) {
-  
+
       int j=dev_packed[nbor];
       j &= NEIGHMASK;
 
@@ -183,7 +183,7 @@ __kernel void k_sw(const __global numtyp4 *restrict x_,
       numtyp dely = ix.y-jx.y;
       numtyp delz = ix.z-jx.z;
       numtyp rsq = delx*delx+dely*dely+delz*delz;
-        
+
       if (rsq<sw3[ijparam].y) { // sw_cutsq = sw3[ijparam].y
         numtyp4 sw1_ijparam; fetch4(sw1_ijparam,ijparam,sw1_tex);
         numtyp sw_epsilon=sw1_ijparam.x;
@@ -218,13 +218,13 @@ __kernel void k_sw(const __global numtyp4 *restrict x_,
         numtyp force = (pre_sw_c1*rp-pre_sw_c2*rq +
                        (pre_sw_c3*rp-pre_sw_c4*rq) * rainv)*
                        expsrainv*ucl_recip(rsq);
-      
+
         f.x+=delx*force;
         f.y+=dely*force;
         f.z+=delz*force;
 
-        if (eflag>0) 
-          energy+=(pre_sw_c5*rp - pre_sw_c6*rq) * expsrainv; 
+        if (eflag>0)
+          energy+=(pre_sw_c5*rp - pre_sw_c6*rq) * expsrainv;
 
         if (vflag>0) {
           virial[0] += delx*delx*force;
@@ -329,19 +329,19 @@ __kernel void k_sw(const __global numtyp4 *restrict x_,
   fjz = delr1z*(frad1+csfac1)-delr2z*facang12;                               \
 }
 
-__kernel void k_sw_three_center(const __global numtyp4 *restrict x_, 
+__kernel void k_sw_three_center(const __global numtyp4 *restrict x_,
                                 const __global numtyp4 *restrict sw1,
                                 const __global numtyp4 *restrict sw2,
                                 const __global numtyp4 *restrict sw3,
                                 const __global int *restrict map,
                                 const __global int *restrict elem2param,
                                 const int nelements,
-                                const __global int * dev_nbor, 
-                                const __global int * dev_packed, 
-                                __global acctyp4 *restrict ans, 
-                                __global acctyp *restrict engv, 
-                                const int eflag, const int vflag, 
-                                const int inum,  const int nbor_pitch, 
+                                const __global int * dev_nbor,
+                                const __global int * dev_packed,
+                                __global acctyp4 *restrict ans,
+                                __global acctyp *restrict engv,
+                                const int eflag, const int vflag,
+                                const int inum,  const int nbor_pitch,
                                 const int t_per_atom, const int evatom) {
   __local int tpa_sq, n_stride;
   tpa_sq=fast_mul(t_per_atom,t_per_atom);
@@ -351,7 +351,7 @@ __kernel void k_sw_three_center(const __global numtyp4 *restrict x_,
 
   int tid, ii, offset;
   atom_info(tpa_sq,ii,tid,offset);
-  
+
   acctyp energy=(acctyp)0;
   acctyp4 f;
   f.x=(acctyp)0; f.y=(acctyp)0; f.z=(acctyp)0;
@@ -360,7 +360,7 @@ __kernel void k_sw_three_center(const __global numtyp4 *restrict x_,
     virial[i]=(acctyp)0;
 
   __syncthreads();
-  
+
   if (ii<inum) {
     int i, numj, nbor_j, nbor_end;
 
@@ -370,11 +370,11 @@ __kernel void k_sw_three_center(const __global numtyp4 *restrict x_,
     int offset_k=tid & (t_per_atom-1);
 
     numtyp4 ix; fetch4(ix,i,pos_tex); //x_[i];
-    int itype=ix.w; 
+    int itype=ix.w;
     itype=map[itype];
 
     for ( ; nbor_j<nbor_end; nbor_j+=n_stride) {
-  
+
       int j=dev_packed[nbor_j];
       j &= NEIGHMASK;
 
@@ -439,7 +439,7 @@ __kernel void k_sw_three_center(const __global numtyp4 *restrict x_,
           f.x -= fjx + fkx;
           f.y -= fjy + fky;
           f.z -= fjz + fkz;
-        }  
+        }
       }
     } // for nbor
 
@@ -458,20 +458,21 @@ __kernel void k_sw_three_center(const __global numtyp4 *restrict x_,
   } // if ii
 }
 
-__kernel void k_sw_three_end(const __global numtyp4 *restrict x_, 
+__kernel void k_sw_three_end(const __global numtyp4 *restrict x_,
                              const __global numtyp4 *restrict sw1,
                              const __global numtyp4 *restrict sw2,
                              const __global numtyp4 *restrict sw3,
                              const __global int *restrict map,
                              const __global int *restrict elem2param,
                              const int nelements,
-                             const __global int * dev_nbor, 
-                             const __global int * dev_packed, 
-                             __global acctyp4 *restrict ans, 
-                             __global acctyp *restrict engv, 
-                             const int eflag, const int vflag, 
-                             const int inum,  const int nbor_pitch, 
-                             const int t_per_atom) {
+                             const __global int * dev_nbor,
+                             const __global int * dev_packed,
+                             const __global int * dev_acc,
+                             __global acctyp4 *restrict ans,
+                             __global acctyp *restrict engv,
+                             const int eflag, const int vflag,
+                             const int inum,  const int nbor_pitch,
+                             const int t_per_atom, const int gpu_nbor) {
   __local int tpa_sq, n_stride;
   tpa_sq=fast_mul(t_per_atom,t_per_atom);
   numtyp sw_epsilon, sw_sigma, sw_lambda, sw_gamma;
@@ -480,7 +481,7 @@ __kernel void k_sw_three_end(const __global numtyp4 *restrict x_,
 
   int tid, ii, offset;
   atom_info(tpa_sq,ii,tid,offset);
-  
+
   acctyp energy=(acctyp)0;
   acctyp4 f;
   f.x=(acctyp)0; f.y=(acctyp)0; f.z=(acctyp)0;
@@ -489,7 +490,7 @@ __kernel void k_sw_three_end(const __global numtyp4 *restrict x_,
     virial[i]=(acctyp)0;
 
   __syncthreads();
-  
+
   if (ii<inum) {
     int i, numj, nbor_j, nbor_end, k_end;
 
@@ -527,13 +528,17 @@ __kernel void k_sw_three_end(const __global numtyp4 *restrict x_,
       sw_sigma_gamma_ij=sw1_ijparam.y*sw1_ijparam.w; //sw_sigma*sw_gamma;
       sw_cut_ij=sw3_ijparam.x;
 
-      int nbor_k=j+nbor_pitch;
-      int numk=dev_nbor[nbor_k]; 
+      int nbor_k,numk;
       if (dev_nbor==dev_packed) {
+        if (gpu_nbor) nbor_k=j+nbor_pitch;
+        else nbor_k=dev_acc[j]+nbor_pitch;
+        numk=dev_nbor[nbor_k];
         nbor_k+=nbor_pitch+fast_mul(j,t_per_atom-1);
         k_end=nbor_k+fast_mul(numk/t_per_atom,n_stride)+(numk & (t_per_atom-1));
         nbor_k+=offset_k;
       } else {
+        nbor_k=dev_acc[j]+nbor_pitch;
+        numk=dev_nbor[nbor_k];
         nbor_k+=nbor_pitch;
         nbor_k=dev_nbor[nbor_k];
         k_end=nbor_k+numk;
@@ -605,13 +610,14 @@ __kernel void k_sw_three_end_vatom(const __global numtyp4 *restrict x_,
                              const __global int *restrict map,
                              const __global int *restrict elem2param,
                              const int nelements,
-                             const __global int * dev_nbor, 
-                             const __global int * dev_packed, 
-                             __global acctyp4 *restrict ans, 
-                             __global acctyp *restrict engv, 
-                             const int eflag, const int vflag, 
-                             const int inum,  const int nbor_pitch, 
-                             const int t_per_atom) {
+                             const __global int * dev_nbor,
+                             const __global int * dev_packed,
+                             const __global int * dev_acc,
+                             __global acctyp4 *restrict ans,
+                             __global acctyp *restrict engv,
+                             const int eflag, const int vflag,
+                             const int inum,  const int nbor_pitch,
+                             const int t_per_atom, const int gpu_nbor) {
   __local int tpa_sq, n_stride;
   tpa_sq=fast_mul(t_per_atom,t_per_atom);
   numtyp sw_epsilon, sw_sigma, sw_lambda, sw_gamma;
@@ -620,7 +626,7 @@ __kernel void k_sw_three_end_vatom(const __global numtyp4 *restrict x_,
 
   int tid, ii, offset;
   atom_info(tpa_sq,ii,tid,offset);
-  
+
   acctyp energy=(acctyp)0;
   acctyp4 f;
   f.x=(acctyp)0; f.y=(acctyp)0; f.z=(acctyp)0;
@@ -629,7 +635,7 @@ __kernel void k_sw_three_end_vatom(const __global numtyp4 *restrict x_,
     virial[i]=(acctyp)0;
 
   __syncthreads();
-  
+
   if (ii<inum) {
     int i, numj, nbor_j, nbor_end, k_end;
 
@@ -666,14 +672,18 @@ __kernel void k_sw_three_end_vatom(const __global numtyp4 *restrict x_,
       sw_gamma=sw1_ijparam.w;
       sw_sigma_gamma_ij=sw1_ijparam.y*sw1_ijparam.w; //sw_sigma*sw_gamma;
       sw_cut_ij=sw3_ijparam.x;
-        
-      int nbor_k=j+nbor_pitch;
-      int numk=dev_nbor[nbor_k]; 
+
+      int nbor_k,numk;
       if (dev_nbor==dev_packed) {
+        if (gpu_nbor) nbor_k=j+nbor_pitch;
+        else nbor_k=dev_acc[j]+nbor_pitch;
+        numk=dev_nbor[nbor_k];
         nbor_k+=nbor_pitch+fast_mul(j,t_per_atom-1);
         k_end=nbor_k+fast_mul(numk/t_per_atom,n_stride)+(numk & (t_per_atom-1));
         nbor_k+=offset_k;
       } else {
+        nbor_k=dev_acc[j]+nbor_pitch;
+        numk=dev_nbor[nbor_k];
         nbor_k+=nbor_pitch;
         nbor_k=dev_nbor[nbor_k];
         k_end=nbor_k+numk;
