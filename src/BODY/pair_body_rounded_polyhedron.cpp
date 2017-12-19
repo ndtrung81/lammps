@@ -733,9 +733,10 @@ void PairBodyRoundedPolyhedron::sphere_against_face(int ibody, int jbody,
 
   for (ni = 0; ni < nfi; ni++) {
 
-    npi1 = static_cast<int>(face[iffirst+ni][0]);
-    npi2 = static_cast<int>(face[iffirst+ni][1]);
-    npi3 = static_cast<int>(face[iffirst+ni][2]);
+    // index 0 is reserved for face type
+    npi1 = static_cast<int>(face[iffirst+ni][1]);
+    npi2 = static_cast<int>(face[iffirst+ni][2]);
+    npi3 = static_cast<int>(face[iffirst+ni][3]);
 
     // compute the space-fixed coordinates for the vertices of the face
 
@@ -1181,9 +1182,10 @@ int PairBodyRoundedPolyhedron::interaction_face_to_edge(int ibody,
 
   ifirst = dfirst[ibody];
   iffirst = facfirst[ibody];
-  npi1 = static_cast<int>(face[iffirst+face_index][0]);
-  npi2 = static_cast<int>(face[iffirst+face_index][1]);
-  npi3 = static_cast<int>(face[iffirst+face_index][2]);
+  // index 0 is reserved for face type
+  npi1 = static_cast<int>(face[iffirst+face_index][1]);
+  npi2 = static_cast<int>(face[iffirst+face_index][2]);
+  npi3 = static_cast<int>(face[iffirst+face_index][3]);
 
   // compute the space-fixed coordinates for the vertices of the face
 
@@ -1895,16 +1897,17 @@ void PairBodyRoundedPolyhedron::inside_polygon(int ibody, int face_index,
 
   ifirst = dfirst[ibody];
   iffirst = facfirst[ibody];
-  anglesum1 = anglesum2 = 0;;
-  for (i = 0; i < MAX_FACE_SIZE; i++) {
+  anglesum1 = anglesum2 = 0;
+  // index 0 is reserved for face type
+  for (i = 1; i < MAX_FACE_SIZE; i++) {
     npi1 = static_cast<int>(face[iffirst+face_index][i]);
     if (npi1 < 0) break;
     n = i + 1;
     if (n <= MAX_FACE_SIZE - 1) {
       npi2 = static_cast<int>(face[iffirst+face_index][n]);
-      if (npi2 < 0) npi2 = static_cast<int>(face[iffirst+face_index][0]);
+      if (npi2 < 0) npi2 = static_cast<int>(face[iffirst+face_index][1]);
     } else {
-      npi2 = static_cast<int>(face[iffirst+face_index][0]);
+      npi2 = static_cast<int>(face[iffirst+face_index][1]);
     }
 
     xi1[0] = xmi[0] + discrete[ifirst+npi1][0];
