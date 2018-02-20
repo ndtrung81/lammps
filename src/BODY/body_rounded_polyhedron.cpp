@@ -28,7 +28,7 @@
 using namespace LAMMPS_NS;
 
 #define EPSILON 1.0e-7
-#define MAX_FACE_SIZE 4  // maximum number of vertices per face (for now)
+#define MAX_FACE_SIZE 5  // maximum number of vertices per face (for now) + 1
 
 enum{SPHERE,LINE,TRI};       // also in DumpImage
 
