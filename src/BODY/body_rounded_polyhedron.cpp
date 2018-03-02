@@ -28,7 +28,8 @@
 using namespace LAMMPS_NS;
 
 #define EPSILON 1.0e-7
-#define MAX_FACE_SIZE 5  // maximum number of vertices per face (for now) + 1
+#define MAX_EDGE_SIZE 3  // number of vertices per edge + 1 for type
+#define MAX_FACE_SIZE 5  // maximum number of vertices per face (for now) + 1 for type
 
 enum{SPHERE,LINE,TRI};       // also in DumpImage
 
@@ -54,13 +55,13 @@ BodyRoundedPolyhedron::BodyRoundedPolyhedron(LAMMPS *lmp, int narg, char **arg) 
   // 1 double for the enclosing radius
   // 1 double for the rounded radius
 
-  size_border = 1 + 3*nmax + 2*nmax + MAX_FACE_SIZE*nmax + 1 + 1;
+  size_border = 1 + 3*nmax + MAX_EDGE_SIZE*nmax + MAX_FACE_SIZE*nmax + 1 + 1;
 
   // NOTE: need to set appropriate nnbin param for dcp
 
   icp = new MyPoolChunk<int>(1,3);
-  dcp = new MyPoolChunk<double>(3*nmin+2+1+1,
-                                3*nmax+2*nmax+MAX_FACE_SIZE*nmax+1+1);
+  dcp = new MyPoolChunk<double>(3*nmin+MAX_EDGE_SIZE+1+1,
+                                3*nmax+MAX_EDGE_SIZE*nmax+MAX_FACE_SIZE*nmax+1+1);
 
   memory->create(imflag,2*nmax,"body/rounded/polyhedron:imflag");
   memory->create(imdata,2*nmax,7,"body/polyhedron:imdata");
@@ -122,7 +123,7 @@ double *BodyRoundedPolyhedron::faces(AtomVecBody::Bonus *bonus)
 {
   int nvertices = bonus->ivalue[0];
   if (nvertices == 1 || nvertices == 2) return NULL;
-  return bonus->dvalue+3*nsub(bonus)+2*nedges(bonus);
+  return bonus->dvalue+3*nsub(bonus)+MAX_EDGE_SIZE*nedges(bonus);
 }
 
 /* ---------------------------------------------------------------------- */
@@ -131,8 +132,8 @@ double BodyRoundedPolyhedron::enclosing_radius(struct AtomVecBody::Bonus *bonus)
 {
   int nvertices = bonus->ivalue[0];
   if (nvertices == 1 || nvertices == 2)
-  	return *(bonus->dvalue+3*nsub(bonus)+2);
-  return *(bonus->dvalue+3*nsub(bonus)+2*nedges(bonus)+MAX_FACE_SIZE*nfaces(bonus));
+  	return *(bonus->dvalue+3*nsub(bonus)+MAX_EDGE_SIZE);
+  return *(bonus->dvalue+3*nsub(bonus)+MAX_EDGE_SIZE*nedges(bonus)+MAX_FACE_SIZE*nfaces(bonus));
 }
 
 /* ---------------------------------------------------------------------- */
@@ -141,8 +142,8 @@ double BodyRoundedPolyhedron::rounded_radius(struct AtomVecBody::Bonus *bonus)
 {
   int nvertices = bonus->ivalue[0];
   if (nvertices == 1 || nvertices == 2)
-    return *(bonus->dvalue+3*nsub(bonus)+2+1);
-  return *(bonus->dvalue+3*nsub(bonus)+2*nedges(bonus)+MAX_FACE_SIZE*nfaces(bonus)+1);
+    return *(bonus->dvalue+3*nsub(bonus)+MAX_EDGE_SIZE+1);
+  return *(bonus->dvalue+3*nsub(bonus)+MAX_EDGE_SIZE*nedges(bonus)+MAX_FACE_SIZE*nfaces(bonus)+1);
 }
 
 /* ---------------------------------------------------------------------- */
@@ -156,8 +157,8 @@ int BodyRoundedPolyhedron::pack_border_body(AtomVecBody::Bonus *bonus, double *b
   buf[1] = ned;
   buf[2] = nfac;
   int ndouble;
-  if (nsub == 1 || nsub == 2) ndouble = 3*nsub+2+MAX_FACE_SIZE*nfac+1+1;
-  else ndouble = 3*nsub+2*nedges(bonus)+MAX_FACE_SIZE*nfac+1+1;
+  if (nsub == 1 || nsub == 2) ndouble = 3*nsub+MAX_EDGE_SIZE+MAX_FACE_SIZE*nfac+1+1;
+  else ndouble = 3*nsub+MAX_EDGE_SIZE*nedges(bonus)+MAX_FACE_SIZE*nfac+1+1;
   memcpy(&buf[3],bonus->dvalue,ndouble*sizeof(double));
   return 3+ndouble;
 }
@@ -174,8 +175,8 @@ int BodyRoundedPolyhedron::unpack_border_body(AtomVecBody::Bonus *bonus,
   bonus->ivalue[1] = ned;
   bonus->ivalue[2] = nfac;
   int ndouble;
-  if (nsub == 1 || nsub == 2) ndouble = 3*nsub+2+MAX_FACE_SIZE*nfac+1+1;
-  else ndouble = 3*nsub+2*nedges(bonus)+MAX_FACE_SIZE*nfac+1+1;
+  if (nsub == 1 || nsub == 2) ndouble = 3*nsub+MAX_EDGE_SIZE+MAX_FACE_SIZE*nfac+1+1;
+  else ndouble = 3*nsub+MAX_EDGE_SIZE*nedges(bonus)+MAX_FACE_SIZE*nfac+1+1;
   memcpy(bonus->dvalue,&buf[3],ndouble*sizeof(double));
   return 3+ndouble;
 }
@@ -212,7 +213,7 @@ void BodyRoundedPolyhedron::data_body(int ibonus, int ninteger, int ndouble,
     nentries = 6 + 3*nsub + 1;
   } else {
     nedges = ned; //nsub + nfac - 2;
-    nentries = 6 + 3*nsub + 2*nedges + MAX_FACE_SIZE*nfac + 1;
+    nentries = 6 + 3*nsub + MAX_EDGE_SIZE*nedges + MAX_FACE_SIZE*nfac + 1;
   }
   if (ndouble != nentries)
     error->one(FLERR,"Incorrect # of floating-point values in "
@@ -223,8 +224,8 @@ void BodyRoundedPolyhedron::data_body(int ibonus, int ninteger, int ndouble,
   bonus->ivalue[0] = nsub;
   bonus->ivalue[1] = ned;
   bonus->ivalue[2] = nfac;
-  if (nsub == 1 || nsub == 2) bonus->ndouble = 3*nsub + 2*nsub + 1 + 1;
-  else bonus->ndouble = 3*nsub + 2*nedges + MAX_FACE_SIZE*nfac + 1 + 1;
+  if (nsub == 1 || nsub == 2) bonus->ndouble = 3*nsub + MAX_EDGE_SIZE*nsub + 1 + 1;
+  else bonus->ndouble = 3*nsub + MAX_EDGE_SIZE*nedges + MAX_FACE_SIZE*nfac + 1 + 1;
   bonus->dvalue = dcp->get(bonus->ndouble,bonus->dindex);
 
   // diagonalize inertia tensor
@@ -305,7 +306,8 @@ void BodyRoundedPolyhedron::data_body(int ibonus, int ninteger, int ndouble,
     nedges = 0;
     bonus->dvalue[k] = 0;
     *(&bonus->dvalue[k]+1) = 0;
-    k += 2;
+    *(&bonus->dvalue[k]+2) = 0;
+    k += MAX_EDGE_SIZE;
 
     rrad = 0.5 * dfile[j];
     bonus->dvalue[k] = rrad;
@@ -321,9 +323,10 @@ void BodyRoundedPolyhedron::data_body(int ibonus, int ninteger, int ndouble,
   } else if (nsub == 2) { // rods
     nedges = 1;
     for (i = 0; i < nedges; i++) {
-      bonus->dvalue[k] = 0;
-      *(&bonus->dvalue[k]+1) = 1;
-      k += 2;
+      bonus->dvalue[k] = 0;  // type
+      *(&bonus->dvalue[k]+1) = 0;
+      *(&bonus->dvalue[k]+2) = 1;
+      k += MAX_EDGE_SIZE;
     }    
 
     erad = sqrt(erad2);
@@ -344,8 +347,9 @@ void BodyRoundedPolyhedron::data_body(int ibonus, int ninteger, int ndouble,
     for (i = 0; i < nedges; i++) {
       bonus->dvalue[k] = dfile[j];
       *(&bonus->dvalue[k]+1) = dfile[j+1];
-      k += 2;
-      j += 2;
+      *(&bonus->dvalue[k]+2) = dfile[j+2];
+      k += MAX_EDGE_SIZE;
+      j += MAX_EDGE_SIZE;
     }
 
     // faces

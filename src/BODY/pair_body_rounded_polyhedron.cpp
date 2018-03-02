@@ -46,7 +46,8 @@ using namespace MathConst;
 
 #define DELTA 10000
 #define EPSILON 1e-3
-#define MAX_FACE_SIZE 5 // maximum number of vertices per face (same as BodyRoundedPolyhedron) + 1
+#define MAX_EDGE_SIZE 3 // number of vertices per edge + 1 for type (same as BodyRoundedPolyhedron) + 1
+#define MAX_FACE_SIZE 5 // maximum number of vertices per face + 1 for type (same as BodyRoundedPolyhedron)
 #define MAX_CONTACTS 16  // for 3D models
 
 //#define _POLYHEDRON_DEBUG
@@ -318,6 +319,9 @@ void PairBodyRoundedPolyhedron::compute(int eflag, int vflag)
             xc[0] += contact_list[m].xi[0];
             xc[1] += contact_list[m].xi[1];
             xc[2] += contact_list[m].xi[2];
+
+            // contact_list[m].itype
+            // contact_list[m].jtype
           }
 
           xc[0] /= (double)num_contacts;
@@ -571,7 +575,7 @@ void PairBodyRoundedPolyhedron::body2space(int i)
   edfirst[i] = nedge;
 
   // grow the edge list if necessary
-  // the first 2 columns are for vertex indices within body, the last 3 for forces
+  // the first 3 columns are for type and 2 vertex indices within body, the last 3 for forces
 
   if (nedge + body_num_edges > edmax) {
     edmax += DELTA;
@@ -579,9 +583,9 @@ void PairBodyRoundedPolyhedron::body2space(int i)
   }
 
   for (int m = 0; m < body_num_edges; m++) {
-    edge[nedge][0] = static_cast<int>(edge_ends[2*m+0]);
-    edge[nedge][1] = static_cast<int>(edge_ends[2*m+1]);
-    edge[nedge][2] = 0;
+    edge[nedge][0] = static_cast<int>(edge_ends[MAX_EDGE_SIZE*m+0]);
+    edge[nedge][1] = static_cast<int>(edge_ends[MAX_EDGE_SIZE*m+1]);
+    edge[nedge][2] = static_cast<int>(edge_ends[MAX_EDGE_SIZE*m+2]);
     edge[nedge][3] = 0;
     edge[nedge][4] = 0;
     edge[nedge][5] = 0;
@@ -866,7 +870,7 @@ void PairBodyRoundedPolyhedron::sphere_against_edge(int ibody, int jbody,
                        double** f, double** torque, double** angmom,
                        int evflag)
 {
-  int ni,nei,ifirst,iefirst,npi1,npi2,ibonus;
+  int ni,nei,ifirst,iefirst,itype,npi1,npi2,ibonus;
   double xi1[3],xi2[3],vti[3],h[3],fn[3],ft[3],d,t;
   double delx,dely,delz,rij,rsqinv,R,fx,fy,fz,fpair,shift,energy;
   double rradi,rradj,contact_dist;
@@ -887,8 +891,9 @@ void PairBodyRoundedPolyhedron::sphere_against_edge(int ibody, int jbody,
 
   for (ni = 0; ni < nei; ni++) {
 
-    npi1 = static_cast<int>(edge[iefirst+ni][0]);
-    npi2 = static_cast<int>(edge[iefirst+ni][1]);
+    itype = static_cast<int>(edge[iefirst+ni][0]);
+    npi1 = static_cast<int>(edge[iefirst+ni][1]);
+    npi2 = static_cast<int>(edge[iefirst+ni][2]);
 
     // compute the space-fixed coordinates for the vertices of the face
 
@@ -1170,8 +1175,8 @@ int PairBodyRoundedPolyhedron::interaction_face_to_edge(int ibody,
 {
   if (face_index >= facnum[ibody]) return EF_INVALID;
 
-  int ifirst,iffirst,jfirst,npi1,npi2,npi3;
-  int jefirst,npj1,npj2;
+  int ifirst,iffirst,jfirst,npi1,npi2,npi3,itype;
+  int jefirst,npj1,npj2,jtype;
   double xi1[3],xi2[3],xi3[3],xpj1[3],xpj2[3],ui[3],vi[3],n[3];
 
   double** x = atom->x;
@@ -1183,6 +1188,7 @@ int PairBodyRoundedPolyhedron::interaction_face_to_edge(int ibody,
   ifirst = dfirst[ibody];
   iffirst = facfirst[ibody];
   // index 0 is reserved for face type
+  itype = static_cast<int>(face[iffirst+face_index][0]); 
   npi1 = static_cast<int>(face[iffirst+face_index][1]);
   npi2 = static_cast<int>(face[iffirst+face_index][2]);
   npi3 = static_cast<int>(face[iffirst+face_index][3]);
@@ -1220,8 +1226,9 @@ int PairBodyRoundedPolyhedron::interaction_face_to_edge(int ibody,
 
   jfirst = dfirst[jbody];
   jefirst = edfirst[jbody];
-  npj1 = static_cast<int>(edge[jefirst+edge_index][0]);
-  npj2 = static_cast<int>(edge[jefirst+edge_index][1]);
+  jtype = static_cast<int>(edge[jefirst+edge_index][0]); 
+  npj1 = static_cast<int>(edge[jefirst+edge_index][1]);
+  npj2 = static_cast<int>(edge[jefirst+edge_index][2]);
 
   xpj1[0] = xmj[0] + discrete[jfirst+npj1][0];
   xpj1[1] = xmj[1] + discrete[jfirst+npj1][1];
@@ -1300,8 +1307,11 @@ int PairBodyRoundedPolyhedron::interaction_face_to_edge(int ibody,
             contact_list[num_contacts].xj[0] = xpj1[0];
             contact_list[num_contacts].xj[1] = xpj1[1];
             contact_list[num_contacts].xj[2] = xpj1[2];
-            contact_list[num_contacts].type = 0;
+            contact_list[num_contacts].type = 0;  // EDGE-FACE
             contact_list[num_contacts].separation = d1 - contact_dist;
+            contact_list[num_contacts].itype = itype;
+            contact_list[num_contacts].jtype = jtype;
+            printf("num_contacts = %d: face type %d; body %d %d in contact\n", num_contacts, itype, ibody, jbody);
             num_contacts++;
           }
 
@@ -1340,6 +1350,8 @@ int PairBodyRoundedPolyhedron::interaction_face_to_edge(int ibody,
             contact_list[num_contacts].xj[2] = xpj2[2];
             contact_list[num_contacts].type = 0;
             contact_list[num_contacts].separation = d2 - contact_dist;
+            contact_list[num_contacts].itype = itype;
+            printf("num_contacts = %d: face type %d; body %d %d in contact\n", num_contacts, itype, ibody, jbody);
             num_contacts++;
           }
           discrete[jfirst+npj2][6] = 1;
@@ -1426,7 +1438,8 @@ int PairBodyRoundedPolyhedron::interaction_edge_to_edge(int ibody,
                                                 double &energy,
                                                 double* facc)
 {
-  int ifirst,iefirst,jfirst,jefirst,npi1,npi2,npj1,npj2,interact;
+  int ifirst,iefirst,itype,npi1,npi2;
+  int jfirst,jefirst,jtype,npj1,npj2,interact;
   double xi1[3],xi2[3],xpj1[3],xpj2[3];
   double r,t1,t2,h1[3],h2[3];
   double contact_dist, shift;
@@ -1439,8 +1452,9 @@ int PairBodyRoundedPolyhedron::interaction_edge_to_edge(int ibody,
 
   ifirst = dfirst[ibody];
   iefirst = edfirst[ibody];
-  npi1 = static_cast<int>(edge[iefirst+edge_index_i][0]);
-  npi2 = static_cast<int>(edge[iefirst+edge_index_i][1]);
+  itype = static_cast<int>(edge[iefirst+edge_index_i][0]);
+  npi1 = static_cast<int>(edge[iefirst+edge_index_i][1]);
+  npi2 = static_cast<int>(edge[iefirst+edge_index_i][2]);
 
   // compute the space-fixed coordinates for the edge ends
 
@@ -1456,8 +1470,9 @@ int PairBodyRoundedPolyhedron::interaction_edge_to_edge(int ibody,
 
   jfirst = dfirst[jbody];
   jefirst = edfirst[jbody];
-  npj1 = static_cast<int>(edge[jefirst+edge_index_j][0]);
-  npj2 = static_cast<int>(edge[jefirst+edge_index_j][1]);
+  jtype = static_cast<int>(edge[iefirst+edge_index_i][0]);
+  npj1 = static_cast<int>(edge[jefirst+edge_index_j][1]);
+  npj2 = static_cast<int>(edge[jefirst+edge_index_j][2]);
 
   xpj1[0] = xmj[0] + discrete[jfirst+npj1][0];
   xpj1[1] = xmj[1] + discrete[jfirst+npj1][1];
@@ -1696,14 +1711,14 @@ void PairBodyRoundedPolyhedron::contact_forces(int ibody, int jbody,
 
 void PairBodyRoundedPolyhedron::rescale_cohesive_forces(double** x,
      double** f, double** torque, Contact* contact_list, int &num_contacts,
-     double contact_area, double k_n, double k_na, double* facc)
+     double contact_area, double k_nij, double k_naij, double* facc)
 {
   int m,ibody,jbody;
   double delx,dely,delz,fx,fy,fz,R,fpair,r,shift;
   double j_a = contact_area / (num_contacts * A_ua);
   if (j_a < 1.0) j_a = 1.0;
 
-  shift = k_na * cut_inner;
+  shift = k_naij * cut_inner;
 
   for (m = 0; m < num_contacts; m++) {
     ibody = contact_list[m].ibody;
@@ -1715,9 +1730,9 @@ void PairBodyRoundedPolyhedron::rescale_cohesive_forces(double** x,
     r = sqrt(delx*delx + dely*dely + delz*delz);
     R = contact_list[m].separation; 
     if (R <= 0) {                // deformation occurs
-      fpair = -k_n * R - shift;
+      fpair = -k_nij * R - shift;
     } else if (R <= cut_inner) { // not deforming but cohesive ranges overlap
-      fpair = k_na * R - shift;
+      fpair = k_naij * R - shift;
     } else fpair = 0.0;
 
     fpair *= j_a;
