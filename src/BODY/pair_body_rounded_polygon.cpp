@@ -374,6 +374,8 @@ void PairBodyRoundedPolygon::settings(int narg, char **arg)
   mu = force->numeric(FLERR,arg[2]);
   delta_ua = force->numeric(FLERR,arg[3]);
   cut_inner = force->numeric(FLERR,arg[4]);
+
+  if (delta_ua < 0) delta_ua = 1;
 }
 
 /* ----------------------------------------------------------------------

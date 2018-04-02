@@ -300,40 +300,10 @@ void PairBodyRoundedPolyhedron::compute(int eflag, int vflag)
       interact = edge_against_edge(i, j, x, contact_list,
                                    num_contacts, evdwl, facc);
 
-      // estimate the contact area
-      // also consider point contacts and line contacts
+      // compute the cohesive force and rescale, if contact
 
       if (num_contacts > 0) {
-        double contact_area;
-        if (num_contacts == 1) {
-          contact_area = 0;
-        } else if (num_contacts == 2) {
-          contact_area = num_contacts * A_ua;
-        } else {
-          int m;
-          double xc[3],dx,dy,dz;
-          xc[0] = xc[1] = xc[2] = 0;
-          for (m = 0; m < num_contacts; m++) {
-            xc[0] += contact_list[m].xi[0];
-            xc[1] += contact_list[m].xi[1];
-            xc[2] += contact_list[m].xi[2];
-          }
-
-          xc[0] /= (double)num_contacts;
-          xc[1] /= (double)num_contacts;
-          xc[2] /= (double)num_contacts;
-
-          contact_area = 0.0;
-          for (m = 0; m < num_contacts; m++) {
-            dx = contact_list[m].xi[0] - xc[0];
-            dy = contact_list[m].xi[1] - xc[1];
-            dz = contact_list[m].xi[2] - xc[2];
-            contact_area += (dx*dx + dy*dy + dz*dz);
-          }
-          contact_area *= (MY_PI/(double)num_contacts);
-        }
-        rescale_cohesive_forces(x, f, torque, contact_list, num_contacts,
-                                contact_area, facc);
+        rescale_cohesive_forces(x, f, torque, contact_list, num_contacts, facc);
       }
 
       if (evflag) ev_tally_xyz(i,j,nlocal,newton_pair,evdwl,0.0,
@@ -379,6 +349,8 @@ void PairBodyRoundedPolyhedron::settings(int narg, char **arg)
   mu = force->numeric(FLERR,arg[2]);
   A_ua = force->numeric(FLERR,arg[3]);
   cut_inner = force->numeric(FLERR,arg[4]);
+
+  if (A_ua < 0) A_ua = 1;
 }
 
 /* ----------------------------------------------------------------------
@@ -1314,6 +1286,7 @@ int PairBodyRoundedPolyhedron::interaction_face_to_edge(int ibody,
             contact_list[num_contacts].itype = itype;
             contact_list[num_contacts].jtype = jtype;
             contact_list[num_contacts].separation = d1 - contact_dist;
+            contact_list[num_contacts].unique = 1;
             num_contacts++;
           }
 
@@ -1354,6 +1327,7 @@ int PairBodyRoundedPolyhedron::interaction_face_to_edge(int ibody,
             contact_list[num_contacts].itype = itype;
             contact_list[num_contacts].jtype = jtype;
             contact_list[num_contacts].separation = d2 - contact_dist;
+            contact_list[num_contacts].unique = 1;
             num_contacts++;
           }
           discrete[jfirst+npj2][6] = 1;
@@ -1530,6 +1504,7 @@ int PairBodyRoundedPolyhedron::interaction_edge_to_edge(int ibody,
       contact_list[num_contacts].itype = itype;
       contact_list[num_contacts].jtype = jtype;
       contact_list[num_contacts].separation = r - contact_dist;
+      contact_list[num_contacts].unique = 1;
       num_contacts++;
     }
   } else {
@@ -1572,8 +1547,8 @@ void PairBodyRoundedPolyhedron::pair_force_and_torque(int ibody, int jbody,
   fz = delz*fpair/r;
 
   #ifdef _POLYHEDRON_DEBUG
-  printf("  - R = %f; r = %f; k_na = %f; shift = %f; fpair = %f;"
-         " energy = %f; jflag = %d\n", R, r, k_na, shift, fpair,
+  printf("  - pair force and torque: R = %f; r = %f; shift = %f; fpair = %f;"
+         " energy = %f; jflag = %d\n", R, r, shift, fpair,
          energy, jflag);
   #endif
 
@@ -1678,6 +1653,7 @@ void PairBodyRoundedPolyhedron::contact_forces(int ibody, int jbody,
   ft[1] = -c_t * vt2;
   ft[2] = -c_t * vt3;
 
+  // these are contact forces (F_n, F_t and F_ne) only
   // cohesive forces will be scaled by j_a after contact area is computed
   // mu * fne = tangential friction deformation during gross sliding
   // see Eq. 4, Fraige et al.
@@ -1714,14 +1690,54 @@ void PairBodyRoundedPolyhedron::contact_forces(int ibody, int jbody,
 
 void PairBodyRoundedPolyhedron::rescale_cohesive_forces(double** x,
      double** f, double** torque, Contact* contact_list, int &num_contacts,
-     double contact_area, double* facc)
+     double* facc)
 {
   int m,ibody,itype,jbody,jtype;
   double delx,dely,delz,fx,fy,fz,R,fpair,r;
-  double j_a = contact_area / (num_contacts * A_ua);
+  double contact_area;
+
+  int num_unique_contacts = 0;
+  if (num_contacts == 1) {
+    num_unique_contacts = 1;
+    contact_area = 0;
+  } else if (num_contacts == 2) {
+    num_unique_contacts = 2;
+    contact_area = num_contacts * A_ua;
+  } else {
+    find_unique_contacts(contact_list, num_contacts);
+
+    double xc[3],dx,dy,dz;
+    xc[0] = xc[1] = xc[2] = 0;
+    num_unique_contacts = 0;
+    for (int m = 0; m < num_contacts; m++) {
+      if (contact_list[m].unique == 0) continue;
+      xc[0] += contact_list[m].xi[0];
+      xc[1] += contact_list[m].xi[1];
+      xc[2] += contact_list[m].xi[2];
+      num_unique_contacts++;
+    }
+
+    xc[0] /= (double)num_unique_contacts;
+    xc[1] /= (double)num_unique_contacts;
+    xc[2] /= (double)num_unique_contacts;
+    
+    contact_area = 0.0;
+    for (int m = 0; m < num_contacts; m++) {
+      if (contact_list[m].unique == 0) continue;
+      dx = contact_list[m].xi[0] - xc[0];
+      dy = contact_list[m].xi[1] - xc[1];
+      dz = contact_list[m].xi[2] - xc[2];
+      contact_area += (dx*dx + dy*dy + dz*dz);
+    }
+    contact_area *= (MY_PI/(double)num_unique_contacts);
+  }
+
+  double j_a = contact_area / (num_unique_contacts * A_ua);
   if (j_a < 1.0) j_a = 1.0;
 
   for (m = 0; m < num_contacts; m++) {
+    if (contact_list[m].unique == 0) continue;
+
     ibody = contact_list[m].ibody;
     jbody = contact_list[m].jbody;
     itype = contact_list[m].itype;
@@ -2322,6 +2338,41 @@ void PairBodyRoundedPolyhedron::total_velocity(double* p, double *xcm,
   vi[0] = omega[1]*r[2] - omega[2]*r[1] + vcm[0];
   vi[1] = omega[2]*r[0] - omega[0]*r[2] + vcm[1];
   vi[2] = omega[0]*r[1] - omega[1]*r[0] + vcm[2];
+}
+
+/* ----------------------------------------------------------------------
+  Determine the length of the contact segment, i.e. the separation between
+  2 contacts, should be extended for 3D models.
+------------------------------------------------------------------------- */
+
+double PairBodyRoundedPolyhedron::contact_separation(const Contact& c1,
+                                                     const Contact& c2)
+{
+  double x1 = 0.5*(c1.xi[0] + c1.xj[0]);
+  double y1 = 0.5*(c1.xi[1] + c1.xj[1]);
+  double z1 = 0.5*(c1.xi[2] + c1.xj[2]);
+  double x2 = 0.5*(c2.xi[0] + c2.xj[0]);
+  double y2 = 0.5*(c2.xi[1] + c2.xj[1]);
+  double z2 = 0.5*(c2.xi[2] + c2.xj[2]);
+  double rsq = (x2 - x1)*(x2 - x1) + (y2 - y1)*(y2 - y1) + (z2 - z1)*(z2 - z1);
+  return rsq;
+}
+
+/* ----------------------------------------------------------------------
+   find the number of unique contacts
+------------------------------------------------------------------------- */
+
+void PairBodyRoundedPolyhedron::find_unique_contacts(Contact* contact_list, int& num_contacts)
+{
+  int n = num_contacts;
+  for (int i = 0; i < n - 1; i++) {
+
+    for (int j = i + 1; j < n; j++) {
+      if (contact_list[i].unique == 0) continue;
+      double d = contact_separation(contact_list[i], contact_list[j]);
+      if (d < EPSILON) contact_list[j].unique = 0;
+    }
+  }
 }
 
 /* ---------------------------------------------------------------------- */

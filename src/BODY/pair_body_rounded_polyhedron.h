@@ -46,6 +46,7 @@ class PairBodyRoundedPolyhedron : public Pair {
     double separation; // contact surface separation
     int itype;         // type of the first identity (face or edge)
     int jtype;         // type of the second identity (face or edge)
+    int unique;        // unique
   };
 
  protected:
@@ -126,7 +127,11 @@ class PairBodyRoundedPolyhedron : public Pair {
                              int jflag, double& energy, double* facc);
   void rescale_cohesive_forces(double** x, double** f, double** torque,
                                Contact* contact_list, int &num_contacts,
-                               double contact_area, double* facc);
+                               double* facc);
+
+  double contact_separation(const Contact& c1, const Contact& c2);
+
+  void find_unique_contacts(Contact* contact_list, int& num_contacts);
 
   void sum_torque(double* xm, double *x, double fx, double fy, double fz, double* torque);
   int opposite_sides(double* n, double* x0, double* a, double* b);

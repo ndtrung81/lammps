@@ -266,36 +266,7 @@ void PairBodyRoundedPolyhedronLJ::compute(int eflag, int vflag)
       // also consider point contacts and line contacts
 
       if (num_contacts > 0) {
-        double contact_area;
-        if (num_contacts == 1) {
-          contact_area = 0;
-        } else if (num_contacts == 2) {
-          contact_area = num_contacts * A_ua;
-        } else {
-          int m;
-          double xc[3],dx,dy,dz;
-          xc[0] = xc[1] = xc[2] = 0;
-          for (m = 0; m < num_contacts; m++) {
-            xc[0] += contact_list[m].xi[0];
-            xc[1] += contact_list[m].xi[1];
-            xc[2] += contact_list[m].xi[2];
-          }
-
-          xc[0] /= (double)num_contacts;
-          xc[1] /= (double)num_contacts;
-          xc[2] /= (double)num_contacts;
-
-          contact_area = 0.0;
-          for (m = 0; m < num_contacts; m++) {
-            dx = contact_list[m].xi[0] - xc[0];
-            dy = contact_list[m].xi[1] - xc[1];
-            dz = contact_list[m].xi[2] - xc[2];
-            contact_area += (dx*dx + dy*dy + dz*dz);
-          }
-          contact_area *= (MY_PI/(double)num_contacts);
-        }
-        rescale_cohesive_forces(x, f, torque, contact_list, num_contacts,
-                                contact_area, facc);
+        rescale_cohesive_forces(x, f, torque, contact_list, num_contacts, facc);
       }
 
       if (evflag) ev_tally_xyz(i,j,nlocal,newton_pair,evdwl,0.0,
@@ -443,7 +414,12 @@ double PairBodyRoundedPolyhedronLJ::init_one(int i, int j)
 void PairBodyRoundedPolyhedronLJ::kernel_force(double R, int itype, int jtype,
   double cut_inner, double& fpair, double& energy)
 {
-  double r = R + sigma[itype][jtype]*1.12264;
+  if (R > cut_inner) {
+    fpair = 0;
+    energy = 0;
+    return;
+  }
+  double r = R + sigma[itype][jtype];
   double rsq = r * r;
   double r2inv = 1.0/rsq;
   double r6inv = r2inv*r2inv*r2inv;
@@ -451,7 +427,6 @@ void PairBodyRoundedPolyhedronLJ::kernel_force(double R, int itype, int jtype,
   fpair = forcelj / r;
   energy = r6inv*(lj3[itype][jtype]*r6inv-lj4[itype][jtype]) -
             offset[itype][jtype];
-
 }
 
 
