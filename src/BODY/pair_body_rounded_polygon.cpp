@@ -374,6 +374,8 @@ void PairBodyRoundedPolygon::settings(int narg, char **arg)
   mu = force->numeric(FLERR,arg[2]);
   delta_ua = force->numeric(FLERR,arg[3]);
   cut_inner = force->numeric(FLERR,arg[4]);
+
+  if (delta_ua < 0) delta_ua = 1;
 }
 
 /* ----------------------------------------------------------------------
@@ -847,7 +849,7 @@ int PairBodyRoundedPolygon::vertex_against_edge(int i, int j,
         // done with the edges from body j,
         // given that vertex ni interacts with only one vertex from one edge of body j
 
-        break;
+//        break;
 
       } else if (mode == EDGE) {
 
@@ -954,7 +956,7 @@ int PairBodyRoundedPolygon::vertex_against_edge(int i, int j,
         // done with the edges from body j,
         // given that vertex ni interacts with only one edge from body j
 
-        break;
+//        break;
 
       } // end if mode
 
@@ -1078,7 +1080,7 @@ int PairBodyRoundedPolygon::compute_distance_to_vertex(int ibody,
     // check if x0 (the queried vertex) and xmi (the body's center of mass)
     // are on the different sides of the edge
 
-    int m = opposite_sides(xi1, xi2, x0, xmi);
+    int m = 1;//opposite_sides(xi1, xi2, x0, xmi);
 
     if (m == 0) {
 

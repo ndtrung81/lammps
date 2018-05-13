@@ -34,13 +34,19 @@ class PairBodyRoundedPolyhedron : public Pair {
   void init_style();
   double init_one(int, int);
 
+  virtual void kernel_force(double R, int itype, int jtype,
+    double cut_inner, double& fpair, double& energy);
+
   struct Contact {
-    int ibody, jbody; // body (i.e. atom) indices (not tags)
-    int type;         // 0 = VERTEX-FACE; 1 = EDGE-EDGE
-    double fx,fy,fz;  // unscaled cohesive forces at contact
-    double xi[3];     // coordinates of the contact point on ibody
-    double xj[3];     // coordinates of the contact point on jbody
+    int ibody, jbody;  // body (i.e. atom) indices (not tags)
+    int type;          // 0 = VERTEX-FACE; 1 = EDGE-EDGE
+    double fx,fy,fz;   // unscaled cohesive forces at contact
+    double xi[3];      // coordinates of the contact point on ibody
+    double xj[3];      // coordinates of the contact point on jbody
     double separation; // contact surface separation
+    int itype;         // type of the first identity (face or edge)
+    int jtype;         // type of the second identity (face or edge)
+    int unique;        // unique
   };
 
  protected:
@@ -83,32 +89,30 @@ class PairBodyRoundedPolyhedron : public Pair {
   void allocate();
   void body2space(int);
 
-  int edge_against_face(int ibody, int jbody, double k_n, double k_na,
-                        double** x, Contact* contact_list, int &num_contacts,
-                        double &evdwl, double* facc);
-  int edge_against_edge(int ibody, int jbody, double k_n, double k_na,
-                        double** x,Contact* contact_list, int &num_contacts,
-                        double &evdwl, double* facc);
-  void sphere_against_sphere(int ibody, int jbody, double delx, double dely, double delz,
-                             double rsq, double k_n, double k_na,
-                             double** v, double** f, int evflag);
-  void sphere_against_face(int ibody, int jbody,
-                       double k_n, double k_na, double** x, double** v,
+  void sphere_against_sphere(int ibody, int jbody, int itype, int jtype,
+                             double delx, double dely, double delz,
+                             double rsq, double** v, double** f, int evflag);
+  void sphere_against_face(int ibody, int jbody, int jtype, double** x, double** v,
                        double** f, double** torque, double** angmom, int evflag);
-  void sphere_against_edge(int ibody, int jbody,
-                       double k_n, double k_na, double** x, double** v,
+  void sphere_against_edge(int ibody, int jbody, int jtype, double** x, double** v,
                        double** f, double** torque, double** angmom, int evflag);
+
+
+  int edge_against_face(int ibody, int jbody, double** x,
+                        Contact* contact_list, int &num_contacts,
+                        double &evdwl, double* facc);
+  int edge_against_edge(int ibody, int jbody, double** x,
+                        Contact* contact_list, int &num_contacts,
+                        double &evdwl, double* facc);
 
   int interaction_face_to_edge(int ibody, int face_index, double* xmi,
                                double rounded_radius_i, int jbody, int edge_index,
                                double* xmj, double rounded_radius_j,
-                               double k_n, double k_na, double cut_inner,
                                Contact* contact_list, int &num_contacts,
                                double& energy, double* facc);
   int interaction_edge_to_edge(int ibody, int edge_index_i, double* xmi,
                                double rounded_radius_i, int jbody, int edge_index_j,
                                double* xmj, double rounded_radius_j,
-                               double k_n, double k_na, double cut_inner,
                                Contact* contact_list, int &num_contacts,
                                double& energy, double* facc);
 
@@ -118,19 +122,22 @@ class PairBodyRoundedPolyhedron : public Pair {
     double* facc);
 
   void pair_force_and_torque(int ibody, int jbody, double* pi, double* pj,
-                             double r, double contact_dist, double k_n, 
-                             double k_na, double shift, double** x, double** v,
-                             double** f, double** torque, double** angmom,
+                             double r, double contact_dist, int itype, int jtype, double cut_inner,
+                             double** x, double** v, double** f, double** torque, double** angmom,
                              int jflag, double& energy, double* facc);
   void rescale_cohesive_forces(double** x, double** f, double** torque,
                                Contact* contact_list, int &num_contacts,
-                               double contact_area, double k_n, double k_na, double* facc);
+                               double* facc);
+
+  double contact_separation(const Contact& c1, const Contact& c2);
+
+  void find_unique_contacts(Contact* contact_list, int& num_contacts);
 
   void sum_torque(double* xm, double *x, double fx, double fy, double fz, double* torque);
   int opposite_sides(double* n, double* x0, double* a, double* b);
   int edge_face_intersect(double* x1, double* x2, double* x3, double* a, double* b,
                           double* hi1, double* hi2, double& d1, double& d2,
-                          int& inside_a, int& inside_b);
+                          int& inside_a, int& inside_b, double* p);
   void project_pt_plane(const double* q, const double* p, 
                         const double* n, double* q_proj, double &d);
   void project_pt_plane(const double* q, const double* x1, const double* x2, 
