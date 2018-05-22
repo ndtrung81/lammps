@@ -848,8 +848,9 @@ int PairBodyRoundedPolygon::vertex_against_edge(int i, int j,
 
         // done with the edges from body j,
         // given that vertex ni interacts with only one vertex from one edge of body j
+        // comment out this break to take into account concave shapes
 
-        break;
+//        break;
 
       } else if (mode == EDGE) {
 
@@ -955,8 +956,9 @@ int PairBodyRoundedPolygon::vertex_against_edge(int i, int j,
 
         // done with the edges from body j,
         // given that vertex ni interacts with only one edge from body j
+        // comment out this break to take into account concave shapes
 
-        break;
+//        break;
 
       } // end if mode
 

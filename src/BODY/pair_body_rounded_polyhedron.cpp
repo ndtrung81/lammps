@@ -583,8 +583,11 @@ void PairBodyRoundedPolyhedron::body2space(int i)
 }
 
 /* ----------------------------------------------------------------------
-   Interaction between two spheres with different radii
-   according to the 2D model from Fraige et al.
+  Interaction between two spheres with different radii
+  according to the 2D model from Fraige et al.
+    fpair = -dU/dr
+    R = distance between two rounded surfaces
+    cut_inner = cutoff for the distance between two rounded surfaces
 ---------------------------------------------------------------------- */
 
 void PairBodyRoundedPolyhedron::kernel_force(double R, int itype, int jtype,
@@ -625,15 +628,7 @@ void PairBodyRoundedPolyhedron::sphere_against_sphere(int ibody, int jbody,
 
   energy = 0;
   kernel_force(R, itype, jtype, cut_inner, fpair, energy);
-/*
-  if (R <= 0) {           // deformation occurs
-    fpair = -kn * R - shift;
-    energy = (0.5 * kn * R + shift) * R;
-  } else if (R <= cut_inner) {   // not deforming but cohesive ranges overlap
-    fpair = kna * R - shift;
-    energy = (-0.5 * kna * R + shift) * R;
-  } else fpair = 0.0;
-*/
+
   fx = delx*fpair/rij;
   fy = dely*fpair/rij;
   fz = delz*fpair/rij;
@@ -771,15 +766,7 @@ void PairBodyRoundedPolyhedron::sphere_against_edge(int ibody, int jbody, int jt
 
     energy = 0;
     kernel_force(R, itype, jtype, cut_inner, fpair, energy);
-/*
-    if (R <= 0) {           // deformation occurs
-      fpair = -k_n[itype][jtype] * R - shift;
-      energy = (0.5 * k_n[itype][jtype] * R + shift) * R;
-    } else if (R <= cut_inner) {   // not deforming but cohesive ranges overlap
-      fpair = k_na[itype][jtype] * R - shift;
-      energy = (-0.5 * k_na[itype][jtype] * R + shift) * R;
-    } else fpair = 0.0;
-*/
+
     fx = delx*fpair/rij;
     fy = dely*fpair/rij;
     fz = delz*fpair/rij;
@@ -1216,19 +1203,18 @@ int PairBodyRoundedPolyhedron::interaction_face_to_edge(int ibody,
 
   // no interaction if two ends of the edge are on the same side with the COM wrt the face
 
-  if (opposite_sides(n, xi1, xmi, xpj1) == 0 &&
-      opposite_sides(n, xi1, xmi, xpj2) == 0)
-    return EF_NONE;
+//  if (opposite_sides(n, xi1, xmi, xpj1) == 0 &&
+//      opposite_sides(n, xi1, xmi, xpj2) == 0) return EF_NONE;
 
   // determine the intersection of the edge to the face
 
-  double hi1[3], hi2[3], d1, d2, contact_dist, shift;
+  double hi1[3], hi2[3], d1, d2, p[3], contact_dist;
   int inside1 = 0;
   int inside2 = 0;
 
   // enum {EF_PARALLEL=0,EF_SAME_SIDE_OF_FACE,EF_INTERSECT_INSIDE,EF_INTERSECT_OUTSIDE};
   int interact = edge_face_intersect(xi1, xi2, xi3, xpj1, xpj2,
-                                     hi1, hi2, d1, d2, inside1, inside2);
+                                     hi1, hi2, d1, d2, inside1, inside2, p);
 
   inside_polygon(ibody, face_index, xmi, hi1, hi2, inside1, inside2);
 
@@ -1368,7 +1354,17 @@ int PairBodyRoundedPolyhedron::interaction_face_to_edge(int ibody,
 
     #endif
   } else if (interact == EF_INTERSECT_INSIDE) {
-
+    // need to do something here to resolve overlap!!
+    // p is the intersection between the edge and the face
+    int jflag = 1;
+    if (d1 < d2)
+      pair_force_and_torque(jbody, ibody, xpj1, hi1, d1, contact_dist,
+                            itype, jtype, cut_inner, x, v, f, torque, angmom,
+                            jflag, energy, facc);
+    else
+      pair_force_and_torque(jbody, ibody, xpj2, hi2, d2, contact_dist,
+                            itype, jtype, cut_inner, x, v, f, torque, angmom,
+                            jflag, energy, facc);
   }
 
   return interact;
@@ -1533,15 +1529,7 @@ void PairBodyRoundedPolyhedron::pair_force_and_torque(int ibody, int jbody,
   R = r - contact_dist;
 
   kernel_force(R, itype, jtype, cut_inner, fpair, energy);
-/*
-  if (R <= 0) {                // deformation occurs
-    fpair = -k_n * R - shift;
-    energy += (0.5 * k_n * R + shift) * R;
-  } else if (R <= cut_inner) { // not deforming but cohesive ranges overlap
-    fpair = k_na * R - shift;
-    energy += (-0.5 * k_na * R + shift) * R;
-  } else fpair = 0.0;
-*/
+
   fx = delx*fpair/r;
   fy = dely*fpair/r;
   fz = delz*fpair/r;
@@ -1751,13 +1739,7 @@ void PairBodyRoundedPolyhedron::rescale_cohesive_forces(double** x,
     R = contact_list[m].separation;
     double energy = 0;
     kernel_force(R, itype, jtype, cut_inner, fpair, energy);
-/*
-    if (R <= 0) {                // deformation occurs
-      fpair = -kn * R - shift;
-    } else if (R <= cut_inner) { // not deforming but cohesive ranges overlap
-      fpair = kna * R - shift;
-    } else fpair = 0.0;
-*/
+
     fpair *= j_a;
     fx = delx*fpair/r;
     fy = dely*fpair/r;
@@ -1815,11 +1797,14 @@ int PairBodyRoundedPolyhedron::opposite_sides(double* n, double* x0,
 /* ----------------------------------------------------------------------
   Test if a line segment defined by two points a and b intersects with
   a triangle defined by three points x1, x2 and x3
+    h_a and h_b are projections of a and b on the plane
+    d_a and d_b are the distances between a and d_a and between b and d_b, respectively
+    p is the intersection between the line and the plane, if not parallel
 ------------------------------------------------------------------------- */
 
 int PairBodyRoundedPolyhedron::edge_face_intersect(double* x1, double* x2,
                double* x3, double* a, double* b, double* h_a, double* h_b,
-               double& d_a, double& d_b, int& inside_a, int& inside_b)
+               double& d_a, double& d_b, int& inside_a, int& inside_b, double* p)
 {
   double s[3], u[3], v[3], n[3];
 
@@ -1847,7 +1832,7 @@ int PairBodyRoundedPolyhedron::edge_face_intersect(double* x1, double* x2,
 
   // solve for the intersection between the line and the plane
 
-  double m[3][3], invm[3][3], p[3], ans[3];
+  double m[3][3], invm[3][3], ans[3];
   m[0][0] = -s[0];
   m[0][1] = u[0];
   m[0][2] = v[0];
