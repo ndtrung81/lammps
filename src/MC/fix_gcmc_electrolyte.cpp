@@ -79,7 +79,8 @@ void FixGCMCElectrolyte::init()
     if (onemols[imol]->q[i] < 0) num_anions_per_molecule++;
     if (onemols[imol]->q[i] > 0) num_cations_per_molecule++;
   }
-  printf("natoms per molecule = %d; %d %d\n", natoms_per_molecule, num_anions_per_molecule, num_cations_per_molecule);
+  printf("Electrolyte with %d cations : %d anions\n", num_cations_per_molecule,
+    num_anions_per_molecule);
 }
 
 /* ----------------------------------------------------------------------
@@ -133,7 +134,8 @@ void FixGCMCElectrolyte::attempt_molecule_deletion_full()
 
   // energy_before corrected by energy_intra
 
-  double deltaphi = ngas*exp(beta*((energy_before - energy_intra) - energy_after))/(zz*pow(volume,natoms_per_molecule)*natoms_per_molecule);
+  // double deltaphi = ngas*exp(beta*((energy_before - energy_intra) - energy_after)) /
+  //  (zz*pow(volume,natoms_per_molecule)*natoms_per_molecule);
 
   double logdeltaphi = log(ngas/(zz*natoms_per_molecule)) - natoms_per_molecule*log(volume) +
     beta*((energy_before - energy_intra) - energy_after);
@@ -216,22 +218,45 @@ void FixGCMCElectrolyte::attempt_molecule_insertion_full()
 
   for (int i = 0; i < natoms_per_molecule; i++) {
     double xtmp[3];
-    if (triclinic == 0) {
-      xtmp[0] = xlo + random_equal->uniform() * (xhi-xlo);
-      xtmp[1] = ylo + random_equal->uniform() * (yhi-ylo);
-      xtmp[2] = zlo + random_equal->uniform() * (zhi-zlo);
+    if (regionflag) {
+      int region_attempt = 0;
+      xtmp[0] = region_xlo + random_equal->uniform() *
+        (region_xhi-region_xlo);
+      xtmp[1] = region_ylo + random_equal->uniform() *
+        (region_yhi-region_ylo);
+      xtmp[2] = region_zlo + random_equal->uniform() *
+        (region_zhi-region_zlo);
+      while (domain->regions[iregion]->match(xtmp[0],xtmp[1],
+                                            xtmp[2]) == 0) {
+        xtmp[0] = region_xlo + random_equal->uniform() *
+          (region_xhi-region_xlo);
+        xtmp[1] = region_ylo + random_equal->uniform() *
+          (region_yhi-region_ylo);
+        xtmp[2] = region_zlo + random_equal->uniform() *
+          (region_zhi-region_zlo);
+        region_attempt++;
+        if (region_attempt >= max_region_attempts) return;
+      }
+      if (triclinic) domain->x2lamda(xtmp,lamda);
     } else {
-      lamda[0] = random_equal->uniform();
-      lamda[1] = random_equal->uniform();
-      lamda[2] = random_equal->uniform();
+      if (triclinic == 0) {
+        xtmp[0] = xlo + random_equal->uniform() * (xhi-xlo);
+        xtmp[1] = ylo + random_equal->uniform() * (yhi-ylo);
+        xtmp[2] = zlo + random_equal->uniform() * (zhi-zlo);
+      } else {
+        lamda[0] = random_equal->uniform();
+        lamda[1] = random_equal->uniform();
+        lamda[2] = random_equal->uniform();
 
-      // wasteful, but necessary
+        // wasteful, but necessary
 
-      if (lamda[0] == 1.0) lamda[0] = 0.0;
-      if (lamda[1] == 1.0) lamda[1] = 0.0;
-      if (lamda[2] == 1.0) lamda[2] = 0.0;
+        if (lamda[0] == 1.0) lamda[0] = 0.0;
+        if (lamda[1] == 1.0) lamda[1] = 0.0;
+        if (lamda[2] == 1.0) lamda[2] = 0.0;
 
-      domain->lamda2x(lamda,xtmp);
+        domain->lamda2x(lamda,xtmp);
+      }
+
     }
 
     // need to adjust image flags in remap()
@@ -298,8 +323,8 @@ void FixGCMCElectrolyte::attempt_molecule_insertion_full()
 
   // energy_after corrected by energy_intra
 
-  double deltaphi = zz*pow(volume,natoms_per_molecule)*natoms_per_molecule*
-    exp(beta*(energy_before - (energy_after - energy_intra)))/(ngas + natoms_per_molecule);
+  // double deltaphi = zz*pow(volume,natoms_per_molecule)*natoms_per_molecule *
+  //  exp(beta*(energy_before - (energy_after - energy_intra)))/(ngas + natoms_per_molecule);
 
   double logdeltaphi = log(zz*natoms_per_molecule/(ngas + natoms_per_molecule)) + natoms_per_molecule*log(volume) + 
     beta*(energy_before - (energy_after - energy_intra));
