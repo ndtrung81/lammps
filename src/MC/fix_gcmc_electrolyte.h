@@ -33,6 +33,9 @@ class FixGCMCElectrolyte : public FixGCMC {
   virtual void attempt_molecule_insertion_full();
 
  protected:
+  static const int nmaxfactorial = 167;
+  static const double nfac_table[];
+  double factorial(int);
   int num_anions_per_molecule;
   int num_cations_per_molecule;
 };
