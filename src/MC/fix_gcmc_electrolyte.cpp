@@ -79,107 +79,9 @@ void FixGCMCElectrolyte::init()
     if (onemols[imol]->q[i] < 0) num_anions_per_molecule++;
     if (onemols[imol]->q[i] > 0) num_cations_per_molecule++;
   }
-  printf("Electrolyte with %d cations : %d anions\n", num_cations_per_molecule,
-    num_anions_per_molecule);
-}
-
-/* ----------------------------------------------------------------------
-  attempt to delete a group of ions with zero net charge
-------------------------------------------------------------------------- */
-
-void FixGCMCElectrolyte::attempt_molecule_deletion_full()
-{
-  ndeletion_attempts += 1.0;
-
-  if (ngas == 0 || ngas <= min_ngas) return;
-
-  // work-around to avoid n=0 problem with fix rigid/nvt/small
-
-  if (ngas == natoms_per_molecule) return;
-
-  // select molecules to delete
-
-  tagint deletion_molecule = pick_random_gas_molecule();
-  if (deletion_molecule == -1) return;
-
-  double energy_before = energy_stored;
-
-  // check nmolq, grow arrays if necessary
-
-  int nmolq = 0;
-  for (int i = 0; i < atom->nlocal; i++)
-    if (atom->molecule[i] == deletion_molecule)
-      if (atom->q_flag) nmolq++;
-
-  if (nmolq > nmaxmolatoms)
-    grow_molecule_arrays(nmolq);
-
-  int m = 0;
-  int *tmpmask = new int[atom->nlocal];
-  for (int i = 0; i < atom->nlocal; i++) {
-    if (atom->molecule[i] == deletion_molecule) {
-      tmpmask[i] = atom->mask[i];
-      atom->mask[i] = exclusion_group_bit;
-      toggle_intramolecular(i);
-      if (atom->q_flag) {
-        molq[m] = atom->q[i];
-        m++;
-        atom->q[i] = 0.0;
-      }
-    }
-  }
-  if (force->kspace) force->kspace->qsum_qsq();
-  if (force->pair->tail_flag) force->pair->reinit();
-  double energy_after = energy_full();
-
-  // energy_before corrected by energy_intra
-
-  double permutations = factorial(num_anions_per_molecule)*factorial(num_cations_per_molecule);
-  double deltaphi = ngas*permutations*exp(beta*((energy_before - energy_intra) - energy_after)) /
-    (zz*pow(volume,natoms_per_molecule)*natoms_per_molecule);
-
-  double logdeltaphi = log(ngas*permutations/(zz*natoms_per_molecule)) - natoms_per_molecule*log(volume) +
-    beta*((energy_before - energy_intra) - energy_after);
-  double p = logdeltaphi;
-  if (logdeltaphi > 0.0) p = 1.0;
-  else p = exp(logdeltaphi);
-
-  if (random_equal->uniform() < p) { // deltaphi
-
-    // accept the trial deletion move
-
-    int i = 0;
-    while (i < atom->nlocal) {
-      if (atom->molecule[i] == deletion_molecule) {
-        atom->avec->copy(atom->nlocal-1,i,1);
-        atom->nlocal--;
-      } else i++;
-    }
-
-    atom->natoms -= natoms_per_molecule;
-    if (atom->map_style) atom->map_init();
-    ndeletion_successes += 1.0;
-    energy_stored = energy_after;
-
-  } else {
-
-    energy_stored = energy_before;
-    int m = 0;
-    for (int i = 0; i < atom->nlocal; i++) {
-      if (atom->molecule[i] == deletion_molecule) {
-        atom->mask[i] = tmpmask[i];
-        toggle_intramolecular(i);
-        if (atom->q_flag) {
-          atom->q[i] = molq[m];
-          m++;
-        }
-      }
-    }
-    if (force->kspace) force->kspace->qsum_qsq();
-    if (force->pair->tail_flag) force->pair->reinit();
-  }
-  update_gas_atoms_list();
-  delete [] tmpmask;
+  if (comm->me == 0) 
+    printf("Electrolyte with %d cations : %d anions\n", num_cations_per_molecule,
+      num_anions_per_molecule);
 }
 
 /* ----------------------------------------------------------------------
@@ -326,11 +228,11 @@ void FixGCMCElectrolyte::attempt_molecule_insertion_full()
   // energy_after corrected by energy_intra
 
   double permutations = factorial(num_anions_per_molecule)*factorial(num_cations_per_molecule);
-  // double deltaphi = zz*pow(volume,natoms_per_molecule)/permutations*natoms_per_molecule *
+  // double deltaphi = zz*pow(volume,natoms_per_molecule)*permutations*natoms_per_molecule *
   //  exp(beta*(energy_before - (energy_after - energy_intra)))/(ngas + natoms_per_molecule);
 
-  double logdeltaphi = log(zz*natoms_per_molecule/permutations/(ngas + natoms_per_molecule)) + natoms_per_molecule*log(volume) + 
-    beta*(energy_before - (energy_after - energy_intra));
+  double logdeltaphi = log(zz*natoms_per_molecule*permutations/(ngas + natoms_per_molecule)) +
+    natoms_per_molecule*log(volume) + beta*(energy_before - (energy_after - energy_intra));
   double p = logdeltaphi;
   if (logdeltaphi > 0.0) p = 1.0;
   else p = exp(logdeltaphi);
@@ -361,6 +263,105 @@ void FixGCMCElectrolyte::attempt_molecule_insertion_full()
     if (force->pair->tail_flag) force->pair->reinit();
   }
   update_gas_atoms_list();
+}
+
+/* ----------------------------------------------------------------------
+  attempt to delete a group of ions with zero net charge
+------------------------------------------------------------------------- */
+
+void FixGCMCElectrolyte::attempt_molecule_deletion_full()
+{
+  ndeletion_attempts += 1.0;
+
+  if (ngas == 0 || ngas <= min_ngas) return;
+
+  // work-around to avoid n=0 problem with fix rigid/nvt/small
+
+  if (ngas == natoms_per_molecule) return;
+
+  // select molecules to delete
+
+  tagint deletion_molecule = pick_random_gas_molecule();
+  if (deletion_molecule == -1) return;
+
+  double energy_before = energy_stored;
+
+  // check nmolq, grow arrays if necessary
+
+  int nmolq = 0;
+  for (int i = 0; i < atom->nlocal; i++)
+    if (atom->molecule[i] == deletion_molecule)
+      if (atom->q_flag) nmolq++;
+
+  if (nmolq > nmaxmolatoms)
+    grow_molecule_arrays(nmolq);
+
+  int m = 0;
+  int *tmpmask = new int[atom->nlocal];
+  for (int i = 0; i < atom->nlocal; i++) {
+    if (atom->molecule[i] == deletion_molecule) {
+      tmpmask[i] = atom->mask[i];
+      atom->mask[i] = exclusion_group_bit;
+      toggle_intramolecular(i);
+      if (atom->q_flag) {
+        molq[m] = atom->q[i];
+        m++;
+        atom->q[i] = 0.0;
+      }
+    }
+  }
+  if (force->kspace) force->kspace->qsum_qsq();
+  if (force->pair->tail_flag) force->pair->reinit();
+  double energy_after = energy_full();
+
+  // energy_before corrected by energy_intra
+
+  double permutations = factorial(num_anions_per_molecule)*factorial(num_cations_per_molecule);
+  //double deltaphi = ngas*exp(beta*((energy_before - energy_intra) - energy_after)) /
+  //  (zz*pow(volume,natoms_per_molecule)*permutations*natoms_per_molecule);
+
+  double logdeltaphi = log(ngas/(zz*natoms_per_molecule*permutations)) -
+    natoms_per_molecule*log(volume) + beta*((energy_before - energy_intra) - energy_after);
+  double p = logdeltaphi;
+  if (logdeltaphi > 0.0) p = 1.0;
+  else p = exp(logdeltaphi);
+
+  if (random_equal->uniform() < p) { // deltaphi
+
+    // accept the trial deletion move
+
+    int i = 0;
+    while (i < atom->nlocal) {
+      if (atom->molecule[i] == deletion_molecule) {
+        atom->avec->copy(atom->nlocal-1,i,1);
+        atom->nlocal--;
+      } else i++;
+    }
+
+    atom->natoms -= natoms_per_molecule;
+    if (atom->map_style) atom->map_init();
+    ndeletion_successes += 1.0;
+    energy_stored = energy_after;
+
+  } else {
+
+    energy_stored = energy_before;
+    int m = 0;
+    for (int i = 0; i < atom->nlocal; i++) {
+      if (atom->molecule[i] == deletion_molecule) {
+        atom->mask[i] = tmpmask[i];
+        toggle_intramolecular(i);
+        if (atom->q_flag) {
+          atom->q[i] = molq[m];
+          m++;
+        }
+      }
+    }
+    if (force->kspace) force->kspace->qsum_qsq();
+    if (force->pair->tail_flag) force->pair->reinit();
+  }
+  update_gas_atoms_list();
+  delete [] tmpmask;
 }
 
 /* ----------------------------------------------------------------------
