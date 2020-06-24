@@ -228,10 +228,10 @@ void FixGCMCElectrolyte::attempt_molecule_insertion_full()
   // energy_after corrected by energy_intra
 
   double permutations = factorial(num_anions_per_molecule)*factorial(num_cations_per_molecule);
-  // double deltaphi = zz*pow(volume,natoms_per_molecule)*permutations*natoms_per_molecule *
+  // double deltaphi = zz*pow(volume,natoms_per_molecule)/permutations*natoms_per_molecule *
   //  exp(beta*(energy_before - (energy_after - energy_intra)))/(ngas + natoms_per_molecule);
 
-  double logdeltaphi = log(zz*natoms_per_molecule*permutations/(ngas + natoms_per_molecule)) +
+  double logdeltaphi = log(zz*natoms_per_molecule/permutations/(ngas + natoms_per_molecule)) +
     natoms_per_molecule*log(volume) + beta*(energy_before - (energy_after - energy_intra));
   double p = logdeltaphi;
   if (logdeltaphi > 0.0) p = 1.0;
@@ -318,9 +318,9 @@ void FixGCMCElectrolyte::attempt_molecule_deletion_full()
 
   double permutations = factorial(num_anions_per_molecule)*factorial(num_cations_per_molecule);
   //double deltaphi = ngas*exp(beta*((energy_before - energy_intra) - energy_after)) /
-  //  (zz*pow(volume,natoms_per_molecule)*permutations*natoms_per_molecule);
+  //  (zz*pow(volume,natoms_per_molecule)/permutations*natoms_per_molecule);
 
-  double logdeltaphi = log(ngas/(zz*natoms_per_molecule*permutations)) -
+  double logdeltaphi = log(ngas/(zz*natoms_per_molecule/permutations)) -
     natoms_per_molecule*log(volume) + beta*((energy_before - energy_intra) - energy_after);
   double p = logdeltaphi;
   if (logdeltaphi > 0.0) p = 1.0;
