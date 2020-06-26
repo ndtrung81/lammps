@@ -59,6 +59,9 @@ using namespace MathConst;
 
 #define MAXENERGYTEST 1.0e50
 
+enum{EXCHATOM,EXCHMOL}; // exchmode
+enum{MOVEATOM,MOVEMOL}; // movemode
+
 //#define GCMC_ELECTROLYTE_DEBUG
 
 /* ---------------------------------------------------------------------- */
@@ -73,8 +76,285 @@ FixGCMCElectrolyte::FixGCMCElectrolyte(LAMMPS *lmp, int narg, char **arg) :
 
 void FixGCMCElectrolyte::init()
 {
-  FixGCMC::init();
-  
+  triclinic = domain->triclinic;
+
+  // set probabilities for MC moves
+
+  if (pmctot == 0.0)
+    if (exchmode == EXCHATOM) {
+      movemode = MOVEATOM;
+      patomtrans = 1.0;
+      pmoltrans = 0.0;
+      pmolrotate = 0.0;
+    } else {
+      movemode = MOVEMOL;
+      patomtrans = 0.0;
+      pmoltrans = 0.5;
+      pmolrotate = 0.5;
+   }
+  else {
+    if (pmoltrans == 0.0 && pmolrotate == 0.0)
+      movemode = MOVEATOM;
+    else
+      movemode = MOVEMOL;
+    patomtrans /= pmctot;
+    pmoltrans /= pmctot;
+    pmolrotate /= pmctot;
+  }
+
+  // decide whether to switch to the full_energy option
+
+  if (!full_flag) {
+    if ((force->kspace) ||
+        (force->pair == NULL) ||
+        (force->pair->single_enable == 0) ||
+        (force->pair_match("^hybrid",0)) ||
+        (force->pair_match("^eam",0)) ||
+        (force->pair->tail_flag)
+        ) {
+      full_flag = true;
+      if (comm->me == 0)
+        error->warning(FLERR,"Fix gcmc using full_energy option");
+    }
+  }
+
+  if (full_flag) {
+    char *id_pe = (char *) "thermo_pe";
+    int ipe = modify->find_compute(id_pe);
+    c_pe = modify->compute[ipe];
+  }
+
+  int *type = atom->type;
+
+  if (exchmode == EXCHATOM) {
+    if (ngcmc_type <= 0 || ngcmc_type > atom->ntypes)
+      error->all(FLERR,"Invalid atom type in fix gcmc command");
+  }
+
+  // if atoms are exchanged, warn if any deletable atom has a mol ID
+
+  if ((exchmode == EXCHATOM) && atom->molecule_flag) {
+    tagint *molecule = atom->molecule;
+    int flag = 0;
+    for (int i = 0; i < atom->nlocal; i++)
+      if (type[i] == ngcmc_type)
+        if (molecule[i]) flag = 1;
+    int flagall;
+    MPI_Allreduce(&flag,&flagall,1,MPI_INT,MPI_SUM,world);
+    if (flagall && comm->me == 0)
+      error->all(FLERR,
+       "Fix gcmc cannot exchange individual atoms belonging to a molecule");
+  }
+
+  // if molecules are exchanged or moved, check for unset mol IDs
+
+  if (exchmode == EXCHMOL || movemode == MOVEMOL) {
+    tagint *molecule = atom->molecule;
+    int *mask = atom->mask;
+    int flag = 0;
+    for (int i = 0; i < atom->nlocal; i++)
+      if (mask[i] == groupbit)
+        if (molecule[i] == 0) flag = 1;
+    int flagall;
+    MPI_Allreduce(&flag,&flagall,1,MPI_INT,MPI_SUM,world);
+    if (flagall && comm->me == 0)
+      error->all(FLERR,
+       "All mol IDs should be set for fix gcmc group atoms");
+  }
+
+  if (exchmode == EXCHMOL || movemode == MOVEMOL)
+    if (atom->molecule_flag == 0 || !atom->tag_enable || !atom->map_style)
+      error->all(FLERR,
+       "Fix gcmc molecule command requires that "
+       "atoms have molecule attributes");
+
+  // if rigidflag defined, check for rigid/small fix
+  // its molecule template must be same as this one
+
+  fixrigid = NULL;
+  if (rigidflag) {
+    int ifix = modify->find_fix(idrigid);
+    if (ifix < 0) error->all(FLERR,"Fix gcmc rigid fix does not exist");
+    fixrigid = modify->fix[ifix];
+    int tmp;
+    if (&onemols[imol] != (Molecule **) fixrigid->extract("onemol",tmp))
+      error->all(FLERR,
+                 "Fix gcmc and fix rigid/small not using "
+                 "same molecule template ID");
+  }
+
+  // if shakeflag defined, check for SHAKE fix
+  // its molecule template must be same as this one
+
+  fixshake = NULL;
+  if (shakeflag) {
+    int ifix = modify->find_fix(idshake);
+    if (ifix < 0) error->all(FLERR,"Fix gcmc shake fix does not exist");
+    fixshake = modify->fix[ifix];
+    int tmp;
+    if (&onemols[imol] != (Molecule **) fixshake->extract("onemol",tmp))
+      error->all(FLERR,"Fix gcmc and fix shake not using "
+                 "same molecule template ID");
+  }
+
+  if (domain->dimension == 2)
+    error->all(FLERR,"Cannot use fix gcmc in a 2d simulation");
+
+  // create a new group for interaction exclusions
+  // used for attempted atom or molecule deletions
+  // skip if already exists from previous init()
+
+  if (full_flag && !exclusion_group_bit) {
+    char **group_arg = new char*[4];
+
+    // create unique group name for atoms to be excluded
+
+    int len = strlen(id) + 30;
+    group_arg[0] = new char[len];
+    sprintf(group_arg[0],"FixGCMC:gcmc_exclusion_group:%s",id);
+    group_arg[1] = (char *) "subtract";
+    group_arg[2] = (char *) "all";
+    group_arg[3] = (char *) "all";
+    group->assign(4,group_arg);
+    exclusion_group = group->find(group_arg[0]);
+    if (exclusion_group == -1)
+      error->all(FLERR,"Could not find fix gcmc exclusion group ID");
+    exclusion_group_bit = group->bitmask[exclusion_group];
+
+    // neighbor list exclusion setup
+    // turn off interactions between group all and the exclusion group
+
+    int narg = 4;
+    char **arg = new char*[narg];;
+    arg[0] = (char *) "exclude";
+    arg[1] = (char *) "group";
+    arg[2] = group_arg[0];
+    arg[3] = (char *) "all";
+    neighbor->modify_params(narg,arg);
+    delete [] group_arg[0];
+    delete [] group_arg;
+    delete [] arg;
+  }
+
+  // create a new group for temporary use with selected molecules
+
+  if (exchmode == EXCHMOL || movemode == MOVEMOL) {
+    char **group_arg = new char*[3];
+    // create unique group name for atoms to be rotated
+    int len = strlen(id) + 30;
+    group_arg[0] = new char[len];
+    sprintf(group_arg[0],"FixGCMC:rotation_gas_atoms:%s",id);
+    group_arg[1] = (char *) "molecule";
+    char digits[12];
+    sprintf(digits,"%d",-1);
+    group_arg[2] = digits;
+    group->assign(3,group_arg);
+    molecule_group = group->find(group_arg[0]);
+    if (molecule_group == -1)
+      error->all(FLERR,"Could not find fix gcmc rotation group ID");
+    molecule_group_bit = group->bitmask[molecule_group];
+    molecule_group_inversebit = molecule_group_bit ^ ~0;
+    delete [] group_arg[0];
+    delete [] group_arg;
+  }
+
+  // get all of the needed molecule data if exchanging
+  // or moving molecules, otherwise just get the gas mass
+
+  if (exchmode == EXCHMOL || movemode == MOVEMOL) {
+
+    onemols[imol]->compute_mass();
+    onemols[imol]->compute_com();
+    gas_mass = onemols[imol]->masstotal;
+    for (int i = 0; i < onemols[imol]->natoms; i++) {
+      onemols[imol]->x[i][0] -= onemols[imol]->com[0];
+      onemols[imol]->x[i][1] -= onemols[imol]->com[1];
+      onemols[imol]->x[i][2] -= onemols[imol]->com[2];
+    }
+    onemols[imol]->com[0] = 0;
+    onemols[imol]->com[1] = 0;
+    onemols[imol]->com[2] = 0;
+
+  } else gas_mass = atom->mass[ngcmc_type];
+
+  if (gas_mass <= 0.0)
+    error->all(FLERR,"Illegal fix gcmc gas mass <= 0");
+
+  // check that no deletable atoms are in atom->firstgroup
+  // deleting such an atom would not leave firstgroup atoms first
+
+  if (atom->firstgroup >= 0) {
+    int *mask = atom->mask;
+    int firstgroupbit = group->bitmask[atom->firstgroup];
+
+    int flag = 0;
+    for (int i = 0; i < atom->nlocal; i++)
+      if ((mask[i] == groupbit) && (mask[i] && firstgroupbit)) flag = 1;
+
+    int flagall;
+    MPI_Allreduce(&flag,&flagall,1,MPI_INT,MPI_SUM,world);
+
+    if (flagall)
+      error->all(FLERR,"Cannot do GCMC on atoms in atom_modify first group");
+  }
+
+  // compute beta, lambda, sigma, and the zz factor
+  // For LJ units, lambda=1
+  beta = 1.0/(force->boltz*reservoir_temperature);
+  if (strcmp(update->unit_style,"lj") == 0)
+    zz = exp(beta*chemical_potential);
+  else {
+    double lambda = sqrt(force->hplanck*force->hplanck/
+                         (2.0*MY_PI*gas_mass*force->mvv2e*
+                        force->boltz*reservoir_temperature));
+    zz = exp(beta*chemical_potential)/(pow(lambda,3.0));
+  }
+
+  sigma = sqrt(force->boltz*reservoir_temperature*tfac_insert/gas_mass/force->mvv2e);
+  if (pressure_flag) zz = pressure*fugacity_coeff*beta/force->nktv2p;
+
+  imagezero = ((imageint) IMGMAX << IMG2BITS) |
+             ((imageint) IMGMAX << IMGBITS) | IMGMAX;
+
+  // warning if group id is "all"
+
+  if ((comm->me == 0) && (groupbit & 1))
+    error->warning(FLERR, "Fix gcmc is being applied "
+                   "to the default group all");
+
+  // construct group bitmask for all new atoms
+  // aggregated over all group keywords
+
+  groupbitall = 1 | groupbit;
+  for (int igroup = 0; igroup < ngroups; igroup++) {
+    int jgroup = group->find(groupstrings[igroup]);
+    if (jgroup == -1)
+      error->all(FLERR,"Could not find specified fix gcmc group ID");
+    groupbitall |= group->bitmask[jgroup];
+  }
+
+  // construct group type bitmasks
+  // not aggregated over all group keywords
+
+  if (ngrouptypes > 0) {
+    memory->create(grouptypebits,ngrouptypes,"fix_gcmc:grouptypebits");
+    for (int igroup = 0; igroup < ngrouptypes; igroup++) {
+      int jgroup = group->find(grouptypestrings[igroup]);
+      if (jgroup == -1)
+        error->all(FLERR,"Could not find specified fix gcmc group ID");
+      grouptypebits[igroup] = group->bitmask[jgroup];
+    }
+  }
+
+  // current implementation does not support region with multiple procs yet
+
+  if (regionflag && (exchmode == EXCHMOL || movemode == MOVEMOL) &&
+    comm->nprocs > 1)
+    error->all(FLERR,"fix gcmc/electrolyte does currently not support "
+      "region option with molecules on more than 1 MPI process.");
+
+  // count the number of anions and cations per electrolyte molecule
+
   num_anions_per_molecule = 0;
   num_cations_per_molecule = 0;
   for (int i = 0; i < natoms_per_molecule; i++) {

@@ -29,7 +29,7 @@ class FixGCMC : public Fix {
   FixGCMC(class LAMMPS *, int, char **);
   ~FixGCMC();
   int setmask();
-  void init();
+  virtual void init();
   void pre_exchange();
   void attempt_atomic_translation();
   void attempt_atomic_deletion();
@@ -43,8 +43,8 @@ class FixGCMC : public Fix {
   void attempt_atomic_insertion_full();
   void attempt_molecule_translation_full();
   void attempt_molecule_rotation_full();
-  void attempt_molecule_deletion_full();
-  void attempt_molecule_insertion_full();
+  virtual void attempt_molecule_deletion_full();
+  virtual void attempt_molecule_insertion_full();
   double energy(int, int, tagint, double *);
   double molecule_energy(tagint);
   double energy_full();
@@ -58,7 +58,7 @@ class FixGCMC : public Fix {
   void restart(char *);
   void grow_molecule_arrays(int);
 
- private:
+ protected:
   int molecule_group,molecule_group_bit;
   int molecule_group_inversebit;
   int exclusion_group,exclusion_group_bit;
