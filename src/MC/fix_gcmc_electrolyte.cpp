@@ -59,6 +59,8 @@ using namespace MathConst;
 
 #define MAXENERGYTEST 1.0e50
 
+//#define GCMC_ELECTROLYTE_DEBUG
+
 /* ---------------------------------------------------------------------- */
 
 FixGCMCElectrolyte::FixGCMCElectrolyte(LAMMPS *lmp, int narg, char **arg) :
@@ -80,8 +82,8 @@ void FixGCMCElectrolyte::init()
     if (onemols[imol]->q[i] > 0) num_cations_per_molecule++;
   }
   if (comm->me == 0) 
-    printf("Electrolyte with %d cations : %d anions\n", num_cations_per_molecule,
-      num_anions_per_molecule);
+    fprintf(screen, "fix gcmc: electrolyte with %d cations : %d anions\n",
+      num_cations_per_molecule, num_anions_per_molecule);
 }
 
 /* ----------------------------------------------------------------------
@@ -113,7 +115,6 @@ void FixGCMCElectrolyte::attempt_molecule_insertion_full()
 
   int nlocalprev = atom->nlocal;
 
-  
   double vnew[3];
   vnew[0] = random_equal->gaussian()*sigma;
   vnew[1] = random_equal->gaussian()*sigma;
@@ -159,7 +160,6 @@ void FixGCMCElectrolyte::attempt_molecule_insertion_full()
 
         domain->lamda2x(lamda,xtmp);
       }
-
     }
 
     // need to adjust image flags in remap()
@@ -208,6 +208,15 @@ void FixGCMCElectrolyte::attempt_molecule_insertion_full()
     }
   }
 
+  #ifdef GCMC_ELECTROLYTE_DEBUG  
+  int n, ncount = 0;
+  for (int i = 0; i < atom->nlocal; i++)
+    if (atom->molecule[i] == insertion_molecule) ncount++;
+  MPI_Allreduce(&ncount,&n,1,MPI_INT,MPI_SUM,world);
+  if (comm->me == 0) printf("number of atoms having the molecule id %d: %d\n",
+    insertion_molecule, n);
+  #endif
+
   atom->natoms += natoms_per_molecule;
   if (atom->natoms < 0)
     error->all(FLERR,"Too many total atoms");
@@ -227,7 +236,8 @@ void FixGCMCElectrolyte::attempt_molecule_insertion_full()
 
   // energy_after corrected by energy_intra
 
-  double permutations = factorial(num_anions_per_molecule)*factorial(num_cations_per_molecule);
+  double permutations = factorial(num_anions_per_molecule)*
+    factorial(num_cations_per_molecule);
   // double deltaphi = zz*pow(volume,natoms_per_molecule)/permutations*natoms_per_molecule *
   //  exp(beta*(energy_before - (energy_after - energy_intra)))/(ngas + natoms_per_molecule);
 
@@ -316,7 +326,8 @@ void FixGCMCElectrolyte::attempt_molecule_deletion_full()
 
   // energy_before corrected by energy_intra
 
-  double permutations = factorial(num_anions_per_molecule)*factorial(num_cations_per_molecule);
+  double permutations = factorial(num_anions_per_molecule)*
+    factorial(num_cations_per_molecule);
   //double deltaphi = ngas*exp(beta*((energy_before - energy_intra) - energy_after)) /
   //  (zz*pow(volume,natoms_per_molecule)/permutations*natoms_per_molecule);
 
