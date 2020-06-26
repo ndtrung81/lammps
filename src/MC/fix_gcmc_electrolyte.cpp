@@ -347,12 +347,12 @@ void FixGCMCElectrolyte::init()
   }
 
   // current implementation does not support region with multiple procs yet
-
+/*
   if (regionflag && (exchmode == EXCHMOL || movemode == MOVEMOL) &&
     comm->nprocs > 1)
     error->all(FLERR,"fix gcmc/electrolyte does currently not support "
       "region option with molecules on more than 1 MPI process.");
-
+*/
   // count the number of anions and cations per electrolyte molecule
 
   num_anions_per_molecule = 0;
@@ -361,9 +361,11 @@ void FixGCMCElectrolyte::init()
     if (onemols[imol]->q[i] < 0) num_anions_per_molecule++;
     if (onemols[imol]->q[i] > 0) num_cations_per_molecule++;
   }
+
   if (comm->me == 0) 
     fprintf(screen, "fix gcmc: electrolyte with %d cations : %d anions\n",
       num_cations_per_molecule, num_anions_per_molecule);
+
 }
 
 /* ----------------------------------------------------------------------
