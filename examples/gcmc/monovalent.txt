@@ -1,0 +1,20 @@
+# NaCl
+
+2 atoms
+0 bonds
+0 angles
+
+Coords
+
+1    0.0   0.0   0.0
+2    1.0   1.0   1.0
+
+Types
+
+1        1  
+2        2   
+
+Charges 
+
+1       1.0
+2       -1.0 
