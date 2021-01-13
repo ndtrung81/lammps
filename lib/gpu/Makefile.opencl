@@ -24,8 +24,6 @@ LIB_DIR = ./
 AR = ar
 BSH = /bin/sh
 
-#include Opencl.makefile2
-
 # Compiler settings
 
 # OCL_TUNE = -DFERMI_OCL     # -- Uncomment for NVIDIA Fermi
@@ -77,9 +75,6 @@ $(OBJ_DIR)/lal_%.o: lal_%.cpp $(KERS)
 $(GPU_LIB): $(OBJS)
 	$(AR) -crusv $(GPU_LIB) $(OBJS)
 	@cp $(EXTRAMAKE) Makefile.lammps
-	@echo "api = OPENCL_API" > configure.options
-	@echo "precision = $(OCL_PREC)" >> configure.options
-	@echo "arch = $(OCL_TUNE)" >> configure.options
 
 # test app for querying device info
 
