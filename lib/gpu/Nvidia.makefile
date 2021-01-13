@@ -1,26 +1,14 @@
-CUDA  = $(NVCC) $(CUDA_INCLUDE) $(CUDA_OPTS) -Icudpp_mini $(CUDA_ARCH) \
-             $(CUDA_PRECISION)
-CUDR  = $(CUDR_CPP) $(CUDR_OPTS) $(CUDA_PRECISION) $(CUDA_INCLUDE) \
-         $(CUDPP_OPT)
-CUDA_LINK = $(CUDA_LIB) -lcudart
-BIN2C = $(CUDA_HOME)/bin/bin2c
-
-GPU_LIB = $(LIB_DIR)/libgpu.a
-
 # Headers for Geryon
 UCL_H  = $(wildcard ./geryon/ucl*.h)
 NVD_H  = $(wildcard ./geryon/nvd*.h) $(UCL_H) lal_preprocessor.h
-
 ALL_H  =  $(NVD_H) $(wildcard ./lal_*.h)
+
+# Source files
 SRCS := $(wildcard ./lal_*.cpp)
 OBJS := $(subst ./,$(OBJ_DIR)/,$(SRCS:%.cpp=%.o))
 CUS  := $(wildcard lal_*.cu)
 CUHS := $(filter-out pppm_cubin.h, $(CUS:lal_%.cu=%_cubin.h)) pppm_f_cubin.h pppm_d_cubin.h
 CUHS := $(addprefix $(OBJ_DIR)/, $(CUHS))
-
-EXECS = $(BIN_DIR)/nvc_get_devices
-
-all: $(OBJ_DIR) $(CUHS) $(GPU_LIB) $(EXECS)
 
 ifdef CUDPP_OPT
 CUDPP = $(OBJ_DIR)/cudpp.o $(OBJ_DIR)/cudpp_plan.o \
@@ -28,8 +16,26 @@ CUDPP = $(OBJ_DIR)/cudpp.o $(OBJ_DIR)/cudpp_plan.o \
         $(OBJ_DIR)/radixsort_app.cu_o $(OBJ_DIR)/scan_app.cu_o
 endif
 
+# targets
+
+GPU_LIB = $(LIB_DIR)/libgpu.a
+
+EXECS = $(BIN_DIR)/nvc_get_devices
+
+all: $(OBJ_DIR) $(CUHS) $(GPU_LIB) $(EXECS)
+
 $(OBJ_DIR):
 	mkdir -p $@
+
+# Compilers and linkers
+
+CUDA  = $(NVCC) $(CUDA_INCLUDE) $(CUDA_OPTS) -Icudpp_mini $(CUDA_ARCH) \
+             $(CUDA_PRECISION)
+CUDR  = $(CUDR_CPP) $(CUDR_OPTS) $(CUDA_PRECISION) $(CUDA_INCLUDE) \
+         $(CUDPP_OPT)
+CUDA_LINK = $(CUDA_LIB) -lcudart
+
+BIN2C = $(CUDA_HOME)/bin/bin2c
 
 # device code compilation
 
@@ -75,12 +81,16 @@ $(OBJ_DIR)/scan_app.cu_o: cudpp_mini/scan_app.cu
 	$(CUDA) -o $@ -c cudpp_mini/scan_app.cu
 #endif
 
-$(BIN_DIR)/nvc_get_devices: ./geryon/ucl_get_devices.cpp $(NVD_H)
-	$(CUDR) -o $@ ./geryon/ucl_get_devices.cpp -DUCL_CUDADR $(CUDA_LIB) -lcuda 
+# build libgpu.a
 
 $(GPU_LIB): $(OBJS) $(CUDPP)
 	$(AR) -crusv $(GPU_LIB) $(OBJS) $(CUDPP)
 	@cp $(EXTRAMAKE) Makefile.lammps
+
+# test app for querying device info
+
+$(BIN_DIR)/nvc_get_devices: ./geryon/ucl_get_devices.cpp $(NVD_H)
+	$(CUDR) -o $@ ./geryon/ucl_get_devices.cpp -DUCL_CUDADR $(CUDA_LIB) -lcuda 
 
 clean:
 	-rm -f $(EXECS) $(GPU_LIB) $(OBJS) $(CUDPP) $(CUHS) *.linkinfo

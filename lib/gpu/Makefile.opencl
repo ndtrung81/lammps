@@ -24,7 +24,7 @@ LIB_DIR = ./
 AR = ar
 BSH = /bin/sh
 
-# Compiler settings
+# Compiler and linker settings
 
 # OCL_TUNE = -DFERMI_OCL     # -- Uncomment for NVIDIA Fermi
 # OCL_TUNE = -DKEPLER_OCL    # -- Uncomment for NVIDIA Kepler
@@ -89,5 +89,4 @@ veryclean: clean
 
 cleanlib:
 	-rm -f $(EXECS) $(GPU_LIB) $(OBJS) $(KERS) *.linkinfo
-
 
