@@ -122,10 +122,10 @@ $(OBJ_DIR)/cudpp_plan_manager.o: cudpp_mini/cudpp_plan_manager.cpp
 	$(CUDR) -o $@ -c cudpp_mini/cudpp_plan_manager.cpp -Icudpp_mini
 
 $(OBJ_DIR)/radixsort_app.cu_o: cudpp_mini/radixsort_app.cu
-	$(CUDA) -o $@ -c cudpp_mini/radixsort_app.cu
+	$(CUDA) -o $@ -c cudpp_mini/radixsort_app.cu -Icudpp_mini
 
 $(OBJ_DIR)/scan_app.cu_o: cudpp_mini/scan_app.cu
-	$(CUDA) -o $@ -c cudpp_mini/scan_app.cu
+	$(CUDA) -o $@ -c cudpp_mini/scan_app.cu -Icudpp_mini
 #endif
 
 # build libgpu.a
