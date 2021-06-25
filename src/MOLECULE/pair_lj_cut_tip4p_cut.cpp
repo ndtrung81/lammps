@@ -130,6 +130,9 @@ void PairLJCutTIP4PCut::compute(int eflag, int vflag)
 
   // loop over neighbors of my atoms
 
+  nrsq = 0;
+  maxrsq = 0.0;
+
   for (ii = 0; ii < inum; ii++) {
     i = ilist[ii];
     qtmp = q[i];
@@ -389,6 +392,8 @@ void PairLJCutTIP4PCut::compute(int eflag, int vflag)
       }
     }
   }
+
+  printf("MAXBOND %d %g\n",nrsq,sqrt(maxrsq));
 }
 
 /* ----------------------------------------------------------------------
@@ -730,6 +735,15 @@ void PairLJCutTIP4PCut::compute_newsite(double *xO,  double *xH1,
   xM[0] = xO[0] + alpha * 0.5 * (delx1 + delx2);
   xM[1] = xO[1] + alpha * 0.5 * (dely1 + dely2);
   xM[2] = xO[2] + alpha * 0.5 * (delz1 + delz2);
+
+  // DEBUG
+
+  double rsq1 = delx1*delx1 + dely1*dely1 + delz1*delz1;
+  double rsq2 = delx2*delx2 + dely2*dely2 + delz2*delz2;
+
+  nrsq++;
+  maxrsq = MAX(maxrsq,rsq1);
+  maxrsq = MAX(maxrsq,rsq2);
 }
 
 /* ---------------------------------------------------------------------- */

@@ -199,6 +199,11 @@ Atom::Atom(LAMMPS *lmp) : Pointers(lmp)
   rho = drho = esph = desph = cv = nullptr;
   vest = nullptr;
 
+  // AMOEBA package
+
+  nspecial15 = nullptr;
+  special15 = nullptr;
+  
   // USER-DIELECTRIC package
 
   area = ed = em = epsilon = curvature = q_unscaled = nullptr;
@@ -296,9 +301,11 @@ Atom::~Atom()
 
   // delete custom atom arrays
 
-  for (int i = 0; i < nivector; i++) {
-    delete [] iname[i];
-    memory->destroy(ivector[i]);
+  if (ivector != NULL) {
+    for (int i = 0; i < nivector; i++) {
+      delete [] iname[i];
+      memory->destroy(ivector[i]);
+    }
   }
   if (dvector != nullptr) {
     for (int i = 0; i < ndvector; i++) {
@@ -515,6 +522,11 @@ void Atom::peratom_create()
   add_peratom("eff_plastic_strain_rate",&eff_plastic_strain_rate,DOUBLE,0);
   add_peratom("damage",&damage,DOUBLE,0);
 
+  // AMOEBA package
+
+  add_peratom("nspecial15",&nspecial15,INT,0);
+  add_peratom_vary("special15",&special15,tagintsize,&maxspecial15,&nspecial15,0);
+
   // USER-DIELECTRIC package
 
   add_peratom("area",&area,DOUBLE,0);
@@ -630,7 +642,8 @@ void Atom::set_atomflag_defaults()
   mesont_flag = 0;
   contact_radius_flag = smd_data_9_flag = smd_stress_flag = 0;
   eff_plastic_strain_flag = eff_plastic_strain_rate_flag = 0;
-
+  nspecial15_flag = 0;
+  
   pdscale = 1.0;
 }
 
@@ -2437,6 +2450,7 @@ int Atom::add_custom(const char *name, int flag)
     ivector = (int **) memory->srealloc(ivector,nivector*sizeof(int *),
                                         "atom:ivector");
     memory->create(ivector[index],nmax,"atom:ivector");
+
   } else {
     index = ndvector;
     ndvector++;

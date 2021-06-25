@@ -62,6 +62,11 @@ class PairLJCutTIP4PCut : public Pair {
 
   void allocate();
   void compute_newsite(double *, double *, double *, double *);
+
+  // debug
+
+  int nrsq;
+  double maxrsq;
 };
 }    // namespace LAMMPS_NS
 

@@ -53,7 +53,7 @@ class FixPropertyAtom : public Fix {
  protected:
   int nvalue, border;
   int molecule_flag, q_flag, rmass_flag;
-  int *style, *index;
+  int *styles, *index;
   char *astyle;
 
   int nmax_old;    // length of peratom arrays the last time they grew

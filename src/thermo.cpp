@@ -65,6 +65,7 @@ using namespace MathConst;
 // pxx, pyy, pzz, pxy, pxz, pyz
 // fmax, fnorm, nbuild, ndanger
 // cella, cellb, cellc, cellalpha, cellbeta, cellgamma
+// peomm
 
 // customize a new thermo style by adding a DEFINE to this list
 // also insure allocation of line string is correct in constructor
@@ -899,8 +900,8 @@ void Thermo::parse_fields(char *str)
     } else if (word == "cellgamma") {
       addfield("CellGamma",&Thermo::compute_cellgamma,FLOAT);
 
-      // compute value = c_ID, fix value = f_ID, variable value = v_ID
-      // count trailing [] and store int arguments
+    // compute value = c_ID, fix value = f_ID, variable value = v_ID
+    // count trailing [] and store int arguments
 
     } else {
       ArgInfo argi(word);
@@ -2229,4 +2230,3 @@ void Thermo::compute_cellgamma()
     dvalue = acos(cosgamma)*180.0/MY_PI;
   }
 }
-

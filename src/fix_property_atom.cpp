@@ -31,7 +31,7 @@ enum{MOLECULE,CHARGE,RMASS,INTEGER,DOUBLE};
 
 FixPropertyAtom::FixPropertyAtom(LAMMPS *lmp, int narg, char **arg) :
   Fix(lmp, narg, arg),
-  nvalue(0), style(nullptr), index(nullptr), astyle(nullptr)
+  nvalue(0), styles(nullptr), index(nullptr), astyle(nullptr)
 {
   if (narg < 4) error->all(FLERR,"Illegal fix property/atom command");
 
@@ -40,7 +40,7 @@ FixPropertyAtom::FixPropertyAtom(LAMMPS *lmp, int narg, char **arg) :
 
   int iarg = 3;
   nvalue = narg-iarg;
-  style = new int[nvalue];
+  styles = new int[nvalue];
   index = new int[nvalue];
 
   molecule_flag = 0;
@@ -55,7 +55,7 @@ FixPropertyAtom::FixPropertyAtom(LAMMPS *lmp, int narg, char **arg) :
                    "already has molecule attribute");
       if (molecule_flag)
         error->all(FLERR,"Fix property/atom cannot specify mol twice");
-      style[nvalue] = MOLECULE;
+      styles[nvalue] = MOLECULE;
       atom->molecule_flag = molecule_flag = 1;
       nvalue++;
     } else if (strcmp(arg[iarg],"q") == 0) {
@@ -64,7 +64,7 @@ FixPropertyAtom::FixPropertyAtom(LAMMPS *lmp, int narg, char **arg) :
                    "already has charge attribute");
       if (q_flag)
         error->all(FLERR,"Fix property/atom cannot specify q twice");
-      style[nvalue] = CHARGE;
+      styles[nvalue] = CHARGE;
       atom->q_flag = q_flag = 1;
       nvalue++;
     } else if (strcmp(arg[iarg],"rmass") == 0) {
@@ -73,11 +73,11 @@ FixPropertyAtom::FixPropertyAtom(LAMMPS *lmp, int narg, char **arg) :
                    "already has rmass attribute");
       if (rmass_flag)
         error->all(FLERR,"Fix property/atom cannot specify rmass twice");
-      style[nvalue] = RMASS;
+      styles[nvalue] = RMASS;
       atom->rmass_flag = rmass_flag = 1;
       nvalue++;
     } else if (utils::strmatch(arg[iarg],"^i_")) {
-      style[nvalue] = INTEGER;
+      styles[nvalue] = INTEGER;
       int tmp;
       index[nvalue] = atom->find_custom(&arg[iarg][2],tmp);
       if (index[nvalue] >= 0)
@@ -85,7 +85,7 @@ FixPropertyAtom::FixPropertyAtom(LAMMPS *lmp, int narg, char **arg) :
       index[nvalue] = atom->add_custom(&arg[iarg][2],0);
       nvalue++;
     } else if (utils::strmatch(arg[iarg],"^d_")) {
-      style[nvalue] = DOUBLE;
+      styles[nvalue] = DOUBLE;
       int tmp;
       index[nvalue] = atom->find_custom(&arg[iarg][2],tmp);
       if (index[nvalue] >= 0)
@@ -117,9 +117,8 @@ FixPropertyAtom::FixPropertyAtom(LAMMPS *lmp, int narg, char **arg) :
   if (border == 0) {
     int flag = 0;
     for (int i = 0; i < nvalue; i++)
-      if (style[i] == MOLECULE
-          || style[i] == CHARGE
-          || style[i] == RMASS) flag = 1;
+      if (styles[i] == MOLECULE || styles[i] == CHARGE || styles[i] == RMASS) 
+        flag = 1;
     if (flag && comm->me == 0)
       error->warning(FLERR,"Fix property/atom mol or charge or rmass "
                      "w/out ghost communication");
@@ -154,26 +153,26 @@ FixPropertyAtom::~FixPropertyAtom()
   // set ptrs to a null pointer, so they no longer exist for Atom class
 
   for (int m = 0; m < nvalue; m++) {
-    if (style[m] == MOLECULE) {
+    if (styles[m] == MOLECULE) {
       atom->molecule_flag = 0;
       memory->destroy(atom->molecule);
       atom->molecule = nullptr;
-    } else if (style[m] == CHARGE) {
+    } else if (styles[m] == CHARGE) {
       atom->q_flag = 0;
       memory->destroy(atom->q);
       atom->q = nullptr;
-    } else if (style[m] == RMASS) {
+    } else if (styles[m] == RMASS) {
       atom->rmass_flag = 0;
       memory->destroy(atom->rmass);
       atom->rmass = nullptr;
-    } else if (style[m] == INTEGER) {
+    } else if (styles[m] == INTEGER) {
       atom->remove_custom(0,index[m]);
-    } else if (style[m] == DOUBLE) {
+    } else if (styles[m] == DOUBLE) {
       atom->remove_custom(1,index[m]);
     }
   }
 
-  delete [] style;
+  delete [] styles;
   delete [] index;
   delete [] astyle;
 }
@@ -241,15 +240,15 @@ void FixPropertyAtom::read_data_section(char *keyword, int n, char *buf,
 
       if ((m = atom->map(itag)) >= 0) {
         for (j = 0; j < nvalue; j++) {
-          if (style[j] == MOLECULE) {
+          if (styles[j] == MOLECULE) {
             atom->molecule[m] = values.next_tagint();
-          } else if (style[j] == CHARGE) {
+          } else if (styles[j] == CHARGE) {
             atom->q[m] = values.next_double();
-          } else if (style[j] == RMASS) {
+          } else if (styles[j] == RMASS) {
             atom->rmass[m] = values.next_double();
-          } else if (style[j] == INTEGER) {
+          } else if (styles[j] == INTEGER) {
             atom->ivector[index[j]][m] = values.next_int();
-          } else if (style[j] == DOUBLE) {
+          } else if (styles[j] == DOUBLE) {
             atom->dvector[index[j]][m] = values.next_double();
           }
         }
@@ -308,19 +307,19 @@ void FixPropertyAtom::write_data_section_pack(int /*mth*/, double **buf)
 
   for (int m = 0; m < nvalue; m++) {
     int mp1 = m+1;
-    if (style[m] == MOLECULE) {
+    if (styles[m] == MOLECULE) {
       tagint *molecule = atom->molecule;
       for (i = 0; i < nlocal; i++) buf[i][mp1] = ubuf(molecule[i]).d;
-    } else if (style[m] == CHARGE) {
+    } else if (styles[m] == CHARGE) {
       double *q = atom->q;
       for (i = 0; i < nlocal; i++) buf[i][mp1] = q[i];
-    } else if (style[m] == RMASS) {
+    } else if (styles[m] == RMASS) {
       double *rmass = atom->rmass;
       for (i = 0; i < nlocal; i++) buf[i][mp1] = rmass[i];
-    } else if (style[m] == INTEGER) {
+    } else if (styles[m] == INTEGER) {
       int *ivec = atom->ivector[index[m]];
       for (i = 0; i < nlocal; i++) buf[i][mp1] = ubuf(ivec[i]).d;
-    } else if (style[m] == DOUBLE) {
+    } else if (styles[m] == DOUBLE) {
       double *dvec = atom->dvector[index[m]];
       for (i = 0; i < nlocal; i++) buf[i][mp1] = dvec[i];
     }
@@ -336,17 +335,17 @@ void FixPropertyAtom::write_data_section_pack(int /*mth*/, double **buf)
 
 void FixPropertyAtom::write_data_section_keyword(int /*mth*/, FILE *fp)
 {
-  if (nvalue == 1 && style[0] == MOLECULE) fprintf(fp,"\nMolecules\n\n");
-  else if (nvalue == 1 && style[0] == CHARGE) fprintf(fp,"\nCharges\n\n");
+  if (nvalue == 1 && styles[0] == MOLECULE) fprintf(fp,"\nMolecules\n\n");
+  else if (nvalue == 1 && styles[0] == CHARGE) fprintf(fp,"\nCharges\n\n");
   else {
     fprintf(fp,"\n%s #",id);
     // write column hint as comment
     for (int i = 0; i < nvalue; ++i) {
-      if (style[i] == MOLECULE) fputs(" mol",fp);
-      else if (style[i] == CHARGE) fputs(" q",fp);
-      else if (style[i] == RMASS) fputs(" rmass",fp);
-      else if (style[i] == INTEGER) fprintf(fp," i_%s", atom->iname[index[i]]);
-      else if (style[i] == DOUBLE) fprintf(fp, " d_%s", atom->dname[index[i]]);
+      if (styles[i] == MOLECULE) fputs(" mol",fp);
+      else if (styles[i] == CHARGE) fputs(" q",fp);
+      else if (styles[i] == RMASS) fputs(" rmass",fp);
+      else if (styles[i] == INTEGER) fprintf(fp," i_%s", atom->iname[index[i]]);
+      else if (styles[i] == DOUBLE) fprintf(fp, " d_%s", atom->dname[index[i]]);
     }
     fputs("\n\n",fp);
   }
@@ -367,9 +366,9 @@ void FixPropertyAtom::write_data_section(int /*mth*/, FILE *fp,
   for (int i = 0; i < n; i++) {
     fprintf(fp,TAGINT_FORMAT,(tagint) ubuf(buf[i][0]).i);
     for (m = 0; m < nvalue; m++) {
-      if (style[m] == MOLECULE)
+      if (styles[m] == MOLECULE)
         fprintf(fp," " TAGINT_FORMAT,(tagint) ubuf(buf[i][m+1]).i);
-      else if (style[m] == INTEGER)
+      else if (styles[m] == INTEGER)
         fprintf(fp," %d",(int) ubuf(buf[i][m+1]).i);
       else fprintf(fp," %g",buf[i][m+1]);
     }
@@ -385,11 +384,11 @@ double FixPropertyAtom::memory_usage()
 {
   double bytes = 0.0;
   for (int m = 0; m < nvalue; m++) {
-    if (style[m] == MOLECULE) bytes = atom->nmax * sizeof(tagint);
-    else if (style[m] == CHARGE) bytes = atom->nmax * sizeof(double);
-    else if (style[m] == RMASS) bytes = atom->nmax * sizeof(double);
-    else if (style[m] == INTEGER) bytes = atom->nmax * sizeof(int);
-    else if (style[m] == DOUBLE) bytes = atom->nmax * sizeof(double);
+    if (styles[m] == MOLECULE) bytes = atom->nmax * sizeof(tagint);
+    else if (styles[m] == CHARGE) bytes = atom->nmax * sizeof(double);
+    else if (styles[m] == RMASS) bytes = atom->nmax * sizeof(double);
+    else if (styles[m] == INTEGER) bytes = atom->nmax * sizeof(int);
+    else if (styles[m] == DOUBLE) bytes = atom->nmax * sizeof(double);
   }
   return bytes;
 }
@@ -404,23 +403,23 @@ double FixPropertyAtom::memory_usage()
 void FixPropertyAtom::grow_arrays(int nmax)
 {
   for (int m = 0; m < nvalue; m++) {
-    if (style[m] == MOLECULE) {
+    if (styles[m] == MOLECULE) {
       memory->grow(atom->molecule,nmax,"atom:molecule");
       size_t nbytes = (nmax-nmax_old) * sizeof(tagint);
       memset(&atom->molecule[nmax_old],0,nbytes);
-    } else if (style[m] == CHARGE) {
+    } else if (styles[m] == CHARGE) {
       memory->grow(atom->q,nmax,"atom:q");
       size_t nbytes = (nmax-nmax_old) * sizeof(double);
       memset(&atom->q[nmax_old],0,nbytes);
-    } else if (style[m] == RMASS) {
+    } else if (styles[m] == RMASS) {
       memory->grow(atom->rmass,nmax,"atom:rmass");
       size_t nbytes = (nmax-nmax_old) * sizeof(double);
       memset(&atom->rmass[nmax_old],0,nbytes);
-    } else if (style[m] == INTEGER) {
+    } else if (styles[m] == INTEGER) {
       memory->grow(atom->ivector[index[m]],nmax,"atom:ivector");
       size_t nbytes = (nmax-nmax_old) * sizeof(int);
       memset(&atom->ivector[index[m]][nmax_old],0,nbytes);
-    } else if (style[m] == DOUBLE) {
+    } else if (styles[m] == DOUBLE) {
       memory->grow(atom->dvector[index[m]],nmax,"atom:dvector");
       size_t nbytes = (nmax-nmax_old) * sizeof(double);
       memset(&atom->dvector[index[m]][nmax_old],0,nbytes);
@@ -437,15 +436,15 @@ void FixPropertyAtom::grow_arrays(int nmax)
 void FixPropertyAtom::copy_arrays(int i, int j, int /*delflag*/)
 {
   for (int m = 0; m < nvalue; m++) {
-    if (style[m] == MOLECULE)
+    if (styles[m] == MOLECULE)
       atom->molecule[j] = atom->molecule[i];
-    else if (style[m] == CHARGE)
+    else if (styles[m] == CHARGE)
       atom->q[j] = atom->q[i];
-    else if (style[m] == RMASS)
+    else if (styles[m] == RMASS)
       atom->rmass[j] = atom->rmass[i];
-    else if (style[m] == INTEGER)
+    else if (styles[m] == INTEGER)
       atom->ivector[index[m]][j] = atom->ivector[index[m]][i];
-    else if (style[m] == DOUBLE)
+    else if (styles[m] == DOUBLE)
       atom->dvector[index[m]][j] = atom->dvector[index[m]][i];
   }
 }
@@ -460,31 +459,31 @@ int FixPropertyAtom::pack_border(int n, int *list, double *buf)
 
   int m = 0;
   for (k = 0; k < nvalue; k++) {
-    if (style[k] == MOLECULE) {
+    if (styles[k] == MOLECULE) {
       tagint *molecule = atom->molecule;
       for (i = 0; i < n; i++) {
         j = list[i];
         buf[m++] = ubuf(molecule[j]).d;
       }
-    } else if (style[k] == CHARGE) {
+    } else if (styles[k] == CHARGE) {
       double *q = atom->q;
       for (i = 0; i < n; i++) {
         j = list[i];
         buf[m++] = q[j];
       }
-    } else if (style[k] == RMASS) {
+    } else if (styles[k] == RMASS) {
       double *rmass = atom->rmass;
       for (i = 0; i < n; i++) {
         j = list[i];
         buf[m++] = rmass[j];
       }
-    } else if (style[k] == INTEGER) {
+    } else if (styles[k] == INTEGER) {
       int *ivector = atom->ivector[index[k]];
       for (i = 0; i < n; i++) {
         j = list[i];
         buf[m++] = ubuf(ivector[j]).d;
       }
-    } else if (style[k] == DOUBLE) {
+    } else if (styles[k] == DOUBLE) {
       double *dvector = atom->dvector[index[k]];
       for (i = 0; i < n; i++) {
         j = list[i];
@@ -506,27 +505,27 @@ int FixPropertyAtom::unpack_border(int n, int first, double *buf)
 
   int m = 0;
   for (k = 0; k < nvalue; k++) {
-    if (style[k] == MOLECULE) {
+    if (styles[k] == MOLECULE) {
       tagint *molecule = atom->molecule;
       last = first + n;
       for (i = first; i < last; i++)
         molecule[i] = (tagint) ubuf(buf[m++]).i;
-    } else if (style[k] == CHARGE) {
+    } else if (styles[k] == CHARGE) {
       double *q = atom->q;
       last = first + n;
       for (i = first; i < last; i++)
         q[i] = buf[m++];
-    } else if (style[k] == RMASS) {
+    } else if (styles[k] == RMASS) {
       double *rmass = atom->rmass;
       last = first + n;
       for (i = first; i < last; i++)
         rmass[i] = buf[m++];
-    } else if (style[k] == INTEGER) {
+    } else if (styles[k] == INTEGER) {
       int *ivector = atom->ivector[index[k]];
       last = first + n;
       for (i = first; i < last; i++)
         ivector[i] = (int) ubuf(buf[m++]).i;
-    } else if (style[k] == DOUBLE) {
+    } else if (styles[k] == DOUBLE) {
       double *dvector = atom->dvector[index[k]];
       last = first + n;
       for (i = first; i < last; i++)
@@ -544,11 +543,11 @@ int FixPropertyAtom::unpack_border(int n, int first, double *buf)
 int FixPropertyAtom::pack_exchange(int i, double *buf)
 {
   for (int m = 0; m < nvalue; m++) {
-    if (style[m] == MOLECULE) buf[m] = ubuf(atom->molecule[i]).d;
-    else if (style[m] == CHARGE) buf[m] = atom->q[i];
-    else if (style[m] == RMASS) buf[m] = atom->rmass[i];
-    else if (style[m] == INTEGER) buf[m] = ubuf(atom->ivector[index[m]][i]).d;
-    else if (style[m] == DOUBLE) buf[m] = atom->dvector[index[m]][i];
+    if (styles[m] == MOLECULE) buf[m] = ubuf(atom->molecule[i]).d;
+    else if (styles[m] == CHARGE) buf[m] = atom->q[i];
+    else if (styles[m] == RMASS) buf[m] = atom->rmass[i];
+    else if (styles[m] == INTEGER) buf[m] = ubuf(atom->ivector[index[m]][i]).d;
+    else if (styles[m] == DOUBLE) buf[m] = atom->dvector[index[m]][i];
   }
   return nvalue;
 }
@@ -560,15 +559,15 @@ int FixPropertyAtom::pack_exchange(int i, double *buf)
 int FixPropertyAtom::unpack_exchange(int nlocal, double *buf)
 {
   for (int m = 0; m < nvalue; m++) {
-    if (style[m] == MOLECULE)
+    if (styles[m] == MOLECULE)
       atom->molecule[nlocal] = (tagint) ubuf(buf[m]).i;
-    else if (style[m] == CHARGE)
+    else if (styles[m] == CHARGE)
       atom->q[nlocal] = buf[m];
-    else if (style[m] == RMASS)
+    else if (styles[m] == RMASS)
       atom->rmass[nlocal] = buf[m];
-    else if (style[m] == INTEGER)
+    else if (styles[m] == INTEGER)
       atom->ivector[index[m]][nlocal] = (int) ubuf(buf[m]).i;
-    else if (style[m] == DOUBLE)
+    else if (styles[m] == DOUBLE)
       atom->dvector[index[m]][nlocal] = buf[m];
   }
   return nvalue;
@@ -585,11 +584,11 @@ int FixPropertyAtom::pack_restart(int i, double *buf)
 
   int m = 1;
   for (int j = 0; j < nvalue; j++) {
-    if (style[j] == MOLECULE) buf[m++] = ubuf(atom->molecule[i]).d;
-    else if (style[j] == CHARGE) buf[m++] = atom->q[i];
-    else if (style[j] == RMASS) buf[m++] = atom->rmass[i];
-    else if (style[j] == INTEGER) buf[m++] = ubuf(atom->ivector[index[j]][i]).d;
-    else if (style[j] == DOUBLE) buf[m++] = atom->dvector[index[j]][i];
+    if (styles[j] == MOLECULE) buf[m++] = ubuf(atom->molecule[i]).d;
+    else if (styles[j] == CHARGE) buf[m++] = atom->q[i];
+    else if (styles[j] == RMASS) buf[m++] = atom->rmass[i];
+    else if (styles[j] == INTEGER) buf[m++] = ubuf(atom->ivector[index[j]][i]).d;
+    else if (styles[j] == DOUBLE) buf[m++] = atom->dvector[index[j]][i];
   }
 
   return nvalue+1;
@@ -611,15 +610,15 @@ void FixPropertyAtom::unpack_restart(int nlocal, int nth)
   m++;
 
   for (int i = 0; i < nvalue; i++) {
-    if (style[i] == MOLECULE)
+    if (styles[i] == MOLECULE)
       atom->molecule[nlocal] = (tagint) ubuf(extra[nlocal][m++]).i;
-    else if (style[i] == CHARGE)
+    else if (styles[i] == CHARGE)
       atom->q[nlocal] = extra[nlocal][m++];
-    else if (style[i] == RMASS)
+    else if (styles[i] == RMASS)
       atom->rmass[nlocal] = extra[nlocal][m++];
-    else if (style[i] == INTEGER)
+    else if (styles[i] == INTEGER)
       atom->ivector[index[i]][nlocal] = (int) ubuf(extra[nlocal][m++]).i;
-    else if (style[i] == DOUBLE)
+    else if (styles[i] == DOUBLE)
       atom->dvector[index[i]][nlocal] = extra[nlocal][m++];
   }
 }

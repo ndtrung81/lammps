@@ -261,7 +261,7 @@ double ComputePressure::compute_scalar()
     else
       scalar = (virial[0] + virial[1]) / 2.0 * inv_volume * nktv2p;
   }
-
+  
   return scalar;
 }
 
