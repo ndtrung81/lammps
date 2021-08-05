@@ -114,7 +114,7 @@ class Atom : protected Pointers {
 
   double **sp, **fm, **fm_long;
 
-  // USER_EFF and USER-AWPMD packages
+  // EFF and AWPMD packages
 
   int *spin;
   double *eradius, *ervel, *erforce;
@@ -122,14 +122,18 @@ class Atom : protected Pointers {
   double **cs, **csforce, **vforce;
   int *etag;
 
-  // USER-DPD package
+  // CG-DNA package
+
+  tagint *id5p;
+
+  // DPD-REACT package
 
   double *uCond, *uMech, *uChem, *uCGnew, *uCG;
   double *duChem;
   double *dpdTheta;
   int nspecies_dpd;
 
-  // USER-MESO package
+  // MESO package
 
   double **cc, **cc_flux;           // cc = chemical concentration
   double *edpd_temp, *edpd_flux;    // temperature and heat flux
@@ -137,13 +141,13 @@ class Atom : protected Pointers {
   double *edpd_cv;    // heat capacity
   int cc_species;
 
-  // USER-MESONT package
+  // MESONT package
 
   double *length;
   int *buckling;
   tagint **bond_nt;
 
-  // USER-SMD package
+  // MACHDYN package
 
   double *contact_radius;
   double **smd_data_9;
@@ -152,18 +156,12 @@ class Atom : protected Pointers {
   double *eff_plastic_strain_rate;
   double *damage;
 
-  // USER-SPH package
+  // SPH package
 
   double *rho, *drho, *esph, *desph, *cv;
   double **vest;
 
-  // AMOEBA package
-
-  int *nspecial15;              // # of 1-5 neighs
-  tagint **special15;           // IDs of 1-5 neighs of each atom
-  int maxspecial15;             // special15[nlocal][maxspecial15]
-
-  // USER-DIELECTRIC package
+  // DIELECTRIC package
 
   double *area,*ed,*em,*epsilon,*curvature,*q_unscaled;
 
@@ -193,7 +191,7 @@ class Atom : protected Pointers {
 
   int sp_flag;
 
-  // USER-SMD package
+  // MACHDYN package
 
   int x0_flag;
   int smd_flag, damage_flag;
@@ -285,7 +283,7 @@ class Atom : protected Pointers {
   // functions
 
   Atom(class LAMMPS *);
-  ~Atom();
+  virtual ~Atom();
 
   void settings(class Atom *);
   void peratom_create();
@@ -374,12 +372,12 @@ class Atom : protected Pointers {
       return -1;
   };
 
-  void map_init(int check = 1);
-  void map_clear();
-  void map_set();
+  virtual void map_init(int check = 1);
+  virtual void map_clear();
+  virtual void map_set();
   void map_one(tagint, int);
   int map_style_set();
-  void map_delete();
+  virtual void map_delete();
   int map_find_hash(tagint);
 
  protected:
