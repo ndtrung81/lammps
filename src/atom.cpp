@@ -525,16 +525,7 @@ void Atom::peratom_create()
   add_peratom("eff_plastic_strain_rate",&eff_plastic_strain_rate,DOUBLE,0);
   add_peratom("damage",&damage,DOUBLE,0);
 
-<<<<<<< HEAD
-  // AMOEBA package
-
-  add_peratom("nspecial15",&nspecial15,INT,0);
-  add_peratom_vary("special15",&special15,tagintsize,&maxspecial15,&nspecial15,0);
-
-  // USER-DIELECTRIC package
-=======
   // DIELECTRIC package
->>>>>>> 5045595ad8c24204a38d5091faaf5e74e415719b
 
   add_peratom("area",&area,DOUBLE,0);
   add_peratom("ed",&ed,DOUBLE,0);
