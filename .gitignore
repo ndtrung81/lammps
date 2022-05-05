@@ -1,6 +1,7 @@
 *~
 *.o
 *.so
+*.lo
 *.cu_o
 *.ptx
 *_ptx.h
@@ -8,8 +9,11 @@
 *.d
 *.x
 *.exe
+*.sif
 *.dll
 *.pyc
+*.whl
+a.out
 __pycache__
 
 Obj_*
@@ -21,9 +25,11 @@ log.cite
 .*.swp
 *.orig
 *.rej
+vgcore.*
 .vagrant
 \#*#
 .#*
+.vscode
 
 .DS_Store
 .DS_Store?
@@ -32,11 +38,20 @@ log.cite
 .Trashes
 ehthumbs.db
 Thumbs.db
+.lammps_history
+.vs
 
 #cmake
 /build*
 /CMakeCache.txt
 /CMakeFiles/
+/Testing
 /Makefile
+/Testing
 /cmake_install.cmake
 /lmp
+out/Debug
+out/RelWithDebInfo
+out/Release
+out/x86
+out/x64

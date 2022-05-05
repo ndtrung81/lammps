@@ -1,6 +1,7 @@
+// clang-format off
 /* ----------------------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
-   http://lammps.sandia.gov, Sandia National Laboratories
+   https://www.lammps.org/, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
 
    Copyright (2003) Sandia Corporation.  Under the terms of Contract
@@ -11,9 +12,8 @@
    See the README file in the top-level LAMMPS directory.
 ------------------------------------------------------------------------- */
 
-#include <mpi.h>
-#include <cstdlib>
 #include "compute_temp_partial.h"
+
 #include "atom.h"
 #include "update.h"
 #include "force.h"
@@ -38,9 +38,9 @@ ComputeTempPartial::ComputeTempPartial(LAMMPS *lmp, int narg, char **arg) :
   tempflag = 1;
   tempbias = 1;
 
-  xflag = force->inumeric(FLERR,arg[3]);
-  yflag = force->inumeric(FLERR,arg[4]);
-  zflag = force->inumeric(FLERR,arg[5]);
+  xflag = utils::inumeric(FLERR,arg[3],false,lmp);
+  yflag = utils::inumeric(FLERR,arg[4],false,lmp);
+  zflag = utils::inumeric(FLERR,arg[5],false,lmp);
   if ((xflag != 0 && xflag != 1) || (yflag != 0 && yflag != 1)
       || (zflag != 0 && zflag != 1))
     error->all(FLERR,"Illegal compute temp/partial command");
@@ -48,8 +48,8 @@ ComputeTempPartial::ComputeTempPartial(LAMMPS *lmp, int narg, char **arg) :
     error->all(FLERR,"Compute temp/partial cannot use vz for 2d systemx");
 
   maxbias = 0;
-  vbiasall = NULL;
-  vector = new double[6];
+  vbiasall = nullptr;
+  vector = new double[size_vector];
 }
 
 /* ---------------------------------------------------------------------- */
@@ -90,7 +90,7 @@ void ComputeTempPartial::dof_compute()
 
 /* ---------------------------------------------------------------------- */
 
-int ComputeTempPartial::dof_remove(int i)
+int ComputeTempPartial::dof_remove(int /*i*/)
 {
   int nper = xflag+yflag+zflag;
   return (domain->dimension - nper);
@@ -169,7 +169,7 @@ void ComputeTempPartial::compute_vector()
    remove velocity bias from atom I to leave thermal velocity
 ------------------------------------------------------------------------- */
 
-void ComputeTempPartial::remove_bias(int i, double *v)
+void ComputeTempPartial::remove_bias(int /*i*/, double *v)
 {
   if (!xflag) {
     vbias[0] = v[0];
@@ -189,7 +189,7 @@ void ComputeTempPartial::remove_bias(int i, double *v)
    remove velocity bias from atom I to leave thermal velocity
 ------------------------------------------------------------------------- */
 
-void ComputeTempPartial::remove_bias_thr(int i, double *v, double *b)
+void ComputeTempPartial::remove_bias_thr(int /*i*/, double *v, double *b)
 {
   if (!xflag) {
     b[0] = v[0];
@@ -275,7 +275,7 @@ void ComputeTempPartial::reapply_bias_all()
    assume remove_bias() was previously called
 ------------------------------------------------------------------------- */
 
-void ComputeTempPartial::restore_bias(int i, double *v)
+void ComputeTempPartial::restore_bias(int /*i*/, double *v)
 {
   if (!xflag) v[0] += vbias[0];
   if (!yflag) v[1] += vbias[1];
@@ -287,7 +287,7 @@ void ComputeTempPartial::restore_bias(int i, double *v)
    assume remove_bias_thr() was previously called with the same buffer b
 ------------------------------------------------------------------------- */
 
-void ComputeTempPartial::restore_bias_thr(int i, double *v, double *b)
+void ComputeTempPartial::restore_bias_thr(int /*i*/, double *v, double *b)
 {
   if (!xflag) v[0] += b[0];
   if (!yflag) v[1] += b[1];

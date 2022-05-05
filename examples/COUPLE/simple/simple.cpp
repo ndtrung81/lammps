@@ -1,6 +1,6 @@
 /* ----------------------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
-   www.cs.sandia.gov/~sjplimp/lammps.html
+   https://www.lammps.org/
    Steve Plimpton, sjplimp@sandia.gov, Sandia National Laboratories
 
    Copyright (2003) Sandia Corporation.  Under the terms of Contract
@@ -19,12 +19,13 @@
 //         in.lammps = LAMMPS input script
 // See README for compilation instructions
 
-#include "stdio.h"
-#include "stdlib.h"
-#include "string.h"
-#include "mpi.h"
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <mpi.h>
 
-#include "lammps.h"         // these are LAMMPS include files
+// these are LAMMPS include files
+#include "lammps.h"
 #include "input.h"
 #include "atom.h"
 #include "library.h"
@@ -134,10 +135,10 @@ int main(int narg, char **arg)
 
   // use commands_string() and commands_list() to invoke more commands
 
-  char *strtwo = (char *) "run 10\nrun 20";
+  const char *strtwo = (char *) "run 10\nrun 20";
   if (lammps == 1) lammps_commands_string(lmp,strtwo);
 
-  char *cmds[2];
+  const char *cmds[2];
   cmds[0] = (char *) "run 10";
   cmds[1] = (char *) "run 20";
   if (lammps == 1) lammps_commands_list(lmp,2,cmds);

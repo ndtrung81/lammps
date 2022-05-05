@@ -1,6 +1,6 @@
 /* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
-   http://lammps.sandia.gov, Sandia National Laboratories
+   https://www.lammps.org/, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
 
    Copyright (2003) Sandia Corporation.  Under the terms of Contract
@@ -12,13 +12,14 @@
 ------------------------------------------------------------------------- */
 
 #ifdef BOND_CLASS
-
-BondStyle(harmonic/kk,BondHarmonicKokkos<LMPDeviceType>)
-BondStyle(harmonic/kk/device,BondHarmonicKokkos<LMPDeviceType>)
-BondStyle(harmonic/kk/host,BondHarmonicKokkos<LMPHostType>)
-
+// clang-format off
+BondStyle(harmonic/kk,BondHarmonicKokkos<LMPDeviceType>);
+BondStyle(harmonic/kk/device,BondHarmonicKokkos<LMPDeviceType>);
+BondStyle(harmonic/kk/host,BondHarmonicKokkos<LMPHostType>);
+// clang-format on
 #else
 
+// clang-format off
 #ifndef LMP_BOND_HARMONIC_KOKKOS_H
 #define LMP_BOND_HARMONIC_KOKKOS_H
 
@@ -38,9 +39,10 @@ class BondHarmonicKokkos : public BondHarmonic {
   typedef EV_FLOAT value_type;
 
   BondHarmonicKokkos(class LAMMPS *);
-  virtual ~BondHarmonicKokkos();
-  virtual void compute(int, int);
-  virtual void coeff(int, char **);
+  ~BondHarmonicKokkos() override;
+  void compute(int, int) override;
+  void coeff(int, char **) override;
+  void read_restart(FILE *) override;
 
   template<int NEWTON_BOND, int EVFLAG>
   KOKKOS_INLINE_FUNCTION
@@ -62,13 +64,14 @@ class BondHarmonicKokkos : public BondHarmonic {
 
   typedef ArrayTypes<DeviceType> AT;
   typename AT::t_x_array_randomread x;
-  typename Kokkos::View<double*[3],typename AT::t_f_array::array_layout,DeviceType,Kokkos::MemoryTraits<Kokkos::Atomic> > f;
+  typename Kokkos::View<double*[3],typename AT::t_f_array::array_layout,typename KKDevice<DeviceType>::value,Kokkos::MemoryTraits<Kokkos::Atomic> > f;
   typename AT::t_int_2d bondlist;
 
-  Kokkos::DualView<E_FLOAT*,Kokkos::LayoutRight,DeviceType> k_eatom;
-  Kokkos::DualView<F_FLOAT*[6],Kokkos::LayoutRight,DeviceType> k_vatom;
-  Kokkos::View<E_FLOAT*,Kokkos::LayoutRight,DeviceType,Kokkos::MemoryTraits<Kokkos::Atomic> > d_eatom;
-  Kokkos::View<F_FLOAT*[6],Kokkos::LayoutRight,DeviceType,Kokkos::MemoryTraits<Kokkos::Atomic> > d_vatom;
+  typedef typename KKDevice<DeviceType>::value KKDeviceType;
+  Kokkos::DualView<E_FLOAT*,Kokkos::LayoutRight,KKDeviceType> k_eatom;
+  Kokkos::DualView<F_FLOAT*[6],Kokkos::LayoutRight,KKDeviceType> k_vatom;
+  Kokkos::View<E_FLOAT*,Kokkos::LayoutRight,KKDeviceType,Kokkos::MemoryTraits<Kokkos::Atomic> > d_eatom;
+  Kokkos::View<F_FLOAT*[6],Kokkos::LayoutRight,KKDeviceType,Kokkos::MemoryTraits<Kokkos::Atomic> > d_vatom;
 
   int nlocal,newton_bond;
   int eflag,vflag;
@@ -76,7 +79,7 @@ class BondHarmonicKokkos : public BondHarmonic {
   typename AT::t_ffloat_1d d_k;
   typename AT::t_ffloat_1d d_r0;
 
-  virtual void allocate();
+  void allocate() override;
 };
 
 }
@@ -84,6 +87,3 @@ class BondHarmonicKokkos : public BondHarmonic {
 #endif
 #endif
 
-/* ERROR/WARNING messages:
-
-*/

@@ -1,6 +1,7 @@
+// clang-format off
 /* ----------------------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
-   http://lammps.sandia.gov, Sandia National Laboratories
+   https://www.lammps.org/, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
 
    Copyright (2003) Sandia Corporation.  Under the terms of Contract
@@ -11,13 +12,13 @@
    See the README file in the top-level LAMMPS directory.
 ------------------------------------------------------------------------- */
 
-#include <mpi.h>
-#include <cstring>
 #include "compute_angle.h"
-#include "update.h"
-#include "force.h"
+
+#include "angle.h"
 #include "angle_hybrid.h"
 #include "error.h"
+#include "force.h"
+#include "update.h"
 
 using namespace LAMMPS_NS;
 
@@ -25,7 +26,7 @@ using namespace LAMMPS_NS;
 
 ComputeAngle::ComputeAngle(LAMMPS *lmp, int narg, char **arg) :
   Compute(lmp, narg, arg),
-  emine(NULL)
+  emine(nullptr)
 {
   if (narg != 3) error->all(FLERR,"Illegal compute angle command");
 
@@ -36,7 +37,7 @@ ComputeAngle::ComputeAngle(LAMMPS *lmp, int narg, char **arg) :
 
   // check if bond style hybrid exists
 
-  angle = (AngleHybrid *) force->angle_match("hybrid");
+  angle = dynamic_cast<AngleHybrid *>( force->angle_match("hybrid"));
   if (!angle)
     error->all(FLERR,"Angle style for compute angle command is not hybrid");
   size_vector = nsub = angle->nstyles;
@@ -59,7 +60,7 @@ void ComputeAngle::init()
 {
   // recheck angle style in case it has been changed
 
-  angle = (AngleHybrid *) force->angle_match("hybrid");
+  angle = dynamic_cast<AngleHybrid *>( force->angle_match("hybrid"));
   if (!angle)
     error->all(FLERR,"Angle style for compute angle command is not hybrid");
   if (angle->nstyles != nsub)

@@ -1,6 +1,6 @@
 /* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
-   http://lammps.sandia.gov, Sandia National Laboratories
+   https://www.lammps.org/, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
 
    Copyright (2003) Sandia Corporation.  Under the terms of Contract
@@ -12,13 +12,14 @@
 ------------------------------------------------------------------------- */
 
 #ifdef IMPROPER_CLASS
-
-ImproperStyle(class2/kk,ImproperClass2Kokkos<LMPDeviceType>)
-ImproperStyle(class2/kk/device,ImproperClass2Kokkos<LMPDeviceType>)
-ImproperStyle(class2/kk/host,ImproperClass2Kokkos<LMPHostType>)
-
+// clang-format off
+ImproperStyle(class2/kk,ImproperClass2Kokkos<LMPDeviceType>);
+ImproperStyle(class2/kk/device,ImproperClass2Kokkos<LMPDeviceType>);
+ImproperStyle(class2/kk/host,ImproperClass2Kokkos<LMPHostType>);
+// clang-format on
 #else
 
+// clang-format off
 #ifndef LMP_IMPROPER_CLASS2_KOKKOS_H
 #define LMP_IMPROPER_CLASS2_KOKKOS_H
 
@@ -41,9 +42,10 @@ class ImproperClass2Kokkos : public ImproperClass2 {
   typedef ArrayTypes<DeviceType> AT;
 
   ImproperClass2Kokkos(class LAMMPS *);
-  virtual ~ImproperClass2Kokkos();
-  virtual void compute(int, int);
-  virtual void coeff(int, char **);
+  ~ImproperClass2Kokkos() override;
+  void compute(int, int) override;
+  void coeff(int, char **) override;
+  void read_restart(FILE *) override;
 
   template<int NEWTON_BOND, int EVFLAG>
   KOKKOS_INLINE_FUNCTION
@@ -74,7 +76,7 @@ class ImproperClass2Kokkos : public ImproperClass2 {
   class NeighborKokkos *neighborKK;
 
   typename AT::t_x_array_randomread x;
-  typename Kokkos::View<double*[3],typename AT::t_f_array::array_layout,DeviceType,Kokkos::MemoryTraits<Kokkos::Atomic> > f;
+  typename Kokkos::View<double*[3],typename AT::t_f_array::array_layout,typename KKDevice<DeviceType>::value,Kokkos::MemoryTraits<Kokkos::Atomic> > f;
   typename AT::t_int_2d improperlist;
 
   DAT::tdual_efloat_1d k_eatom;
@@ -97,7 +99,7 @@ class ImproperClass2Kokkos : public ImproperClass2 {
   typename AT::t_ffloat_1d d_aa_k1,d_aa_k2,d_aa_k3,d_aa_theta0_1,d_aa_theta0_2,d_aa_theta0_3;
   typename AT::t_ffloat_1d d_setflag_i,d_setflag_aa,d_setflag;
 
-  virtual void allocate();
+  void allocate();
 };
 
 }
@@ -105,15 +107,3 @@ class ImproperClass2Kokkos : public ImproperClass2 {
 #endif
 #endif
 
-/* ERROR/WARNING messages:
-
-W: Improper problem
-
-UNDOCUMENTED
-
-U: Dihedral problem
-
-Conformation of the 4 listed dihedral atoms is extreme; you may want
-to check your simulation geometry.
-
-*/

@@ -1,89 +1,113 @@
 #!/usr/bin/env python
 
-# copy LAMMPS src/liblammps.so and lammps.py to system dirs
-
-from __future__ import print_function
-
-instructions = """
-Syntax: python install.py [-h] [pydir]
-        pydir = target dir for lammps.py and liblammps.so
-                default = Python site-packages dir
+"""
+Script to build a "binary wheel" for the 'pip' Python package manager for
+the LAMMPS python module which includes the shared library file. After a
+successful build the script attempts to install the wheel into a system
+specific site-packages folder or - failing that - into the corresponding
+user site-packages folder.  Called from the 'install-python' build target
+in the GNU make and CMake based build systems.  Can also be called
+independently and used to build the wheel without installing it.
 """
 
-import sys,os,shutil
+from __future__ import print_function
+import sys,os,shutil,time,glob,subprocess
+from argparse import ArgumentParser
 
-if (len(sys.argv) > 1 and sys.argv[1] == "-h") or len(sys.argv) > 2:
-  print(instructions)
-  sys.exit()
+parser = ArgumentParser(prog='install.py',
+                        description='LAMMPS python package installer script')
 
-if len(sys.argv) == 2: pydir = sys.argv[1]
-else: pydir = ""
+parser.add_argument("-p", "--package", required=True,
+                    help="path to the LAMMPS Python package")
+parser.add_argument("-l", "--lib", required=True,
+                    help="path to the compiled LAMMPS shared library")
+parser.add_argument("-n", "--noinstall", action="store_true", default=False,
+                    help="only build a binary wheel. Don't attempt to install it")
 
-# copy lammps.py to pydir if it exists
-# if pydir not specified, install in site-packages via distutils setup()
+args = parser.parse_args()
 
-if pydir:
-  if not os.path.isdir(pydir):
-    print( "ERROR: pydir %s does not exist" % pydir)
-    sys.exit()
-  str = "cp ../python/lammps.py %s" % pydir
-  print(str)
-  try:
-    shutil.copyfile("../python/lammps.py", os.path.join(pydir,'lammps.py') )
-  except shutil.Error:
-    pass # source and destination are identical
+# validate arguments and make paths absolute
 
-  str = "cp ../src/liblammps.so %s" % pydir
-  print(str)
-  try:
-     shutil.copyfile("../src/liblammps.so", os.path.join(pydir,"liblammps.so") )
-  except shutil.Error:
-    pass # source and destination are identical
-  sys.exit()
-  
-print("installing lammps.py in Python site-packages dir")
+if args.package:
+  if not os.path.exists(args.package):
+    print( "ERROR: LAMMPS package %s does not exist" % args.package)
+    parser.print_help()
+    sys.exit(1)
+  else:
+    args.package = os.path.abspath(args.package)
 
-os.chdir('../python')                # in case invoked via make in src dir
+if args.lib:
+  if not os.path.exists(args.lib):
+    print( "ERROR: LAMMPS shared library %s does not exist" % args.lib)
+    parser.print_help()
+    sys.exit(1)
+  else:
+    args.lib = os.path.abspath(args.lib)
 
-# extract version string from header
-fp = open('../src/version.h','r')
-txt=fp.read().split('"')[1].split()
-verstr=txt[0]+txt[1]+txt[2]
-fp.close()
+# we need to switch to the folder of the python package
+olddir = os.path.abspath('.')
+os.chdir(os.path.dirname(args.package))
 
-from distutils.core import setup
-from distutils.sysconfig import get_python_lib
-import site
-tryuser=False
+# remove any wheel files left over from previous calls
+print("Purging existing wheels...")
+for wheel in glob.glob('lammps-*.whl'):
+  print("deleting " + wheel)
+  os.remove(wheel)
 
+# copy shared object to the current folder so that
+# it will show up in the installation at the expected location
+os.putenv('LAMMPS_SHARED_LIB',os.path.basename(args.lib))
+shutil.copy(args.lib,'lammps')
+
+# create a virtual environment for building the wheel
+shutil.rmtree('buildwheel',True)
 try:
-  sys.argv = ["setup.py","install"]    # as if had run "python setup.py install"
-  setup(name = "lammps",
-        version = verstr,
-        author = "Steve Plimpton",
-        author_email = "sjplimp@sandia.gov",
-        url = "http://lammps.sandia.gov",
-        description = "LAMMPS molecular dynamics library",
-        py_modules = ["lammps"],
-        data_files = [(get_python_lib(), ["../src/liblammps.so"])])
-except:
-  tryuser=True
-  print ("Installation into global site-packages dir failed.\nTrying user site dir %s now." % site.USER_SITE)
+  txt = subprocess.check_output([sys.executable, '-m', 'virtualenv', 'buildwheel', '-p', sys.executable], stderr=subprocess.STDOUT, shell=False)
+  print(txt.decode('UTF-8'))
+except subprocess.CalledProcessError as err:
+  sys.exit("Failed to create a virtualenv: {0}".format(err.output.decode('UTF-8')))
 
+# now run the commands to build the wheel. those must be in a separate script
+# and run in subprocess, since this will use the virtual environment and
+# there is no simple way to return from that in python.
+os.system(sys.executable + ' makewheel.py')
 
-if tryuser:
+# remove temporary folders and files
+shutil.rmtree('buildwheel',True)
+shutil.rmtree('build',True)
+shutil.rmtree('lammps.egg-info',True)
+os.remove(os.path.join('lammps',os.path.basename(args.lib)))
+
+# stop here if we were asked not to install the wheel we created
+if args.noinstall:
+    exit(0)
+
+# install the wheel with pip. first try to install in the default environment.
+# that will be a virtual environment, if active, or the system folder.
+# recent versions of pip will automatically drop to use the user folder
+# in case the system folder is not writable.
+
+# we use a subprocess so we can catch an exception on failure.
+# we need to check whether pip refused to install because of a
+# version of the module previously installed with distutils. those
+# must be uninstalled manually. We must not ignore this and drop
+# back to install into a (forced) user folder.
+
+print("Installing wheel")
+for wheel in glob.glob('lammps-*.whl'):
   try:
-    sys.argv = ["setup.py","install","--user"]    # as if had run "python setup.py install --user"
-    setup(name = "lammps",
-    version = verstr,
-    author = "Steve Plimpton",
-    author_email = "sjplimp@sandia.gov",
-    url = "http://lammps.sandia.gov",
-    description = "LAMMPS molecular dynamics library",
-    py_modules = ["lammps"],
-    data_files = [(site.USER_SITE, ["../src/liblammps.so"])])
-  except: 
-    print("Installation into user site package dir failed.\nGo to ../python and install manually.")
-
-
-
+    txt = subprocess.check_output([sys.executable, '-m', 'pip', 'install', '--force-reinstall', wheel], stderr=subprocess.STDOUT, shell=False)
+    print(txt.decode('UTF-8'))
+    continue
+  except subprocess.CalledProcessError as err:
+    errmsg = err.output.decode('UTF-8')
+    if errmsg.find("distutils installed"):
+      sys.exit(errmsg + "You need to uninstall the LAMMPS python module manually first.\n")
+  try:
+    print('Installing wheel into standard site-packages folder failed. Trying user folder now')
+    txt = subprocess.check_output([sys.executable, '-m', 'pip', 'install', '--user', '--force-reinstall', wheel], stderr=subprocess.STDOUT, shell=False)
+    print(txt.decode('UTF-8'))
+  except:
+    sys.exit('Failed to install wheel ' + wheel)
+  shutil.copy(wheel, olddir)
+  os.remove(wheel)

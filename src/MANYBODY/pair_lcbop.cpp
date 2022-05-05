@@ -1,6 +1,7 @@
+// clang-format off
 /* ----------------------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
-   http://lammps.sandia.gov, Sandia National Laboratories
+   https://www.lammps.org/, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
 
    Copyright (2003) Sandia Corporation.  Under the terms of Contract
@@ -16,27 +17,21 @@
      based on pair_airebo by Ase Henry (MIT)
 ------------------------------------------------------------------------- */
 
-#include <cmath>
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
-#include <mpi.h>
 #include "pair_lcbop.h"
+
 #include "atom.h"
-#include "neighbor.h"
-#include "neigh_request.h"
 #include "force.h"
 #include "comm.h"
 #include "neighbor.h"
 #include "neigh_list.h"
-#include "neigh_request.h"
 #include "my_page.h"
-#include "math_const.h"
 #include "memory.h"
 #include "error.h"
 
+#include <cmath>
+#include <cstring>
+
 using namespace LAMMPS_NS;
-using namespace MathConst;
 
 #define MAXLINE 1024
 #define TOL 1.0e-9
@@ -50,16 +45,17 @@ PairLCBOP::PairLCBOP(LAMMPS *lmp) : Pair(lmp)
   restartinfo = 0;
   one_coeff = 1;
   manybody_flag = 1;
+  centroidstressflag = CENTROID_NOTAVAIL;
   ghostneigh = 1;
 
   maxlocal = 0;
-  SR_numneigh = NULL;
-  SR_firstneigh = NULL;
-  ipage = NULL;
+  SR_numneigh = nullptr;
+  SR_firstneigh = nullptr;
+  ipage = nullptr;
   pgsize = oneatom = 0;
 
-  N = NULL;
-  M = NULL;
+  N = nullptr;
+  M = nullptr;
 }
 
 /* ----------------------------------------------------------------------
@@ -70,7 +66,7 @@ PairLCBOP::~PairLCBOP()
 {
   memory->destroy(SR_numneigh);
   memory->sfree(SR_firstneigh);
-  delete [] ipage;
+  delete[] ipage;
   memory->destroy(N);
   memory->destroy(M);
 
@@ -78,8 +74,6 @@ PairLCBOP::~PairLCBOP()
     memory->destroy(setflag);
     memory->destroy(cutsq);
     memory->destroy(cutghost);
-
-    delete [] map;
   }
 }
 
@@ -87,8 +81,7 @@ PairLCBOP::~PairLCBOP()
 
 void PairLCBOP::compute(int eflag, int vflag)
 {
-  if (eflag || vflag) ev_setup(eflag,vflag);
-  else evflag = vflag_fdotr = vflag_atom = 0;
+  ev_init(eflag,vflag);
 
   SR_neigh();
   FSR(eflag,vflag);
@@ -121,8 +114,8 @@ void PairLCBOP::allocate()
    global settings
 ------------------------------------------------------------------------- */
 
-void PairLCBOP::settings(int narg, char **arg) {
-  if( narg != 0 ) error->all(FLERR,"Illegal pair_style command");
+void PairLCBOP::settings(int narg, char **/*arg*/) {
+  if (narg != 0 ) error->all(FLERR,"Illegal pair_style command");
 }
 
 /* ----------------------------------------------------------------------
@@ -133,48 +126,17 @@ void PairLCBOP::coeff(int narg, char **arg)
 {
   if (!allocated) allocate();
 
-  if (narg != 3 + atom->ntypes)
-    error->all(FLERR,"Incorrect args for pair coefficients");
+  map_element2type(narg-3,arg+3);
 
-  // insure I,J args are * *
+  // only element "C" is allowed
 
-  if (strcmp(arg[0],"*") != 0 || strcmp(arg[1],"*") != 0)
-    error->all(FLERR,"Incorrect args for pair coefficients");
-
-  // read args that map atom types to C and NULL
-  // map[i] = which element (0 for C) the Ith atom type is, -1 if NULL
-
-  for (int i = 3; i < narg; i++) {
-    if (strcmp(arg[i],"NULL") == 0) {
-      map[i-2] = -1;
-    } else if (strcmp(arg[i],"C") == 0) {
-      map[i-2] = 0;
-    } else error->all(FLERR,"Incorrect args for pair coefficients");
-  }
+  if ((nelements != 1) || (strcmp(elements[0],"C") != 0))
+      error->all(FLERR,"Incorrect args for pair coefficients");
 
   // read potential file and initialize fitting splines
 
   read_file(arg[2]);
   spline_init();
-
-  // clear setflag since coeff() called once with I,J = * *
-
-  int n = atom->ntypes;
-  for (int i = 1; i <= n; i++)
-    for (int j = i; j <= n; j++)
-      setflag[i][j] = 0;
-
-  // set setflag i,j for type pairs where both are mapped to elements
-
-  int count = 0;
-  for (int i = 1; i <= n; i++)
-    for (int j = i; j <= n; j++)
-      if (map[i] >= 0 && map[j] >= 0) {
-        setflag[i][j] = 1;
-        count++;
-      }
-
-  if (count == 0) error->all(FLERR,"Incorrect args for pair coefficients");
 }
 
 /* ----------------------------------------------------------------------
@@ -190,21 +152,18 @@ void PairLCBOP::init_style()
 
   // need a full neighbor list, including neighbors of ghosts
 
-  int irequest = neighbor->request(this,instance_me);
-  neighbor->requests[irequest]->half = 0;
-  neighbor->requests[irequest]->full = 1;
-  neighbor->requests[irequest]->ghost = 1;
+  neighbor->add_request(this, NeighConst::REQ_FULL | NeighConst::REQ_GHOST);
 
   // local SR neighbor list
   // create pages if first time or if neighbor pgsize/oneatom has changed
 
   int create = 0;
-  if (ipage == NULL) create = 1;
+  if (ipage == nullptr) create = 1;
   if (pgsize != neighbor->pgsize) create = 1;
   if (oneatom != neighbor->oneatom) create = 1;
 
   if (create) {
-    delete [] ipage;
+    delete[] ipage;
     pgsize = neighbor->pgsize;
     oneatom = neighbor->oneatom;
 
@@ -262,7 +221,7 @@ void PairLCBOP::SR_neigh()
 
   double **x = atom->x;
 
-  if (atom->nmax > maxlocal) {  // ensure ther is enough space
+  if (atom->nmax > maxlocal) {  // ensure there is enough space
     maxlocal = atom->nmax;      // for atoms and ghosts allocated
     memory->destroy(SR_numneigh);
     memory->sfree(SR_firstneigh);
@@ -353,7 +312,7 @@ void PairLCBOP::SR_neigh()
   Short range forces and energy
 ------------------------------------------------------------------------- */
 
-void PairLCBOP::FSR(int eflag, int vflag)
+void PairLCBOP::FSR(int eflag, int /*vflag*/)
 {
   int i,j,jj,ii,inum;
   tagint itag,jtag;
@@ -402,7 +361,7 @@ void PairLCBOP::FSR(int eflag, int vflag)
       r_sq = delx*delx + dely*dely + delz*delz;
       rijmag = sqrt(r_sq);
       f_c_ij = f_c( rijmag,r_1,r_2,&df_c_ij );
-      if( f_c_ij <= TOL ) continue;
+      if (f_c_ij <= TOL) continue;
 
       VR = A*exp(-alpha*rijmag);
       dVRdi = -alpha*VR;
@@ -423,7 +382,7 @@ void PairLCBOP::FSR(int eflag, int vflag)
       del[0] = delx;
       del[1] = dely;
       del[2] = delz;
-      Bij = bondorder(i,j,del,rijmag,VA,f,vflag_atom);
+      Bij = bondorder(i,j,del,rijmag,VA,f);
       dVAdi = Bij*dVA;
 
       // F = (dVRdi+dVAdi)*(-grad rijmag)
@@ -439,8 +398,7 @@ void PairLCBOP::FSR(int eflag, int vflag)
 
       double evdwl=0.0;
       if (eflag) evdwl = VR - Bij*VA;
-      if (evflag) ev_tally(i,j,nlocal,newton_pair,
-        evdwl,0.0,fpair,delx,dely,delz);
+      if (evflag) ev_tally(i,j,nlocal,newton_pair,evdwl,0.0,fpair,delx,dely,delz);
     }
   }
 }
@@ -449,7 +407,7 @@ void PairLCBOP::FSR(int eflag, int vflag)
    compute long range forces and energy
 ------------------------------------------------------------------------- */
 
-void PairLCBOP::FLR(int eflag, int vflag)
+void PairLCBOP::FLR(int eflag, int /*vflag*/)
 {
   int i,j,jj,ii;
   tagint itag,jtag;
@@ -502,10 +460,10 @@ void PairLCBOP::FLR(int eflag, int vflag)
       df_c_ij = -df_c_ij;
       // derivative may be inherited from previous call, see f_c_LR definition
       f_c_ij *= f_c_LR( rijmag, r_1_LR, r_2_LR, &df_c_ij );
-      if( f_c_ij <= TOL ) continue;
+      if (f_c_ij <= TOL) continue;
 
       V = dVdi = 0;
-      if( rijmag<r_0 ) {
+      if (rijmag<r_0) {
         double exp_part = exp( -lambda_1*(rijmag-r_0) );
         V = eps_1*( exp_part*exp_part - 2*exp_part) + v_1;
         dVdi = 2*eps_1*lambda_1*exp_part*( 1-exp_part );
@@ -530,8 +488,7 @@ void PairLCBOP::FLR(int eflag, int vflag)
 
       double evdwl=0.0;
       if (eflag) evdwl = V;
-      if (evflag) ev_tally(i,j,nlocal,newton_pair,
-        evdwl,0.0,fpair,delx,dely,delz);
+      if (evflag) ev_tally(i,j,nlocal,newton_pair,evdwl,0.0,fpair,delx,dely,delz);
     }
   }
 }
@@ -540,12 +497,12 @@ void PairLCBOP::FLR(int eflag, int vflag)
    forces for Nij and Mij
 ------------------------------------------------------------------------- */
 
-void PairLCBOP::FNij( int i, int j, double factor, double **f, int vflag_atom ) {
+void PairLCBOP::FNij( int i, int j, double factor, double **f) {
   int atomi = i;
   int atomj = j;
   int *SR_neighs = SR_firstneigh[i];
   double **x = atom->x;
-  for( int k=0; k<SR_numneigh[i]; k++ ) {
+  for (int k=0; k<SR_numneigh[i]; k++) {
     int atomk = SR_neighs[k];
     if (atomk != atomj) {
       double rik[3];
@@ -553,7 +510,7 @@ void PairLCBOP::FNij( int i, int j, double factor, double **f, int vflag_atom ) 
       rik[1] = x[atomi][1]-x[atomk][1];
       rik[2] = x[atomi][2]-x[atomk][2];
       double riksq = (rik[0]*rik[0])+(rik[1]*rik[1])+(rik[2]*rik[2]);
-      if( riksq > r_1*r_1 ) { // &&  riksq < r_2*r_2, if second condition not fulfilled neighbor would not be in the list
+      if (riksq > r_1*r_1) { // &&  riksq < r_2*r_2, if second condition not fulfilled neighbor would not be in the list
         double rikmag = sqrt(riksq);
         double df_c_ik;
         f_c( rikmag, r_1, r_2, &df_c_ik );
@@ -569,7 +526,7 @@ void PairLCBOP::FNij( int i, int j, double factor, double **f, int vflag_atom ) 
         f[atomk][1] -= rik[1]*fpair;
         f[atomk][2] -= rik[2]*fpair;
 
-        if (vflag_atom) v_tally2(atomi,atomk,fpair,rik);
+        if (vflag_either) v_tally2(atomi,atomk,fpair,rik);
       }
     }
   }
@@ -577,12 +534,12 @@ void PairLCBOP::FNij( int i, int j, double factor, double **f, int vflag_atom ) 
 
 /* ---------------------------------------------------------------------- */
 
-void PairLCBOP::FMij( int i, int j, double factor, double **f, int vflag_atom ) {
+void PairLCBOP::FMij( int i, int j, double factor, double **f) {
   int atomi = i;
   int atomj = j;
   int *SR_neighs = SR_firstneigh[i];
   double **x = atom->x;
-  for( int k=0; k<SR_numneigh[i]; k++ ) {
+  for (int k=0; k<SR_numneigh[i]; k++) {
     int atomk = SR_neighs[k];
     if (atomk != atomj) {
       double rik[3];
@@ -598,7 +555,7 @@ void PairLCBOP::FMij( int i, int j, double factor, double **f, int vflag_atom ) 
       double Fx = 1-f_c_LR(Nki, 2,3,&dF);
       dF = -dF;
 
-      if( df_c_ik > TOL ) {
+      if (df_c_ik > TOL) {
         double factor2 = factor*df_c_ik*Fx;
         // F = factor2*(-grad rikmag)
         // grad_i rikmag =  \vec{rik} /rikmag
@@ -610,12 +567,12 @@ void PairLCBOP::FMij( int i, int j, double factor, double **f, int vflag_atom ) 
         f[atomk][0] -= rik[0]*fpair;
         f[atomk][1] -= rik[1]*fpair;
         f[atomk][2] -= rik[2]*fpair;
-        if (vflag_atom) v_tally2(atomi,atomk,fpair,rik);
+        if (vflag_either) v_tally2(atomi,atomk,fpair,rik);
       }
 
-      if( dF > TOL ) {
+      if (dF > TOL) {
         double factor2 = factor*f_c_ik*dF;
-        FNij( atomk, atomi, factor2, f, vflag_atom );
+        FNij(atomk, atomi, factor2, f);
       }
     }
   }
@@ -625,17 +582,15 @@ void PairLCBOP::FMij( int i, int j, double factor, double **f, int vflag_atom ) 
    Bij function
 ------------------------------------------------------------------------- */
 
-double PairLCBOP::bondorder(int i, int j, double rij[3],
-    double rijmag, double VA,
-    double **f, int vflag_atom)
+double PairLCBOP::bondorder(int i, int j, double rij[3],double rijmag, double VA,double **f)
 {
 
   double bij, bji;
   /* bij & bji */{
     double rji[3];
     rji[0] = -rij[0]; rji[1] = -rij[1]; rji[2] = -rij[2];
-    bij = b(i,j,rij,rijmag,VA,f,vflag_atom);
-    bji = b(j,i,rji,rijmag,VA,f,vflag_atom);
+    bij = b(i,j,rij,rijmag,VA,f);
+    bji = b(j,i,rji,rijmag,VA,f);
   }
 
   double Fij_conj;
@@ -676,12 +631,12 @@ double PairLCBOP::bondorder(int i, int j, double rij[3],
       double num_Nconj = ( Nij+1 )*( Nji+1 )*( Nij_el+Nji_el ) - 4*( Nij+Nji+2);
       double den_Nconj = Nij*( 3-Nij )*( Nji+1 ) + Nji*( 3-Nji )*( Nij+1 ) + eps;
       Nconj = num_Nconj / den_Nconj;
-      if( Nconj <= 0 ) {
+      if (Nconj <= 0) {
         Nconj = 0;
         dNconj_dNij = 0;
         dNconj_dNji = 0;
         dNconj_dNel = 0;
-      } else if( Nconj >= 1 ) {
+      } else if (Nconj >= 1) {
         Nconj = 1;
         dNconj_dNij = 0;
         dNconj_dNji = 0;
@@ -700,31 +655,30 @@ double PairLCBOP::bondorder(int i, int j, double rij[3],
     }
 
     double dF_dNij, dF_dNji, dF_dNconj;
-    Fij_conj = F_conj( Nij, Nji, Nconj, &dF_dNij, &dF_dNji, &dF_dNconj );
+    Fij_conj = F_conj(Nij, Nji, Nconj, &dF_dNij, &dF_dNji, &dF_dNconj);
 
     /*forces for Nij*/
-    if( 3-Nij > TOL ) {
-      double factor = -VA*0.5*( dF_dNij + dF_dNconj*( dNconj_dNij + dNconj_dNel*dNij_el_dNij ) );
-      FNij( i, j, factor, f, vflag_atom );
+    if (3-Nij > TOL) {
+      double factor = -VA*0.5*(dF_dNij + dF_dNconj*(dNconj_dNij + dNconj_dNel*dNij_el_dNij));
+      FNij(i, j, factor, f);
     }
     /*forces for Nji*/
-    if( 3-Nji > TOL ) {
-      double factor = -VA*0.5*( dF_dNji + dF_dNconj*( dNconj_dNji + dNconj_dNel*dNji_el_dNji ) );
-      FNij( j, i, factor, f, vflag_atom );
+    if (3-Nji > TOL) {
+      double factor = -VA*0.5*(dF_dNji + dF_dNconj*(dNconj_dNji + dNconj_dNel*dNji_el_dNji));
+      FNij(j, i, factor, f);
     }
     /*forces for Mij*/
-    if( 3-Mij > TOL ) {
-      double factor = -VA*0.5*( dF_dNconj*dNconj_dNel*dNij_el_dMij );
-      FMij( i, j, factor, f, vflag_atom );
+    if (3-Mij > TOL) {
+      double factor = -VA*0.5*(dF_dNconj*dNconj_dNel*dNij_el_dMij);
+      FMij(i, j, factor, f);
     }
-    if( 3-Mji > TOL ) {
-      double factor = -VA*0.5*( dF_dNconj*dNconj_dNel*dNji_el_dMji );
-      FMij( j, i, factor, f, vflag_atom );
+    if (3-Mji > TOL) {
+      double factor = -VA*0.5*(dF_dNconj*dNconj_dNel*dNji_el_dMji);
+      FMij(j,i,factor,f);
     }
   }
 
-
-  double Bij = 0.5*( bij + bji + Fij_conj );
+  double Bij = 0.5*(bij + bji + Fij_conj);
   return Bij;
 }
 
@@ -732,9 +686,7 @@ double PairLCBOP::bondorder(int i, int j, double rij[3],
   bij function
 ------------------------------------------------------------------------- */
 
-double PairLCBOP::b(int i, int j, double rij[3],
-                 double rijmag, double VA,
-                 double **f, int vflag_atom) {
+double PairLCBOP::b(int i, int j, double rij[3], double rijmag, double VA, double **f) {
   int *SR_neighs = SR_firstneigh[i];
   double **x = atom->x;
   int atomi = i;
@@ -855,7 +807,7 @@ double PairLCBOP::b(int i, int j, double rij[3],
       f[atomj][0] += fj[0]; f[atomj][1] += fj[1]; f[atomj][2] += fj[2];
       f[atomk][0] += fk[0]; f[atomk][1] += fk[1]; f[atomk][2] += fk[2];
 
-      if (vflag_atom) {
+      if (vflag_either) {
         double rji[3], rki[3];
         rji[0] = -rij[0]; rji[1] = -rij[1]; rji[2] = -rij[2];
         rki[0] = -rik[0]; rki[1] = -rik[1]; rki[2] = -rik[2];
@@ -871,9 +823,9 @@ double PairLCBOP::b(int i, int j, double rij[3],
    spline interpolation for G
 ------------------------------------------------------------------------- */
 
-void PairLCBOP::g_decompose_x( double x, size_t *field_idx, double *offset ) {
+void PairLCBOP::g_decompose_x( double x, size_t *field_idx, double *offset) {
   size_t i=0;
-  while( i<(6-1) && !( x<gX[i+1] ) )
+  while ((i<(6-1)) && !(x<gX[i+1]))
     i++;
   *field_idx = i;
   *offset = ( x - gX[i] );
@@ -881,14 +833,14 @@ void PairLCBOP::g_decompose_x( double x, size_t *field_idx, double *offset ) {
 
 /* ---------------------------------------------------------------------- */
 
-double PairLCBOP::gSpline( double x, double *dgdc ) {
+double PairLCBOP::gSpline( double x, double *dgdc) {
   size_t i;
   double x_n;
   g_decompose_x( x, &i, &x_n );
   double sum = 0;
   *dgdc = 0;
   double pow_x_n = 1.0;
-  for( size_t j=0; j<5; j++ ) {
+  for (size_t j=0; j<5; j++) {
       sum += gC[j][i]*pow_x_n;
       *dgdc += gC[j+1][i]*(j+1)*pow_x_n;
       pow_x_n *= x_n;
@@ -899,15 +851,15 @@ double PairLCBOP::gSpline( double x, double *dgdc ) {
 
 /* ---------------------------------------------------------------------- */
 
-double PairLCBOP::hSpline( double x, double *dhdx ) {
-  if( x < -d ) {
+double PairLCBOP::hSpline( double x, double *dhdx) {
+  if (x < -d) {
       double z = kappa*( x+d );
       double y = pow(z, 10.0);
       double w = pow( 1+y, -0.1 );
       *dhdx = kappa*L*w/(1+y);
       return L*( 1 + z*w );
     }
-    if( x > d ) {
+    if (x > d) {
       *dhdx = R_1;
       return R_0 + R_1*( x-d );
     }
@@ -929,7 +881,7 @@ double PairLCBOP::hSpline( double x, double *dhdx ) {
 
 /* ---------------------------------------------------------------------- */
 
-double PairLCBOP::F_conj( double N_ij, double N_ji, double N_conj_ij, double *dFN_ij, double *dFN_ji, double *dFN_ij_conj ) {
+double PairLCBOP::F_conj( double N_ij, double N_ji, double N_conj_ij, double *dFN_ij, double *dFN_ji, double *dFN_ij_conj) {
   size_t N_ij_int         = MIN( static_cast<size_t>( floor( N_ij ) ), 2 ); // 2 is the highest number of field
   size_t N_ji_int         = MIN( static_cast<size_t>( floor( N_ji ) ), 2 ); // cast to suppress warning
   double x                = N_ij - N_ij_int;
@@ -941,13 +893,13 @@ double PairLCBOP::F_conj( double N_ij, double N_ji, double N_conj_ij, double *dF
   double dF_0_dx = 0, dF_0_dy = 0;
   double dF_1_dx = 0, dF_1_dy = 0;
   double l, r;
-  if( N_conj_ij < 1 ) {
+  if (N_conj_ij < 1) {
     l = (1-y)* (1-x);   r = ( f0.f_00 + x*     x*   f0.f_x_10   + y*     y*   f0.f_y_01 );    F_0 += l*r;   dF_0_dx += -(1-y)*r +l*2*x*    f0.f_x_10;    dF_0_dy += -(1-x)*r +l*2*y*    f0.f_y_01;
     l = (1-y)*  x;      r = ( f0.f_10 + (1-x)*(1-x)*f0.f_x_00   + y*     y*   f0.f_y_11 );    F_0 += l*r;   dF_0_dx +=  (1-y)*r -l*2*(1-x)*f0.f_x_00;    dF_0_dy += -x*    r +l*2*y*    f0.f_y_11;
     l = y*     (1-x);   r = ( f0.f_01 + x*     x*   f0.f_x_11   + (1-y)*(1-y)*f0.f_y_00 );    F_0 += l*r;   dF_0_dx += -y*    r +l*2*x*    f0.f_x_11;    dF_0_dy +=  (1-x)*r -l*2*(1-y)*f0.f_y_00;
     l = y*      x;      r = ( f0.f_11 + (1-x)*(1-x)*f0.f_x_01   + (1-y)*(1-y)*f0.f_y_10 );    F_0 += l*r;   dF_0_dx +=  y*    r -l*2*(1-x)*f0.f_x_01;    dF_0_dy +=  x*    r -l*2*(1-y)*f0.f_y_10;
   }
-  if( N_conj_ij > 0 ) {
+  if (N_conj_ij > 0) {
     l = (1-y)* (1-x);   r = ( f0.f_00 + x*     x*   f1.f_x_10   + y*     y*   f1.f_y_01 );    F_1 += l*r;   dF_1_dx += -(1-y)*r +l*2*x*    f1.f_x_10;    dF_1_dy += -(1-x)*r +l*2*y*    f1.f_y_01;
     l = (1-y)*  x;      r = ( f1.f_10 + (1-x)*(1-x)*f1.f_x_00   + y*     y*   f1.f_y_11 );    F_1 += l*r;   dF_1_dx +=  (1-y)*r -l*2*(1-x)*f1.f_x_00;    dF_1_dy += -x*    r +l*2*y*    f1.f_y_11;
     l = y*     (1-x);   r = ( f1.f_01 + x*     x*   f1.f_x_11   + (1-y)*(1-y)*f1.f_y_00 );    F_1 += l*r;   dF_1_dx += -y*    r +l*2*x*    f1.f_x_11;    dF_1_dy +=  (1-x)*r -l*2*(1-y)*f1.f_y_00;
@@ -970,58 +922,53 @@ void PairLCBOP::read_file(char *filename)
   int i,k,l;
   char s[MAXLINE];
 
-  MPI_Comm_rank(world,&me);
-
   // read file on proc 0
 
-  if (me == 0) {
-    FILE *fp = force->open_potential(filename);
-    if (fp == NULL) {
-      char str[128];
-      sprintf(str,"Cannot open LCBOP potential file %s",filename);
-      error->one(FLERR,str);
-    }
+  if (comm->me == 0) {
+    FILE *fp = utils::open_potential(filename,lmp,nullptr);
+    if (fp == nullptr)
+      error->one(FLERR,"Cannot open LCBOP potential file {}: {}",filename,utils::getsyserror());
 
     // skip initial comment lines
 
-    while (1) {
-      fgets(s,MAXLINE,fp);
+    while (true) {
+      utils::sfgets(FLERR,s,MAXLINE,fp,filename,error);
       if (s[0] != '#') break;
     }
 
     // read parameters
 
-    fgets(s,MAXLINE,fp);    sscanf(s,"%lg",&r_1);
-    fgets(s,MAXLINE,fp);    sscanf(s,"%lg",&r_2);
-    fgets(s,MAXLINE,fp);    sscanf(s,"%lg",&gamma_1);
-    fgets(s,MAXLINE,fp);    sscanf(s,"%lg",&A);
-    fgets(s,MAXLINE,fp);    sscanf(s,"%lg",&B_1);
-    fgets(s,MAXLINE,fp);    sscanf(s,"%lg",&B_2);
-    fgets(s,MAXLINE,fp);    sscanf(s,"%lg",&alpha);
-    fgets(s,MAXLINE,fp);    sscanf(s,"%lg",&beta_1);
-    fgets(s,MAXLINE,fp);    sscanf(s,"%lg",&beta_2);
-    fgets(s,MAXLINE,fp);    sscanf(s,"%lg",&d);
-    fgets(s,MAXLINE,fp);    sscanf(s,"%lg",&C_1);
-    fgets(s,MAXLINE,fp);    sscanf(s,"%lg",&C_4);
-    fgets(s,MAXLINE,fp);    sscanf(s,"%lg",&C_6);
-    fgets(s,MAXLINE,fp);    sscanf(s,"%lg",&L);
-    fgets(s,MAXLINE,fp);    sscanf(s,"%lg",&kappa);
-    fgets(s,MAXLINE,fp);    sscanf(s,"%lg",&R_0);
-    fgets(s,MAXLINE,fp);    sscanf(s,"%lg",&R_1);
-    fgets(s,MAXLINE,fp);    sscanf(s,"%lg",&r_0);
-    fgets(s,MAXLINE,fp);    sscanf(s,"%lg",&r_1_LR);
-    fgets(s,MAXLINE,fp);    sscanf(s,"%lg",&r_2_LR);
-    fgets(s,MAXLINE,fp);    sscanf(s,"%lg",&v_1);
-    fgets(s,MAXLINE,fp);    sscanf(s,"%lg",&v_2);
-    fgets(s,MAXLINE,fp);    sscanf(s,"%lg",&eps_1);
-    fgets(s,MAXLINE,fp);    sscanf(s,"%lg",&eps_2);
-    fgets(s,MAXLINE,fp);    sscanf(s,"%lg",&lambda_1);
-    fgets(s,MAXLINE,fp);    sscanf(s,"%lg",&lambda_2);
-    fgets(s,MAXLINE,fp);    sscanf(s,"%lg",&eps);
-    fgets(s,MAXLINE,fp);    sscanf(s,"%lg",&delta);
+    utils::sfgets(FLERR,s,MAXLINE,fp,filename,error);    sscanf(s,"%lg",&r_1);
+    utils::sfgets(FLERR,s,MAXLINE,fp,filename,error);    sscanf(s,"%lg",&r_2);
+    utils::sfgets(FLERR,s,MAXLINE,fp,filename,error);    sscanf(s,"%lg",&gamma_1);
+    utils::sfgets(FLERR,s,MAXLINE,fp,filename,error);    sscanf(s,"%lg",&A);
+    utils::sfgets(FLERR,s,MAXLINE,fp,filename,error);    sscanf(s,"%lg",&B_1);
+    utils::sfgets(FLERR,s,MAXLINE,fp,filename,error);    sscanf(s,"%lg",&B_2);
+    utils::sfgets(FLERR,s,MAXLINE,fp,filename,error);    sscanf(s,"%lg",&alpha);
+    utils::sfgets(FLERR,s,MAXLINE,fp,filename,error);    sscanf(s,"%lg",&beta_1);
+    utils::sfgets(FLERR,s,MAXLINE,fp,filename,error);    sscanf(s,"%lg",&beta_2);
+    utils::sfgets(FLERR,s,MAXLINE,fp,filename,error);    sscanf(s,"%lg",&d);
+    utils::sfgets(FLERR,s,MAXLINE,fp,filename,error);    sscanf(s,"%lg",&C_1);
+    utils::sfgets(FLERR,s,MAXLINE,fp,filename,error);    sscanf(s,"%lg",&C_4);
+    utils::sfgets(FLERR,s,MAXLINE,fp,filename,error);    sscanf(s,"%lg",&C_6);
+    utils::sfgets(FLERR,s,MAXLINE,fp,filename,error);    sscanf(s,"%lg",&L);
+    utils::sfgets(FLERR,s,MAXLINE,fp,filename,error);    sscanf(s,"%lg",&kappa);
+    utils::sfgets(FLERR,s,MAXLINE,fp,filename,error);    sscanf(s,"%lg",&R_0);
+    utils::sfgets(FLERR,s,MAXLINE,fp,filename,error);    sscanf(s,"%lg",&R_1);
+    utils::sfgets(FLERR,s,MAXLINE,fp,filename,error);    sscanf(s,"%lg",&r_0);
+    utils::sfgets(FLERR,s,MAXLINE,fp,filename,error);    sscanf(s,"%lg",&r_1_LR);
+    utils::sfgets(FLERR,s,MAXLINE,fp,filename,error);    sscanf(s,"%lg",&r_2_LR);
+    utils::sfgets(FLERR,s,MAXLINE,fp,filename,error);    sscanf(s,"%lg",&v_1);
+    utils::sfgets(FLERR,s,MAXLINE,fp,filename,error);    sscanf(s,"%lg",&v_2);
+    utils::sfgets(FLERR,s,MAXLINE,fp,filename,error);    sscanf(s,"%lg",&eps_1);
+    utils::sfgets(FLERR,s,MAXLINE,fp,filename,error);    sscanf(s,"%lg",&eps_2);
+    utils::sfgets(FLERR,s,MAXLINE,fp,filename,error);    sscanf(s,"%lg",&lambda_1);
+    utils::sfgets(FLERR,s,MAXLINE,fp,filename,error);    sscanf(s,"%lg",&lambda_2);
+    utils::sfgets(FLERR,s,MAXLINE,fp,filename,error);    sscanf(s,"%lg",&eps);
+    utils::sfgets(FLERR,s,MAXLINE,fp,filename,error);    sscanf(s,"%lg",&delta);
 
-    while (1) {
-      fgets(s,MAXLINE,fp);
+    while (true) {
+      utils::sfgets(FLERR,s,MAXLINE,fp,filename,error);
       if (s[0] != '#') break;
     }
 
@@ -1030,27 +977,27 @@ void PairLCBOP::read_file(char *filename)
     for (k = 0; k < 2; k++) { // 2 values of N_ij_conj
       for (l = 0; l < 3; l++) { // 3 types of data: f, dfdx, dfdy
         for (i = 0; i < 4; i++) { // 4x4 matrix
-          fgets(s,MAXLINE,fp);
+          utils::sfgets(FLERR,s,MAXLINE,fp,filename,error);
           sscanf(s,"%lg %lg %lg %lg",
             &F_conj_data[i][0][k][l],
             &F_conj_data[i][1][k][l],
             &F_conj_data[i][2][k][l],
             &F_conj_data[i][3][k][l]);
         }
-        while (1) { fgets(s,MAXLINE,fp); if (s[0] != '#') break; }
+        while (true) { utils::sfgets(FLERR,s,MAXLINE,fp,filename,error); if (s[0] != '#') break; }
       }
     }
 
     // G spline
 
     // x coordinates of mesh points
-    fgets(s,MAXLINE,fp);
+    utils::sfgets(FLERR,s,MAXLINE,fp,filename,error);
     sscanf( s,"%lg %lg %lg %lg %lg %lg",
       &gX[0], &gX[1], &gX[2],
       &gX[3], &gX[4], &gX[5] );
 
     for (i = 0; i < 6; i++) { // for each power in polynomial
-      fgets(s,MAXLINE,fp);
+      utils::sfgets(FLERR,s,MAXLINE,fp,filename,error);
       sscanf( s,"%lg %lg %lg %lg %lg",
         &gC[i][0], &gC[i][1], &gC[i][2],
         &gC[i][3], &gC[i][4] );
@@ -1100,23 +1047,10 @@ void PairLCBOP::read_file(char *filename)
    init coefficients for TF_conj
 ------------------------------------------------------------------------- */
 
-#include <iostream>
-#include <fstream>
-#include <functional>
-template< class function > void print_function( double x_0, double x_1, size_t n, function f, std::ostream &stream ) {
-  double dx = (x_1-x_0)/n;
-  for( double x=x_0; x<=x_1+0.0001; x+=dx ) {
-    double f_val, df;
-    f_val = f(x, &df);
-    stream << x << " " << f_val << "   " << df << std::endl;
-  }
-  stream << std::endl;
-}
-
 void PairLCBOP::spline_init() {
-  for( size_t N_conj_ij=0; N_conj_ij<2; N_conj_ij++ ) // N_conj_ij
-  for( size_t N_ij=0; N_ij<4-1; N_ij++ )
-  for( size_t N_ji=0; N_ji<4-1; N_ji++ ) {
+  for (size_t N_conj_ij=0; N_conj_ij<2; N_conj_ij++) // N_conj_ij
+  for (size_t N_ij=0; N_ij<4-1; N_ij++)
+  for (size_t N_ji=0; N_ji<4-1; N_ji++) {
     TF_conj_field &field = F_conj_field[N_ij][N_ji][N_conj_ij];
     field.f_00 = F_conj_data[N_ij  ][N_ji  ][N_conj_ij][0];
     field.f_01 = F_conj_data[N_ij  ][N_ji+1][N_conj_ij][0];
@@ -1144,7 +1078,7 @@ void PairLCBOP::spline_init() {
 //          << gX[4] << " "
 //          << gX[5] << std::endl;
 //    file << "gC:\n";
-//    for( int i=0; i<6; i++ )
+//    for (int i=0; i<6; i++)
 //      file  << gC[i][0] << " "
 //            << gC[i][1] << " "
 //            << gC[i][2] << " "
@@ -1188,7 +1122,7 @@ void PairLCBOP::spline_init() {
 //    double x_1 = 1, x_0 = -1;
 //    int n=1000;
 //    double dx = (x_1-x_0)/n;
-//    for( double x=x_0; x<=x_1+0.0001; x+=dx ) {
+//    for (double x=x_0; x<=x_1+0.0001; x+=dx) {
 //      double g, dg;
 //      g = gSpline(x, &dg);
 //      file << x << " " << g << " " << dg << std::endl;
@@ -1199,7 +1133,7 @@ void PairLCBOP::spline_init() {
 //  double x_1 = 1, x_0 = -1;
 //  int n=1000;
 //  double dx = (x_1-x_0)/n;
-//  for( double x=x_0; x<=x_1+0.0001; x+=dx ) {
+//  for (double x=x_0; x<=x_1+0.0001; x+=dx) {
 //    double h, dh;
 //    h = hSpline(x, &dh);
 //    file << x << " " << h << " " << dh << std::endl;
@@ -1211,7 +1145,7 @@ void PairLCBOP::spline_init() {
 //  double x_1 = 4, x_0 = 0;
 //  int n=1000;
 //  double dx = (x_1-x_0)/n;
-//  for( double x=x_0; x<=x_1+0.0001; x+=dx ) {
+//  for (double x=x_0; x<=x_1+0.0001; x+=dx) {
 //    double f, df;
 //    f = f_c(x, r_1, r_2, &df);
 //    file << x << " " << f << " " << df << std::endl;
@@ -1235,23 +1169,23 @@ void PairLCBOP::spline_init() {
 //
 //  file << "F_conj_0 ";
 //  double dummy;
-//  for( double y=0; y<=3.0+0.0001; y+=0.1 )
+//  for (double y=0; y<=3.0+0.0001; y+=0.1)
 //    file << y << " ";
 //  file << std::endl;
-//  for( double x=0; x<=3.0+0.0001; x+=0.1 ){
+//  for (double x=0; x<=3.0+0.0001; x+=0.1) {
 //    file << x << " ";
-//    for( double y=0; y<=3.0+0.0001; y+=0.1 )
+//    for (double y=0; y<=3.0+0.0001; y+=0.1)
 //      file << F_conj( x, y, 0, &dummy, &dummy, &dummy ) << " ";
 //    file << std::endl;
 //  }
 //
 //  file << "dF0_dx ";
-//  for( double y=0; y<=3.0+0.0001; y+=0.1 )
+//  for (double y=0; y<=3.0+0.0001; y+=0.1)
 //    file << y << " ";
 //  file << std::endl;
-//  for( double x=0; x<=3.0+0.0001; x+=0.1 ){
+//  for (double x=0; x<=3.0+0.0001; x+=0.1) {
 //    file << x << " ";
-//    for( double y=0; y<=3.0+0.0001; y+=0.1 ) {
+//    for (double y=0; y<=3.0+0.0001; y+=0.1) {
 //      double dF_dx;
 //      F_conj( x, y, 0, &dF_dx, &dummy, &dummy );
 //      file << dF_dx << " ";
@@ -1262,12 +1196,12 @@ void PairLCBOP::spline_init() {
 //
 //
 //  file << "F_conj_1 ";
-//  for( double y=0; y<=3.0+0.0001; y+=0.1 )
+//  for (double y=0; y<=3.0+0.0001; y+=0.1)
 //    file << y << " ";
 //  file << std::endl;
-//  for( double x=0; x<=3.0+0.0001; x+=0.1 ){
+//  for (double x=0; x<=3.0+0.0001; x+=0.1) {
 //    file << x << " ";
-//    for( double y=0; y<=3.0+0.0001; y+=0.1 )
+//    for (double y=0; y<=3.0+0.0001; y+=0.1)
 //      file << F_conj( x, y, 0, &dummy, &dummy, &dummy ) << " ";
 //    file << std::endl;
 //  }
@@ -1281,12 +1215,12 @@ void PairLCBOP::spline_init() {
 double PairLCBOP::memory_usage()
 {
   double bytes = 0.0;
-  bytes += maxlocal * sizeof(int);
-  bytes += maxlocal * sizeof(int *);
+  bytes += (double)maxlocal * sizeof(int);
+  bytes += (double)maxlocal * sizeof(int *);
 
   for (int i = 0; i < comm->nthreads; i++)
     bytes += ipage[i].size();
 
-  bytes += 3*maxlocal * sizeof(double);
+  bytes += (double)3*maxlocal * sizeof(double);
   return bytes;
 }

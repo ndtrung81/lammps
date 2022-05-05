@@ -1,6 +1,6 @@
 /* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
-   http://lammps.sandia.gov, Sandia National Laboratories
+   https://www.lammps.org/, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
 
    Copyright (2003) Sandia Corporation.  Under the terms of Contract
@@ -12,13 +12,14 @@
 ------------------------------------------------------------------------- */
 
 #ifdef DIHEDRAL_CLASS
-
-DihedralStyle(class2/kk,DihedralClass2Kokkos<LMPDeviceType>)
-DihedralStyle(class2/kk/device,DihedralClass2Kokkos<LMPDeviceType>)
-DihedralStyle(class2/kk/host,DihedralClass2Kokkos<LMPHostType>)
-
+// clang-format off
+DihedralStyle(class2/kk,DihedralClass2Kokkos<LMPDeviceType>);
+DihedralStyle(class2/kk/device,DihedralClass2Kokkos<LMPDeviceType>);
+DihedralStyle(class2/kk/host,DihedralClass2Kokkos<LMPHostType>);
+// clang-format on
 #else
 
+// clang-format off
 #ifndef LMP_DIHEDRAL_CLASS2_KOKKOS_H
 #define LMP_DIHEDRAL_CLASS2_KOKKOS_H
 
@@ -38,9 +39,10 @@ class DihedralClass2Kokkos : public DihedralClass2 {
   typedef ArrayTypes<DeviceType> AT;
 
   DihedralClass2Kokkos(class LAMMPS *);
-  virtual ~DihedralClass2Kokkos();
-  virtual void compute(int, int);
-  virtual void coeff(int, char **);
+  ~DihedralClass2Kokkos() override;
+  void compute(int, int) override;
+  void coeff(int, char **) override;
+  void read_restart(FILE *) override;
 
   template<int NEWTON_BOND, int EVFLAG>
   KOKKOS_INLINE_FUNCTION
@@ -102,7 +104,7 @@ class DihedralClass2Kokkos : public DihedralClass2 {
   typename AT::t_ffloat_1d d_setflag_d, d_setflag_mbt, d_setflag_ebt;
   typename AT::t_ffloat_1d d_setflag_at, d_setflag_aat, d_setflag_bb13t;
 
-  virtual void allocate();
+  void allocate();
 };
 
 }
@@ -110,11 +112,3 @@ class DihedralClass2Kokkos : public DihedralClass2 {
 #endif
 #endif
 
-/* ERROR/WARNING messages:
-
-W: Dihedral problem
-
-Conformation of the 4 listed dihedral atoms is extreme; you may want
-to check your simulation geometry.
-
-*/

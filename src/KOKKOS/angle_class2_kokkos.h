@@ -1,6 +1,6 @@
 /* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
-   http://lammps.sandia.gov, Sandia National Laboratories
+   https://www.lammps.org/, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
 
    Copyright (2003) Sandia Corporation.  Under the terms of Contract
@@ -12,13 +12,14 @@
 ------------------------------------------------------------------------- */
 
 #ifdef ANGLE_CLASS
-
-AngleStyle(class2/kk,AngleClass2Kokkos<LMPDeviceType>)
-AngleStyle(class2/kk/device,AngleClass2Kokkos<LMPDeviceType>)
-AngleStyle(class2/kk/host,AngleClass2Kokkos<LMPHostType>)
-
+// clang-format off
+AngleStyle(class2/kk,AngleClass2Kokkos<LMPDeviceType>);
+AngleStyle(class2/kk/device,AngleClass2Kokkos<LMPDeviceType>);
+AngleStyle(class2/kk/host,AngleClass2Kokkos<LMPHostType>);
+// clang-format on
 #else
 
+// clang-format off
 #ifndef LMP_ANGLE_CLASS2_KOKKOS_H
 #define LMP_ANGLE_CLASS2_KOKKOS_H
 
@@ -39,9 +40,10 @@ class AngleClass2Kokkos : public AngleClass2 {
   typedef EV_FLOAT value_type;
 
   AngleClass2Kokkos(class LAMMPS *);
-  virtual ~AngleClass2Kokkos();
-  virtual void compute(int, int);
-  virtual void coeff(int, char **);
+  ~AngleClass2Kokkos() override;
+  void compute(int, int) override;
+  void coeff(int, char **) override;
+  void read_restart(FILE *) override;
 
   template<int NEWTON_BOND, int EVFLAG>
   KOKKOS_INLINE_FUNCTION
@@ -86,7 +88,7 @@ class AngleClass2Kokkos : public AngleClass2 {
   typename AT::t_ffloat_1d d_ba_k1, d_ba_k2, d_ba_r1, d_ba_r2;
   typename AT::t_ffloat_1d d_setflag, d_setflag_a, d_setflag_bb, d_setflag_ba;
 
-  virtual void allocate();
+  void allocate();
 };
 
 }
@@ -94,6 +96,3 @@ class AngleClass2Kokkos : public AngleClass2 {
 #endif
 #endif
 
-/* ERROR/WARNING messages:
-
-*/

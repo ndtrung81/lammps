@@ -1,6 +1,7 @@
+// clang-format off
 /* ----------------------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
-   http://lammps.sandia.gov, Sandia National Laboratories
+   https://www.lammps.org/, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
 
    Copyright (2003) Sandia Corporation.  Under the terms of Contract
@@ -11,12 +12,10 @@
    See the README file in the top-level LAMMPS directory.
 ------------------------------------------------------------------------- */
 
-#include <cstring>
 #include "verlet_kokkos.h"
 #include "neighbor.h"
 #include "domain.h"
 #include "comm.h"
-#include "atom.h"
 #include "atom_kokkos.h"
 #include "atom_masks.h"
 #include "force.h"
@@ -29,14 +28,9 @@
 #include "output.h"
 #include "update.h"
 #include "modify.h"
-#include "compute.h"
-#include "fix.h"
 #include "timer.h"
 #include "memory_kokkos.h"
-#include "error.h"
 #include "kokkos.h"
-
-#include <ctime>
 
 using namespace LAMMPS_NS;
 
@@ -55,6 +49,20 @@ struct ForceAdder {
 
 /* ---------------------------------------------------------------------- */
 
+template<class View>
+struct Zero {
+  View v;
+  Zero(const View &v_):v(v_) {}
+  KOKKOS_INLINE_FUNCTION
+  void operator()(const int &i) const {
+    v(i,0) = 0;
+    v(i,1) = 0;
+    v(i,2) = 0;
+  }
+};
+
+/* ---------------------------------------------------------------------- */
+
 VerletKokkos::VerletKokkos(LAMMPS *lmp, int narg, char **arg) :
   Verlet(lmp, narg, arg)
 {
@@ -68,62 +76,45 @@ VerletKokkos::VerletKokkos(LAMMPS *lmp, int narg, char **arg) :
 void VerletKokkos::setup(int flag)
 {
   if (comm->me == 0 && screen) {
-    fprintf(screen,"Setting up Verlet run ...\n");
+    fputs("Setting up Verlet run ...\n",screen);
     if (flag) {
-      fprintf(screen,"  Unit style    : %s\n", update->unit_style);
-      fprintf(screen,"  Current step  : " BIGINT_FORMAT "\n",
-              update->ntimestep);
-      fprintf(screen,"  Time step     : %g\n", update->dt);
+      fmt::print(screen,"  Unit style    : {}\n"
+                        "  Current step  : {}\n"
+                        "  Time step     : {}\n",
+                 update->unit_style,update->ntimestep,update->dt);
       timer->print_timeout(screen);
     }
   }
 
   update->setupflag = 1;
-  lmp->kokkos->auto_sync = 0;
 
   // setup domain, communication and neighboring
   // acquire ghosts
   // build neighbor lists
 
-  atomKK->sync(Host,ALL_MASK);
-  atomKK->modified(Host,ALL_MASK);
+  lmp->kokkos->auto_sync = 1;
 
-  atomKK->setup();
+  atom->setup();
   modify->setup_pre_exchange();
-      // debug
-  atomKK->sync(Host,ALL_MASK);
-  atomKK->modified(Host,ALL_MASK);
-  if (triclinic) domain->x2lamda(atomKK->nlocal);
+  if (triclinic) domain->x2lamda(atom->nlocal);
   domain->pbc();
-
-  atomKK->sync(Host,ALL_MASK);
-
-
   domain->reset_box();
   comm->setup();
   if (neighbor->style) neighbor->setup_bins();
-
   comm->exchange();
-
-  if (atomKK->sortfreq > 0) atomKK->sort();
-
+  if (atom->sortfreq > 0) atom->sort();
   comm->borders();
-
-  if (triclinic) domain->lamda2x(atomKK->nlocal+atomKK->nghost);
-
-  atomKK->sync(Host,ALL_MASK);
-
+  if (triclinic) domain->lamda2x(atom->nlocal+atom->nghost);
   domain->image_check();
   domain->box_too_small_check();
   modify->setup_pre_neighbor();
-
-  atomKK->modified(Host,ALL_MASK);
-
   neighbor->build(1);
+  modify->setup_post_neighbor();
   neighbor->ncalls = 0;
 
   // compute all forces
 
+  force->setup();
   ev_set(update->ntimestep);
   force_clear();
   modify->setup_pre_force(vflag);
@@ -132,12 +123,10 @@ void VerletKokkos::setup(int flag)
     atomKK->sync(force->pair->execution_space,force->pair->datamask_read);
     force->pair->compute(eflag,vflag);
     atomKK->modified(force->pair->execution_space,force->pair->datamask_modify);
-    timer->stamp(Timer::PAIR);
   }
   else if (force->pair) force->pair->compute_dummy(eflag,vflag);
 
-
-  if (atomKK->molecular) {
+  if (atom->molecular != Atom::ATOMIC) {
     if (force->bond) {
       atomKK->sync(force->bond->execution_space,force->bond->datamask_read);
       force->bond->compute(eflag,vflag);
@@ -158,24 +147,25 @@ void VerletKokkos::setup(int flag)
       force->improper->compute(eflag,vflag);
       atomKK->modified(force->improper->execution_space,force->improper->datamask_modify);
     }
-    timer->stamp(Timer::BOND);
   }
 
-  if(force->kspace) {
+  if (force->kspace) {
     force->kspace->setup();
     if (kspace_compute_flag) {
       atomKK->sync(force->kspace->execution_space,force->kspace->datamask_read);
       force->kspace->compute(eflag,vflag);
       atomKK->modified(force->kspace->execution_space,force->kspace->datamask_modify);
-      timer->stamp(Timer::KSPACE);
     } else force->kspace->compute_dummy(eflag,vflag);
   }
+
+  modify->setup_pre_reverse(eflag,vflag);
   if (force->newton) comm->reverse_comm();
 
+  lmp->kokkos->auto_sync = 0;
   modify->setup(vflag);
   output->setup(flag);
   lmp->kokkos->auto_sync = 1;
-  update->setupflag = 1;
+  update->setupflag = 0;
 }
 
 /* ----------------------------------------------------------------------
@@ -187,42 +177,28 @@ void VerletKokkos::setup(int flag)
 void VerletKokkos::setup_minimal(int flag)
 {
   update->setupflag = 1;
-  lmp->kokkos->auto_sync = 0;
 
   // setup domain, communication and neighboring
   // acquire ghosts
   // build neighbor lists
 
+  lmp->kokkos->auto_sync = 1;
+
   if (flag) {
-    atomKK->sync(Host,ALL_MASK);
-    atomKK->modified(Host,ALL_MASK);
-
     modify->setup_pre_exchange();
-      // debug
-      atomKK->sync(Host,ALL_MASK);
-      atomKK->modified(Host,ALL_MASK);
-
-    if (triclinic) domain->x2lamda(atomKK->nlocal);
+    if (triclinic) domain->x2lamda(atom->nlocal);
     domain->pbc();
-
-    atomKK->sync(Host,ALL_MASK);
-
     domain->reset_box();
     comm->setup();
     if (neighbor->style) neighbor->setup_bins();
     comm->exchange();
     comm->borders();
-    if (triclinic) domain->lamda2x(atomKK->nlocal+atomKK->nghost);
-
-    atomKK->sync(Host,ALL_MASK);
-
+    if (triclinic) domain->lamda2x(atom->nlocal+atom->nghost);
     domain->image_check();
     domain->box_too_small_check();
     modify->setup_pre_neighbor();
-
-    atomKK->modified(Host,ALL_MASK);
-
     neighbor->build(1);
+    modify->setup_post_neighbor();
     neighbor->ncalls = 0;
   }
 
@@ -236,12 +212,10 @@ void VerletKokkos::setup_minimal(int flag)
     atomKK->sync(force->pair->execution_space,force->pair->datamask_read);
     force->pair->compute(eflag,vflag);
     atomKK->modified(force->pair->execution_space,force->pair->datamask_modify);
-    timer->stamp(Timer::PAIR);
   }
   else if (force->pair) force->pair->compute_dummy(eflag,vflag);
 
-
-  if (atomKK->molecular) {
+  if (atom->molecular != Atom::ATOMIC) {
     if (force->bond) {
       atomKK->sync(force->bond->execution_space,force->bond->datamask_read);
       force->bond->compute(eflag,vflag);
@@ -262,21 +236,21 @@ void VerletKokkos::setup_minimal(int flag)
       force->improper->compute(eflag,vflag);
       atomKK->modified(force->improper->execution_space,force->improper->datamask_modify);
     }
-    timer->stamp(Timer::BOND);
   }
 
-  if(force->kspace) {
+  if (force->kspace) {
     force->kspace->setup();
     if (kspace_compute_flag) {
       atomKK->sync(force->kspace->execution_space,force->kspace->datamask_read);
       force->kspace->compute(eflag,vflag);
       atomKK->modified(force->kspace->execution_space,force->kspace->datamask_modify);
-      timer->stamp(Timer::KSPACE);
     } else force->kspace->compute_dummy(eflag,vflag);
   }
 
+  modify->setup_pre_reverse(eflag,vflag);
   if (force->newton) comm->reverse_comm();
 
+  lmp->kokkos->auto_sync = 0;
   modify->setup(vflag);
   lmp->kokkos->auto_sync = 1;
   update->setupflag = 0;
@@ -294,9 +268,10 @@ void VerletKokkos::run(int n)
   int n_post_integrate = modify->n_post_integrate;
   int n_pre_exchange = modify->n_pre_exchange;
   int n_pre_neighbor = modify->n_pre_neighbor;
+  int n_post_neighbor = modify->n_post_neighbor;
   int n_pre_force = modify->n_pre_force;
   int n_pre_reverse = modify->n_pre_reverse;
-  int n_post_force = modify->n_post_force;
+  int n_post_force = modify->n_post_force_any;
   int n_end_of_step = modify->n_end_of_step;
 
   lmp->kokkos->auto_sync = 0;
@@ -308,15 +283,15 @@ void VerletKokkos::run(int n)
 
   atomKK->sync(Device,ALL_MASK);
   //static double time = 0.0;
-  //Kokkos::Impl::Timer ktimer;
+  //Kokkos::Timer ktimer;
 
   timer->init_timeout();
   for (int i = 0; i < n; i++) {
-
     if (timer->check_timeout(i)) {
       update->nsteps = i;
       break;
     }
+
     ntimestep = ++update->ntimestep;
     ev_set(ntimestep);
 
@@ -380,6 +355,10 @@ void VerletKokkos::run(int n)
       }
       neighbor->build(1);
       timer->stamp(Timer::NEIGH);
+      if (n_post_neighbor) {
+        modify->post_neighbor();
+        timer->stamp(Timer::MODIFY);
+      }
     }
 
     // force computations
@@ -401,7 +380,7 @@ void VerletKokkos::run(int n)
     unsigned int datamask_modify_device = 0;
     unsigned int datamask_read_host = 0;
 
-    if ( pair_compute_flag ) {
+    if (pair_compute_flag) {
       if (force->pair->execution_space==Host) {
         execute_on_host  = true;
         datamask_read_host   |= force->pair->datamask_read;
@@ -411,7 +390,7 @@ void VerletKokkos::run(int n)
         datamask_modify_device |= force->pair->datamask_modify;
       }
     }
-    if ( atomKK->molecular && force->bond )  {
+    if (atomKK->molecular && force->bond)  {
       if (force->bond->execution_space==Host) {
         execute_on_host  = true;
         datamask_read_host   |= force->bond->datamask_read;
@@ -421,7 +400,7 @@ void VerletKokkos::run(int n)
         datamask_modify_device |= force->bond->datamask_modify;
       }
     }
-    if ( atomKK->molecular && force->angle ) {
+    if (atomKK->molecular && force->angle) {
       if (force->angle->execution_space==Host) {
         execute_on_host  = true;
         datamask_read_host   |= force->angle->datamask_read;
@@ -431,7 +410,7 @@ void VerletKokkos::run(int n)
         datamask_modify_device |= force->angle->datamask_modify;
       }
     }
-    if ( atomKK->molecular && force->dihedral ) {
+    if (atomKK->molecular && force->dihedral) {
       if (force->dihedral->execution_space==Host) {
         execute_on_host  = true;
         datamask_read_host   |= force->dihedral->datamask_read;
@@ -441,7 +420,7 @@ void VerletKokkos::run(int n)
         datamask_modify_device |= force->dihedral->datamask_modify;
       }
     }
-    if ( atomKK->molecular && force->improper ) {
+    if (atomKK->molecular && force->improper) {
       if (force->improper->execution_space==Host) {
         execute_on_host  = true;
         datamask_read_host   |= force->improper->datamask_read;
@@ -451,7 +430,7 @@ void VerletKokkos::run(int n)
         datamask_modify_device |= force->improper->datamask_modify;
       }
     }
-    if ( kspace_compute_flag ) {
+    if (kspace_compute_flag) {
       if (force->kspace->execution_space==Host) {
         execute_on_host  = true;
         datamask_read_host   |= force->kspace->datamask_read;
@@ -466,18 +445,18 @@ void VerletKokkos::run(int n)
     if (pair_compute_flag) {
       atomKK->sync(force->pair->execution_space,force->pair->datamask_read);
       atomKK->sync(force->pair->execution_space,~(~force->pair->datamask_read|(F_MASK | ENERGY_MASK | VIRIAL_MASK)));
-      Kokkos::Impl::Timer ktimer;
+      Kokkos::Timer ktimer;
       force->pair->compute(eflag,vflag);
       atomKK->modified(force->pair->execution_space,force->pair->datamask_modify);
       atomKK->modified(force->pair->execution_space,~(~force->pair->datamask_modify|(F_MASK | ENERGY_MASK | VIRIAL_MASK)));
       timer->stamp(Timer::PAIR);
     }
 
-      if(execute_on_host) {
-        if(pair_compute_flag && force->pair->datamask_modify!=(F_MASK | ENERGY_MASK | VIRIAL_MASK))
+      if (execute_on_host) {
+        if (pair_compute_flag && force->pair->datamask_modify!=(F_MASK | ENERGY_MASK | VIRIAL_MASK))
           Kokkos::fence();
         atomKK->sync_overlapping_device(Host,~(~datamask_read_host|(F_MASK | ENERGY_MASK | VIRIAL_MASK)));
-        if(pair_compute_flag && force->pair->execution_space!=Host) {
+        if (pair_compute_flag && force->pair->execution_space!=Host) {
           Kokkos::deep_copy(LMPHostType(),atomKK->k_f.h_view,0.0);
         }
     }
@@ -513,15 +492,15 @@ void VerletKokkos::run(int n)
       timer->stamp(Timer::KSPACE);
     }
 
-    if(execute_on_host && !std::is_same<LMPHostType,LMPDeviceType>::value) {
-      if(f_merge_copy.extent(0)<atomKK->k_f.extent(0)) {
+    if (execute_on_host && atomKK->k_f.h_view.data() != atomKK->k_f.d_view.data()) {
+      if (f_merge_copy.extent(0)<atomKK->k_f.extent(0)) {
         f_merge_copy = DAT::t_f_array("VerletKokkos::f_merge_copy",atomKK->k_f.extent(0));
       }
       f = atomKK->k_f.d_view;
       Kokkos::deep_copy(LMPHostType(),f_merge_copy,atomKK->k_f.h_view);
       Kokkos::parallel_for(atomKK->k_f.extent(0),
         ForceAdder<DAT::t_f_array,DAT::t_f_array>(atomKK->k_f.d_view,f_merge_copy));
-      atomKK->k_f.modified_host() = 0; // special case
+      atomKK->k_f.clear_sync_state(); // special case
       atomKK->k_f.modify<LMPDeviceType>();
     }
 
@@ -567,32 +546,34 @@ void VerletKokkos::run(int n)
 
 void VerletKokkos::force_clear()
 {
-  int i;
-
   if (external_force_clear) return;
+
+  atomKK->k_f.clear_sync_state(); // ignore host forces/torques since device views
+  atomKK->k_torque.clear_sync_state(); //   will be cleared below
 
   // clear force on all particles
   // if either newton flag is set, also include ghosts
   // when using threads always clear all forces.
 
   if (neighbor->includegroup == 0) {
-    int nall;
-    if (force->newton) nall = atomKK->nlocal + atomKK->nghost;
-    else nall = atomKK->nlocal;
+    int nall = atomKK->nlocal;
+    if (force->newton) nall += atomKK->nghost;
 
-    size_t nbytes = sizeof(double) * nall;
+    Kokkos::parallel_for(nall, Zero<typename ArrayTypes<LMPDeviceType>::t_f_array>(atomKK->k_f.view<LMPDeviceType>()));
+    atomKK->modified(Device,F_MASK);
 
-    if (nbytes) {
-      if (atomKK->k_f.modified_host() > atomKK->k_f.modified_device()) {
-        memset_kokkos(atomKK->k_f.view<LMPHostType>());
-        atomKK->modified(Host,F_MASK);
-        atomKK->sync(Device,F_MASK);
-      } else {
-        memset_kokkos(atomKK->k_f.view<LMPDeviceType>());
-        atomKK->modified(Device,F_MASK);
-      }
-      if (torqueflag)  memset(&(atomKK->torque[0][0]),0,3*nbytes);
+    if (torqueflag) {
+      Kokkos::parallel_for(nall, Zero<typename ArrayTypes<LMPDeviceType>::t_f_array>(atomKK->k_torque.view<LMPDeviceType>()));
+      atomKK->modified(Device,TORQUE_MASK);
+    }
 
+    // reset SPIN forces
+
+    if (extraflag) {
+      Kokkos::parallel_for(nall, Zero<typename ArrayTypes<LMPDeviceType>::t_fm_array>(atomKK->k_fm.view<LMPDeviceType>()));
+      atomKK->modified(Device,FM_MASK);
+      Kokkos::parallel_for(nall, Zero<typename ArrayTypes<LMPDeviceType>::t_fm_array>(atomKK->k_fm_long.view<LMPDeviceType>()));
+      atomKK->modified(Device,FML_MASK);
     }
 
   // neighbor includegroup flag is set
@@ -600,37 +581,41 @@ void VerletKokkos::force_clear()
   // if either newton flag is set, also include ghosts
 
   } else {
-    int nall = atomKK->nfirst;
-    if (atomKK->k_f.modified_host() > atomKK->k_f.modified_device()) {
-      memset_kokkos(atomKK->k_f.view<LMPHostType>());
-      atomKK->modified(Host,F_MASK);
-    } else {
-      memset_kokkos(atomKK->k_f.view<LMPDeviceType>());
-      atomKK->modified(Device,F_MASK);
-    }
+    Kokkos::parallel_for(atomKK->nfirst, Zero<typename ArrayTypes<LMPDeviceType>::t_f_array>(atomKK->k_f.view<LMPDeviceType>()));
+    atomKK->modified(Device,F_MASK);
+
     if (torqueflag) {
-      double **torque = atomKK->torque;
-      for (i = 0; i < nall; i++) {
-        torque[i][0] = 0.0;
-        torque[i][1] = 0.0;
-        torque[i][2] = 0.0;
-      }
+      Kokkos::parallel_for(atomKK->nfirst, Zero<typename ArrayTypes<LMPDeviceType>::t_f_array>(atomKK->k_torque.view<LMPDeviceType>()));
+      atomKK->modified(Device,TORQUE_MASK);
+    }
+
+    // reset SPIN forces
+
+    if (extraflag) {
+      Kokkos::parallel_for(atomKK->nfirst, Zero<typename ArrayTypes<LMPDeviceType>::t_fm_array>(atomKK->k_fm.view<LMPDeviceType>()));
+      atomKK->modified(Device,FM_MASK);
+      Kokkos::parallel_for(atomKK->nfirst, Zero<typename ArrayTypes<LMPDeviceType>::t_fm_array>(atomKK->k_fm_long.view<LMPDeviceType>()));
+      atomKK->modified(Device,FML_MASK);
     }
 
     if (force->newton) {
-      nall = atomKK->nlocal + atomKK->nghost;
+      auto range = Kokkos::RangePolicy<LMPDeviceType>(atomKK->nlocal, atomKK->nlocal + atomKK->nghost);
+      Kokkos::parallel_for(range, Zero<typename ArrayTypes<LMPDeviceType>::t_f_array>(atomKK->k_f.view<LMPDeviceType>()));
+      atomKK->modified(Device,F_MASK);
 
       if (torqueflag) {
-        double **torque = atomKK->torque;
-        for (i = atomKK->nlocal; i < nall; i++) {
-          torque[i][0] = 0.0;
-          torque[i][1] = 0.0;
-          torque[i][2] = 0.0;
-        }
+        Kokkos::parallel_for(range, Zero<typename ArrayTypes<LMPDeviceType>::t_f_array>(atomKK->k_torque.view<LMPDeviceType>()));
+        atomKK->modified(Device,TORQUE_MASK);
       }
 
+      // reset SPIN forces
+
+      if (extraflag) {
+        Kokkos::parallel_for(range, Zero<typename ArrayTypes<LMPDeviceType>::t_fm_array>(atomKK->k_fm.view<LMPDeviceType>()));
+        atomKK->modified(Device,FM_MASK);
+        Kokkos::parallel_for(range, Zero<typename ArrayTypes<LMPDeviceType>::t_fm_array>(atomKK->k_fm_long.view<LMPDeviceType>()));
+        atomKK->modified(Device,FML_MASK);
+      }
     }
   }
 }
-
-
