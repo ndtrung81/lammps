@@ -109,6 +109,8 @@ action pair_lj_cut_coul_dsf_gpu.cpp pair_lj_cut_coul_dsf.cpp
 action pair_lj_cut_coul_dsf_gpu.h pair_lj_cut_coul_dsf.h
 action pair_lj_cut_coul_long_gpu.cpp pair_lj_cut_coul_long.cpp
 action pair_lj_cut_coul_long_gpu.h pair_lj_cut_coul_long.cpp
+action pair_lj_cut_coul_long_soft_gpu.cpp pair_lj_cut_coul_long_soft.cpp
+action pair_lj_cut_coul_long_soft_gpu.h pair_lj_cut_coul_long_soft.cpp
 action pair_lj_cut_coul_msm_gpu.cpp pair_lj_cut_coul_msm.cpp
 action pair_lj_cut_coul_msm_gpu.h pair_lj_cut_coul_msm.h
 action pair_lj_cut_gpu.cpp
