@@ -29,7 +29,7 @@ _texture( q_tex,int2);
 #define q_tex q_
 #endif
 
-__kernel void k_lj_coul(const __global numtyp4 *restrict x_,
+__kernel void k_lj_coul_soft(const __global numtyp4 *restrict x_,
                         const __global numtyp4 *restrict lj1,
                         const __global numtyp4 *restrict  lj3,
                         const int lj_types,
@@ -149,7 +149,7 @@ __kernel void k_lj_coul(const __global numtyp4 *restrict x_,
                   vflag,ans,engv);
 }
 
-__kernel void k_lj_coul_fast(const __global numtyp4 *restrict x_,
+__kernel void k_lj_coul_soft_fast(const __global numtyp4 *restrict x_,
                              const __global numtyp4 *restrict lj1_in,
                              const __global numtyp4 *restrict lj3_in,
                              const __global numtyp *restrict sp_lj_in,
