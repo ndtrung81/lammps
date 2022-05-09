@@ -1,9 +1,9 @@
 // **************************************************************************
-//                            lj_coul_long_soft.cu
+//                               lj_coul_soft.cu
 //                             -------------------
 //                           Trung Nguyen (U Chicago)
 //
-//  Device code for acceleration of the lj/cut/coul/long/soft pair style
+//  Device code for acceleration of the lj/coul/cut/soft pair style
 //
 // __________________________________________________________________________
 //    This file is part of the LAMMPS Accelerator Library (LAMMPS_AL)
@@ -14,7 +14,7 @@
 // ***************************************************************************
 
 #if defined(NV_KERNEL) || defined(USE_HIP)
-#include <stdio.h>
+
 #include "lal_aux_fun1.h"
 #ifndef _DOUBLE_DOUBLE
 _texture( pos_tex,float4);
@@ -29,20 +29,20 @@ _texture( q_tex,int2);
 #define q_tex q_
 #endif
 
-__kernel void k_lj_coul_long_soft(const __global numtyp4 *restrict x_,
-                             const __global numtyp4 *restrict lj1,
-                             const __global numtyp4 *restrict lj3,
-                             const int lj_types,
-                             const __global numtyp *restrict sp_lj_in,
-                             const __global int *dev_nbor,
-                             const __global int *dev_packed,
-                             __global acctyp4 *restrict ans,
-                             __global acctyp *restrict engv,
-                             const int eflag, const int vflag, const int inum,
-                             const int nbor_pitch,
-                             const __global numtyp *restrict q_,
-                             const numtyp cut_coulsq, const numtyp qqrd2e,
-                             const numtyp g_ewald, const int t_per_atom) {
+__kernel void k_lj_coul(const __global numtyp4 *restrict x_,
+                        const __global numtyp4 *restrict lj1,
+                        const __global numtyp4 *restrict  lj3,
+                        const int lj_types,
+                        const __global numtyp *restrict sp_lj_in,
+                        const __global int *dev_nbor,
+                        const __global int *dev_packed,
+                        __global acctyp4 *restrict ans,
+                        __global acctyp *restrict engv,
+                        const int eflag, const int vflag, const int inum,
+                        const int nbor_pitch,
+                        const __global numtyp *restrict q_,
+                        const __global numtyp *restrict cutsq,
+                        const numtyp qqrd2e, const int t_per_atom) {
   int tid, ii, offset;
   atom_info(t_per_atom,ii,tid,offset);
 
@@ -83,7 +83,7 @@ __kernel void k_lj_coul_long_soft(const __global numtyp4 *restrict x_,
 
       numtyp factor_lj, factor_coul;
       factor_lj = sp_lj[sbmask(j)];
-      factor_coul = (numtyp)1.0-sp_lj[sbmask(j)+4];
+      factor_coul = sp_lj[sbmask(j)+4];
       j &= NEIGHMASK;
 
       numtyp4 jx; fetch4(jx,j,pos_tex); //x_[j];
@@ -96,47 +96,39 @@ __kernel void k_lj_coul_long_soft(const __global numtyp4 *restrict x_,
       numtyp rsq = delx*delx+dely*dely+delz*delz;
 
       int mtype=itype*lj_types+jtype;
-      if (rsq<lj1[mtype].z) {
-        numtyp r2inv=ucl_recip(rsq);
-        numtyp forcecoul, force_lj, force, prefactor, _erfc;
-        numtyp denc, denlj, r4sig6;
+      if (rsq<cutsq[mtype]) {
+        numtyp forcecoul, force_lj, force;
+        numtyp r4sig6, denlj, denc;
 
-        if (rsq < lj1[mtype].w) {
+        if (rsq < lj1[mtype].z) {
           r4sig6 = rsq*rsq / lj1[mtype].y;
           denlj = lj3[mtype].x + rsq*r4sig6;
           force_lj = lj1[mtype].x * lj3[mtype].w *
             ((numtyp)48.0*r4sig6/(denlj*denlj*denlj) - (numtyp)24.0*r4sig6/(denlj*denlj));
+          force_lj *= factor_lj;
         } else
           force_lj = (numtyp)0.0;
 
-        if (rsq < cut_coulsq) {
-          numtyp r = ucl_rsqrt(r2inv);
-          numtyp grij = g_ewald * r;
-          numtyp expm2 = ucl_exp(-grij*grij);
-          numtyp t = ucl_recip((numtyp)1.0 + EWALD_P*grij);
-          _erfc = t * (A1+t*(A2+t*(A3+t*(A4+t*A5)))) * expm2;
-          fetch(prefactor,j,q_tex);
-
-          denc = ucl_sqrt(lj3[mtype].y + rsq);
-          prefactor *= qqrd2e * lj1[mtype].x * qtmp / (denc*denc*denc);
-
-          forcecoul = prefactor * (_erfc + EWALD_F*grij*expm2-factor_coul);
+        if (rsq < lj1[mtype].w) {
+          fetch(forcecoul,j,q_tex);
+          denc = sqrt(lj3[mtype].y + rsq);
+          forcecoul *= qqrd2e * lj1[mtype].x * qtmp / (denc*denc*denc);
+          forcecoul *= factor_coul;
         } else
           forcecoul = (numtyp)0.0;
 
-        force = factor_lj * force_lj + forcecoul;
+        force = force_lj + forcecoul;
 
         f.x+=delx*force;
         f.y+=dely*force;
         f.z+=delz*force;
 
         if (EVFLAG && eflag) {
-          if (rsq < cut_coulsq) {
-            prefactor *= (denc*denc);
-            e_coul += prefactor*(_erfc-factor_coul);
-          }
           if (rsq < lj1[mtype].w) {
-            numtyp e= lj1[mtype].x * (numtyp)4.0 * lj3[mtype].w *
+             e_coul += forcecoul*(denc*denc);
+          }
+          if (rsq < lj1[mtype].z) {
+            numtyp e = lj1[mtype].x * (numtyp)4.0 * lj3[mtype].w *
               ((numtyp)1.0/(denlj*denlj) - (numtyp)1.0/denlj);
             energy+=factor_lj*(e-lj3[mtype].z);
           }
@@ -157,24 +149,25 @@ __kernel void k_lj_coul_long_soft(const __global numtyp4 *restrict x_,
                   vflag,ans,engv);
 }
 
-__kernel void k_lj_coul_long_soft_fast(const __global numtyp4 *restrict x_,
-                                  const __global numtyp4 *restrict lj1_in,
-                                  const __global numtyp4 *restrict lj3_in,
-                                  const __global numtyp *restrict sp_lj_in,
-                                  const __global int *dev_nbor,
-                                  const __global int *dev_packed,
-                                  __global acctyp4 *restrict ans,
-                                  __global acctyp *restrict engv,
-                                  const int eflag, const int vflag,
-                                  const int inum,  const int nbor_pitch,
-                                  const __global numtyp *restrict q_,
-                                  const numtyp cut_coulsq, const numtyp qqrd2e,
-                                  const numtyp g_ewald, const int t_per_atom) {
+__kernel void k_lj_coul_fast(const __global numtyp4 *restrict x_,
+                             const __global numtyp4 *restrict lj1_in,
+                             const __global numtyp4 *restrict lj3_in,
+                             const __global numtyp *restrict sp_lj_in,
+                             const __global int *dev_nbor,
+                             const __global int *dev_packed,
+                             __global acctyp4 *restrict ans,
+                             __global acctyp *restrict engv,
+                             const int eflag, const int vflag, const int inum,
+                             const int nbor_pitch,
+                             const __global numtyp *restrict q_,
+                             const __global numtyp *restrict _cutsq,
+                             const numtyp qqrd2e, const int t_per_atom) {
   int tid, ii, offset;
   atom_info(t_per_atom,ii,tid,offset);
 
   __local numtyp4 lj1[MAX_SHARED_TYPES*MAX_SHARED_TYPES];
   __local numtyp4 lj3[MAX_SHARED_TYPES*MAX_SHARED_TYPES];
+  __local numtyp cutsq[MAX_SHARED_TYPES*MAX_SHARED_TYPES];
   __local numtyp sp_lj[8];
   int n_stride;
   local_allocate_store_charge();
@@ -183,6 +176,7 @@ __kernel void k_lj_coul_long_soft_fast(const __global numtyp4 *restrict x_,
     sp_lj[tid]=sp_lj_in[tid];
   if (tid<MAX_SHARED_TYPES*MAX_SHARED_TYPES) {
     lj1[tid]=lj1_in[tid];
+    cutsq[tid]=_cutsq[tid];
     if (EVFLAG && eflag)
       lj3[tid]=lj3_in[tid];
   }
@@ -214,7 +208,7 @@ __kernel void k_lj_coul_long_soft_fast(const __global numtyp4 *restrict x_,
 
       numtyp factor_lj, factor_coul;
       factor_lj = sp_lj[sbmask(j)];
-      factor_coul = (numtyp)1.0-sp_lj[sbmask(j)+4];
+      factor_coul = sp_lj[sbmask(j)+4];
       j &= NEIGHMASK;
 
       numtyp4 jx; fetch4(jx,j,pos_tex); //x_[j];
@@ -226,46 +220,39 @@ __kernel void k_lj_coul_long_soft_fast(const __global numtyp4 *restrict x_,
       numtyp delz = ix.z-jx.z;
       numtyp rsq = delx*delx+dely*dely+delz*delz;
 
-      if (rsq<lj1[mtype].z) {
-        numtyp forcecoul, force_lj, force, prefactor, _erfc;
-        numtyp denc, denlj, r4sig6;
+      if (rsq<cutsq[mtype]) {
+        numtyp forcecoul, force_lj, force;
+        numtyp r4sig6, denlj, denc;
 
-        if (rsq < lj1[mtype].w) {
+        if (rsq < lj1[mtype].z) {
           r4sig6 = rsq*rsq / lj1[mtype].y;
           denlj = lj3[mtype].x + rsq*r4sig6;
           force_lj = lj1[mtype].x * lj3[mtype].w *
             ((numtyp)48.0*r4sig6/(denlj*denlj*denlj) - (numtyp)24.0*r4sig6/(denlj*denlj));
+          force_lj *= factor_lj;
         } else
           force_lj = (numtyp)0.0;
 
-        if (rsq < cut_coulsq) {
-          numtyp r = ucl_sqrt(rsq);
-          numtyp grij = g_ewald * r;
-          numtyp expm2 = ucl_exp(-grij*grij);
-          numtyp t = ucl_recip((numtyp)1.0 + EWALD_P*grij);
-          _erfc = t * (A1+t*(A2+t*(A3+t*(A4+t*A5)))) * expm2;
-          fetch(prefactor,j,q_tex);
-
-          denc = ucl_sqrt(lj3[mtype].y + rsq);
-          prefactor *= qqrd2e * lj1[mtype].x * qtmp / (denc*denc*denc);
-
-          forcecoul = prefactor * (_erfc + EWALD_F*grij*expm2-factor_coul);
+        if (rsq < lj1[mtype].w) {
+          fetch(forcecoul,j,q_tex);
+          denc = sqrt(lj3[mtype].y + rsq);
+          forcecoul *= qqrd2e * lj1[mtype].x * qtmp / (denc*denc*denc);
+          forcecoul *= factor_coul;
         } else
           forcecoul = (numtyp)0.0;
 
-        force = forcecoul + factor_lj*force_lj;
+        force = force_lj + forcecoul;
 
         f.x+=delx*force;
         f.y+=dely*force;
         f.z+=delz*force;
 
         if (EVFLAG && eflag) {
-          if (rsq < cut_coulsq) {
-            prefactor *= (denc*denc);
-            e_coul += prefactor*(_erfc-factor_coul);
-          }
           if (rsq < lj1[mtype].w) {
-            numtyp e= lj1[mtype].x * (numtyp)4.0 * lj3[mtype].w *
+             e_coul += forcecoul*(denc*denc);
+          }
+          if (rsq < lj1[mtype].z) {
+            numtyp e = lj1[mtype].x * (numtyp)4.0 * lj3[mtype].w *
               ((numtyp)1.0/(denlj*denlj) - (numtyp)1.0/denlj);
             energy+=factor_lj*(e-lj3[mtype].z);
           }

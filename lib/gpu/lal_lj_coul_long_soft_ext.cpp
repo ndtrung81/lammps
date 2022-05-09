@@ -22,7 +22,7 @@
 using namespace std;
 using namespace LAMMPS_AL;
 
-static LJCoulLongSoft<PRECISION,ACC_PRECISION> LJCLSoft;
+static LJCoulLongSoft<PRECISION,ACC_PRECISION> LJCLSMF;
 
 // ---------------------------------------------------------------------------
 // Allocate memory on host and device and copy constants to device
@@ -35,19 +35,19 @@ int ljcls_gpu_init(const int ntypes, double **cutsq, double **host_lj1,
                   double **host_cut_ljsq, double host_cut_coulsq,
                   double *host_special_coul, const double qqrd2e,
                   const double g_ewald) {
-  LJCLSoft.clear();
-  gpu_mode=LJCLSoft.device->gpu_mode();
-  double gpu_split=LJCLSoft.device->particle_split();
-  int first_gpu=LJCLSoft.device->first_device();
-  int last_gpu=LJCLSoft.device->last_device();
-  int world_me=LJCLSoft.device->world_me();
-  int gpu_rank=LJCLSoft.device->gpu_rank();
-  int procs_per_gpu=LJCLSoft.device->procs_per_gpu();
+  LJCLSMF.clear();
+  gpu_mode=LJCLSMF.device->gpu_mode();
+  double gpu_split=LJCLSMF.device->particle_split();
+  int first_gpu=LJCLSMF.device->first_device();
+  int last_gpu=LJCLSMF.device->last_device();
+  int world_me=LJCLSMF.device->world_me();
+  int gpu_rank=LJCLSMF.device->gpu_rank();
+  int procs_per_gpu=LJCLSMF.device->procs_per_gpu();
 
-  LJCLSoft.device->init_message(screen,"lj/cut/coul/long/soft",first_gpu,last_gpu);
+  LJCLSMF.device->init_message(screen,"lj/cut/coul/long/soft",first_gpu,last_gpu);
 
   bool message=false;
-  if (LJCLSoft.device->replica_me()==0 && screen)
+  if (LJCLSMF.device->replica_me()==0 && screen)
     message=true;
 
   if (message) {
@@ -57,12 +57,12 @@ int ljcls_gpu_init(const int ntypes, double **cutsq, double **host_lj1,
 
   int init_ok=0;
   if (world_me==0)
-    init_ok=LJCLSoft.init(ntypes, cutsq, host_lj1, host_lj2, host_lj3, host_lj4,
+    init_ok=LJCLSMF.init(ntypes, cutsq, host_lj1, host_lj2, host_lj3, host_lj4,
                         offset, epsilon, special_lj, inum, nall, max_nbors, maxspecial,
                         cell_size, gpu_split, screen, host_cut_ljsq,
                         host_cut_coulsq, host_special_coul, qqrd2e, g_ewald);
 
-  LJCLSoft.device->world_barrier();
+  LJCLSMF.device->world_barrier();
   if (message)
     fprintf(screen,"Done.\n");
 
@@ -76,12 +76,12 @@ int ljcls_gpu_init(const int ntypes, double **cutsq, double **host_lj1,
       fflush(screen);
     }
     if (gpu_rank==i && world_me!=0)
-      init_ok=LJCLSoft.init(ntypes, cutsq, host_lj1, host_lj2, host_lj3, host_lj4,
+      init_ok=LJCLSMF.init(ntypes, cutsq, host_lj1, host_lj2, host_lj3, host_lj4,
                           offset, epsilon, special_lj, inum, nall, max_nbors, maxspecial,
                           cell_size, gpu_split, screen, host_cut_ljsq,
                           host_cut_coulsq, host_special_coul, qqrd2e, g_ewald);
 
-    LJCLSoft.device->gpu_barrier();
+    LJCLSMF.device->gpu_barrier();
     if (message)
       fprintf(screen,"Done.\n");
   }
@@ -89,7 +89,7 @@ int ljcls_gpu_init(const int ntypes, double **cutsq, double **host_lj1,
     fprintf(screen,"\n");
 
   if (init_ok==0)
-    LJCLSoft.estimate_gpu_overhead();
+    LJCLSMF.estimate_gpu_overhead();
   return init_ok;
 }
 
@@ -99,25 +99,25 @@ int ljcls_gpu_init(const int ntypes, double **cutsq, double **host_lj1,
 void ljcls_gpu_reinit(const int ntypes, double **cutsq, double **host_lj1,
                     double **host_lj2, double **host_lj3, double **host_lj4,
                     double **offset, double **epsilon, double **host_cut_ljsq) {
-  int world_me=LJCLSoft.device->world_me();
-  int gpu_rank=LJCLSoft.device->gpu_rank();
-  int procs_per_gpu=LJCLSoft.device->procs_per_gpu();
+  int world_me=LJCLSMF.device->world_me();
+  int gpu_rank=LJCLSMF.device->gpu_rank();
+  int procs_per_gpu=LJCLSMF.device->procs_per_gpu();
 
   if (world_me==0)
-    LJCLSoft.reinit(ntypes, cutsq, host_lj1, host_lj2, host_lj3, host_lj4,
+    LJCLSMF.reinit(ntypes, cutsq, host_lj1, host_lj2, host_lj3, host_lj4,
                   offset, epsilon, host_cut_ljsq);
-  LJCLSoft.device->world_barrier();
+  LJCLSMF.device->world_barrier();
 
   for (int i=0; i<procs_per_gpu; i++) {
     if (gpu_rank==i && world_me!=0)
-      LJCLSoft.reinit(ntypes, cutsq, host_lj1, host_lj2, host_lj3, host_lj4,
+      LJCLSMF.reinit(ntypes, cutsq, host_lj1, host_lj2, host_lj3, host_lj4,
                     offset, epsilon, host_cut_ljsq);
-    LJCLSoft.device->gpu_barrier();
+    LJCLSMF.device->gpu_barrier();
   }
 }
 
 void ljcls_gpu_clear() {
-  LJCLSoft.clear();
+  LJCLSMF.clear();
 }
 
 int** ljcls_gpu_compute_n(const int ago, const int inum_full,
@@ -128,7 +128,7 @@ int** ljcls_gpu_compute_n(const int ago, const int inum_full,
                          int **ilist, int **jnum,  const double cpu_time,
                          bool &success, double *host_q, double *boxlo,
                          double *prd) {
-  return LJCLSoft.compute(ago, inum_full, nall, host_x, host_type, sublo,
+  return LJCLSMF.compute(ago, inum_full, nall, host_x, host_type, sublo,
                         subhi, tag, nspecial, special, eflag, vflag, eatom,
                         vatom, host_start, ilist, jnum, cpu_time, success,
                         host_q, boxlo, prd);
@@ -140,13 +140,12 @@ void ljcls_gpu_compute(const int ago, const int inum_full, const int nall,
                       const bool eatom, const bool vatom, int &host_start,
                       const double cpu_time, bool &success, double *host_q,
                       const int nlocal, double *boxlo, double *prd) {
-  LJCLSoft.compute(ago,inum_full,nall,host_x,host_type,ilist,numj,
+  LJCLSMF.compute(ago,inum_full,nall,host_x,host_type,ilist,numj,
                 firstneigh,eflag,vflag,eatom,vatom,host_start,cpu_time,success,
                 host_q,nlocal,boxlo,prd);
 }
 
 double ljcls_gpu_bytes() {
-  return LJCLSoft.host_memory_usage();
+  return LJCLSMF.host_memory_usage();
 }
-
 
