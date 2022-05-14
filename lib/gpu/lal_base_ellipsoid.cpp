@@ -97,7 +97,9 @@ int BaseEllipsoidT::init_base(const int nlocal, const int nall,
 
   _threads_per_atom=device->threads_per_atom();
 
-  int success=device->init(*ans,false,true,nlocal,nall,maxspecial);
+  bool charge = false;
+  bool rot = true;
+  int success=device->init(*ans,charge,rot,nlocal,nall,maxspecial);
   if (success!=0)
     return success;
 
