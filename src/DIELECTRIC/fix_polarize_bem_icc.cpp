@@ -363,7 +363,6 @@ void FixPolarizeBEMICC::compute_induced_charges()
   iterations = itr;
 
   // compute the total induced charges of the interface particles
-  // for interface particles: set the charge to be the sum of unscaled (free) charges and induced charges
 
   double tmp = 0;
   for (int i = 0; i < nlocal; i++) {
@@ -371,10 +370,10 @@ void FixPolarizeBEMICC::compute_induced_charges()
 
     double q_bound = q_scaled[i] - q[i];
     tmp += q_bound;
-    q[i] = q_scaled[i];
   }
 
   // ensure sum of all induced charges being zero
+  // for interface particles: q_scaled is the sum of unscaled (free) charges (atom->q) and induced (bound) charges
 
   int ncount = group->count(igroup);
   double sum = 0;
@@ -383,8 +382,10 @@ void FixPolarizeBEMICC::compute_induced_charges()
 
   for (int i = 0; i < nlocal; i++) {
     if (!(mask[i] & groupbit)) continue;
-    q[i] -= qboundave;
+    q_scaled[i] -= qboundave;
   }
+
+  comm->forward_comm(this);
 }
 
 /* ---------------------------------------------------------------------- */
