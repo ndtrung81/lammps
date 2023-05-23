@@ -444,7 +444,7 @@ void FixPolarizeBEMGMRES::compute_induced_charges()
   // communicate q_scaled to neighboring procs
 
   comm->forward_comm(this);
-
+/*
   // compute the total induced charges of the interface particles
   // for interface particles: set the charge to be the sum of unscaled (free) charges and induced charges
 
@@ -454,7 +454,6 @@ void FixPolarizeBEMGMRES::compute_induced_charges()
 
     double q_bound = q_scaled[i] - q[i];
     tmp += q_bound;
-    q[i] = q_scaled[i];
   }
 
   if (first) first = 0;
@@ -468,8 +467,9 @@ void FixPolarizeBEMGMRES::compute_induced_charges()
 
   for (int i = 0; i < nlocal; i++) {
     if (!(mask[i] & groupbit)) continue;
-    q[i] -= qboundave;
+    q_scaled[i] -= qboundave;
   }
+*/  
 }
 
 /* ---------------------------------------------------------------------- */

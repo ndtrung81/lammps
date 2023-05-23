@@ -52,8 +52,10 @@ kspace_modify   slab 3.0
 
 neigh_modify    every 1 delay 0 check yes one 5000
 
+compute qs all property/atom q_scaled
+
 #compute         ef all efield/atom
-#dump            1 all custom 100 all.dump id mol type q x y z #fx fy fz c_ef[1] c_ef[2] c_ef[3]
+dump            1 all custom 100 all.dump id mol type q x y z c_qs #fx fy fz c_ef[1] c_ef[2] c_ef[3]
 #dump            2 interface custom 100 interface.dump id mol type q x y z #fx fy fz c_ef[1] c_ef[2] c_ef[3]
 #dump_modify     1 sort id
 

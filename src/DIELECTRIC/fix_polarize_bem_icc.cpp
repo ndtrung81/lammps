@@ -362,6 +362,7 @@ void FixPolarizeBEMICC::compute_induced_charges()
 
   iterations = itr;
 
+/*
   // compute the total induced charges of the interface particles
 
   double tmp = 0;
@@ -386,6 +387,8 @@ void FixPolarizeBEMICC::compute_induced_charges()
   }
 
   comm->forward_comm(this);
+*/  
+
 }
 
 /* ---------------------------------------------------------------------- */
