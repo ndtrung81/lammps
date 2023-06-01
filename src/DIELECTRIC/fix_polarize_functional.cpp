@@ -386,8 +386,7 @@ void FixPolarizeFunctional::update_induced_charges()
   for (int i = 0; i < nlocal; i++) {
     if (induced_charge_idx[i] < 0) continue;
     int idx = induced_charge_idx[i];
-    q_scaled[i] = -induced_charges[idx] / (4 * MY_PI) + q[i];
-    q_scaled[i] /= epsilon[i];
+    q_scaled[i] = -induced_charges[idx] / (4 * MY_PI);
   }
 
   // revert to scaled charges to calculate forces
