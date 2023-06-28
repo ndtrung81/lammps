@@ -25,6 +25,8 @@ const char *pppm_d=0;
 #include "lal_pppm.h"
 #include <cassert>
 
+#define PPPM_CONCURRENT
+
 namespace LAMMPS_AL {
 #define PPPMT PPPM<numtyp, acctyp, grdtyp, grdtyp4>
 
@@ -55,13 +57,13 @@ int PPPMT::bytes_per_atom() const {
 
 template <class numtyp, class acctyp, class grdtyp, class grdtyp4>
 grdtyp *PPPMT::init(const int nlocal, const int nall, FILE *_screen,
-                              const int order, const int nxlo_out,
-                              const int nylo_out, const int nzlo_out,
-                              const int nxhi_out, const int nyhi_out,
-                              const int nzhi_out, grdtyp **rho_coeff,
-                              grdtyp **vd_brick_p, const double slab_volfactor,
-                              const int nx_pppm, const int ny_pppm,
-                              const int nz_pppm, const bool split, int &flag) {
+                    const int order, const int nxlo_out,
+                    const int nylo_out, const int nzlo_out,
+                    const int nxhi_out, const int nyhi_out,
+                    const int nzhi_out, grdtyp **rho_coeff,
+                    grdtyp **vd_brick_p, const double slab_volfactor,
+                    const int nx_pppm, const int ny_pppm,
+                    const int nz_pppm, const bool split, int &flag) {
   _max_bytes=10;
   screen=_screen;
   _kspace_split=split;
@@ -87,6 +89,19 @@ grdtyp *PPPMT::init(const int nlocal, const int nall, FILE *_screen,
   _block_size=device->pppm_block();
   _pencil_size=device->num_mem_threads();
   _block_pencils=_block_size/_pencil_size;
+
+  #ifdef PPPM_CONCURRENT
+  _end_command_queue=ucl_device->num_queues();
+  ucl_device->push_command_queue();
+
+  ans->cq(_end_command_queue);
+  brick.cq(ucl_device->cq(_end_command_queue));
+  vd_brick.cq(ucl_device->cq(_end_command_queue));
+  d_brick_counts.cq(ucl_device->cq(_end_command_queue));
+  d_brick_atoms.cq(ucl_device->cq(_end_command_queue));
+  error_flag.cq(ucl_device->cq(_end_command_queue));
+  d_rho_coeff.cq(ucl_device->cq(_end_command_queue));
+  #endif
 
   compile_kernels(*ucl_device);
 
@@ -337,7 +352,7 @@ int PPPMT::spread(const int ago, const int nlocal, const int nall,
 }
 
 // ---------------------------------------------------------------------------
-// Charge spreading stuff
+// Interpolating the potential for atom forces
 // ---------------------------------------------------------------------------
 template <class numtyp, class acctyp, class grdtyp, class grdtyp4>
 void PPPMT::interp(const grdtyp qqrd2e_scale) {
@@ -362,6 +377,7 @@ void PPPMT::interp(const grdtyp qqrd2e_scale) {
   time_interp.stop();
 
   ans->copy_answers(false,false,false,false,0);
+  // regular use cases: forces and energies in ans will be tallied by fix gpu
   if (!_kspace_split)
     device->add_ans_object(ans);
 }
@@ -402,6 +418,12 @@ void PPPMT::compile_kernels(UCL_Device &dev) {
   k_particle_map.set_function(*pppm_program,"particle_map");
   k_make_rho.set_function(*pppm_program,"make_rho");
   k_interp.set_function(*pppm_program,"interp");
+  #ifdef PPPM_CONCURRENT
+  k_particle_map.cq(ucl_device->cq(_end_command_queue));
+  k_make_rho.cq(ucl_device->cq(_end_command_queue));
+  k_interp.cq(ucl_device->cq(_end_command_queue));
+  #endif
+
   pos_tex.get_texture(*pppm_program,"pos_tex");
   q_tex.get_texture(*pppm_program,"q_tex");
 

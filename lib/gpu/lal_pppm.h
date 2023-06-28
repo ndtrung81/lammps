@@ -179,7 +179,7 @@ class PPPM {
 
  protected:
   bool _allocated, _compiled, _precompute_done, _kspace_split;
-  int _block_size, _block_pencils, _pencil_size, _max_brick_atoms, _max_atoms;
+  int _block_size, _block_pencils, _pencil_size, _max_brick_atoms, _max_atoms, _end_command_queue;
   double  _max_bytes, _max_an_bytes;
   double _cpu_idle_time;
 
