@@ -23,7 +23,7 @@ namespace LAMMPS_AL {
 
 template <class numtyp, class acctyp>
 AnswerT::Answer() : _allocated(false),_eflag(false),_vflag(false),
-                    _inum(0),_ilist(nullptr),_newton(false) {
+                    _inum(0),_ilist(nullptr),_newton(false), _cq_index(0) {
 }
 
 template <class numtyp, class acctyp>
@@ -370,6 +370,7 @@ void AnswerT::cq(const int cq_index) {
   time_answer.clear();
   time_answer.init(*dev,dev->cq(cq_index));
   time_answer.zero();
+  _cq_index = cq_index;
 }
 
 template class Answer<PRECISION,ACC_PRECISION>;

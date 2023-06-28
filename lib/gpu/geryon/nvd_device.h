@@ -43,6 +43,10 @@ inline void ucl_sync(CUstream &stream) {
   CU_SAFE_CALL(cuStreamSynchronize(stream));
 }
 
+inline void ucl_dev_sync() {
+  CU_SAFE_CALL(cuCtxSynchronize());
+}
+
 struct NVDProperties {
   int device_id;
   std::string name;
@@ -123,6 +127,8 @@ class UCL_Device {
 
   /// Block until all commands in the specified stream have completed
   inline void sync(const int i) { ucl_sync(cq(i)); }
+
+  inline void device_sync() { ucl_dev_sync(); }
 
   /// Get the number of command queues currently available on device
   inline int num_queues()

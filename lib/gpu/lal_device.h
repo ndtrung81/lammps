@@ -168,6 +168,7 @@ class Device {
                         double *virial, double &ecoul, int &error_flag) {
     error_flag=0;
     atom.data_unavail();
+    ucl_dev_sync();
     if (ans_queue.empty()==false) {
       stop_host_timer();
       double evdw=0.0;

@@ -57,6 +57,8 @@ inline void ucl_sync(cl_command_queue &cq) {
   CL_SAFE_CALL(clFinish(cq));
 }
 
+inline void ucl_dev_sync() {}
+
 #if defined(GERYON_FORCE_SHARED_MAIN_MEM_ON)
 inline bool _shared_mem_device(cl_device_id &device) { return true; }
 #elif defined(GERYON_FORCE_SHARED_MAIN_MEM_OFF)

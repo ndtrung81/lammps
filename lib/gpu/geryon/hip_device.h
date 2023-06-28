@@ -29,6 +29,8 @@ inline void ucl_sync(hipStream_t &stream) {
   CU_SAFE_CALL(hipStreamSynchronize(stream));
 }
 
+inline void ucl_dev_sync() {}
+
 struct NVDProperties {
   int device_id;
   std::string name;

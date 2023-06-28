@@ -172,6 +172,7 @@ class Answer {
   double _gpu_bytes;
 
   bool _newton;
+  int _cq_index;
 };
 
 }
