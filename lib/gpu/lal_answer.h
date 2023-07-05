@@ -135,6 +135,7 @@ class Answer {
     double ts=MPI_Wtime();
     if (error_flag[0]) error_flag_in=error_flag[0];
     double evdw=energy_virial(eatom,vatom,virial,ecoul);
+    printf("get answer: evdw = %f; ecoul = %f\n", evdw, ecoul);;
     get_answers(f,tor);
     _time_cast+=MPI_Wtime()-ts;
     return evdw;

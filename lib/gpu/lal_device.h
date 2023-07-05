@@ -169,11 +169,14 @@ class Device {
     error_flag=0;
     atom.data_unavail();
     ucl_dev_sync();
+    int n = 0;
     if (ans_queue.empty()==false) {
       stop_host_timer();
       double evdw=0.0;
       while (ans_queue.empty()==false) {
         evdw += ans_queue.front()->get_answers(f,tor,eatom,vatom,virial,ecoul,error_flag);
+        printf("n = %d: evdw = %f; ecoul = %f\n", n, evdw, ecoul);
+        n++;
         ans_queue.pop();
       }
       return evdw;

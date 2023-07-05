@@ -165,7 +165,7 @@ void AnswerT::copy_answers(const bool eflag, const bool vflag,
   int csize=_ev_fields;
   if (!eflag) csize-=_e_fields;
   if (!vflag) csize-=6;
-
+  printf("csize = %d\n", csize);
   if (csize>0)
     engv.update_host(_ev_stride*csize,true);
   if (_rot)

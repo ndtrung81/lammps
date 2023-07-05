@@ -426,7 +426,7 @@ void PPPMGPU::poisson_ik()
       }
     }
   }
-
+  printf("energy = %f\n", energy);
   // scale by 1/total-grid-pts to get rho(k)
   // multiply by Green's function to get V(k)
 

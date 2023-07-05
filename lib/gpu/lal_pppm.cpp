@@ -347,6 +347,7 @@ int PPPMT::spread(const int ago, const int nlocal, const int nall,
     return spread(ago,nlocal,nall,host_x,host_type,success,host_q,boxlo,
                   delxinv,delyinv,delzinv);
   }
+  ucl_device->sync(_end_command_queue);
 
   return error_flag[0];
 }
@@ -376,10 +377,11 @@ void PPPMT::interp(const grdtyp qqrd2e_scale) {
                &ans->force);
   time_interp.stop();
 
+  ucl_device->sync(_end_command_queue);
+
   ans->copy_answers(false,false,false,false,0);
   // regular use cases: forces and energies in ans will be tallied by fix gpu
-  if (!_kspace_split)
-    device->add_ans_object(ans);
+  if (!_kspace_split) device->add_ans_object(ans);
 }
 
 template <class numtyp, class acctyp, class grdtyp, class grdtyp4>
