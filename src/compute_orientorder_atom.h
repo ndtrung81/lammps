@@ -1,7 +1,7 @@
 /* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    https://www.lammps.org/, Sandia National Laboratories
-   Steve Plimpton, sjplimp@sandia.gov
+   LAMMPS development team: developers@lammps.org
 
    Copyright (2003) Sandia Corporation.  Under the terms of Contract
    DE-AC04-94AL85000 with Sandia Corporation, the U.S. Government retains
@@ -36,6 +36,7 @@ class ComputeOrientOrderAtom : public Compute {
   int iqlcomp, qlcomp, qlcompflag, wlflag, wlhatflag;
   int *qlist;
   int nqlist;
+  double *qnormfac, *qnormfac2;
 
  protected:
   int nmax, maxneigh, ncol, nnn;
@@ -54,9 +55,11 @@ class ComputeOrientOrderAtom : public Compute {
   double polar_prefactor(int, int, double);
   double associated_legendre(int, int, double);
 
-  virtual void init_clebsch_gordan();
-  double *cglist;    // Clebsch-Gordan coeffs
-  int idxcg_max;
+  virtual void init_wigner3j();
+  double triangle_coeff(const int a, const int b, const int c);
+  double w3j(const int L, const int j1, const int j2, const int j3);
+  double *w3jlist;    // Wigner coeffs
+  int widx_max;
   int chunksize;
 };
 

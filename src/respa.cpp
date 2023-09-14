@@ -1,7 +1,7 @@
 /* ----------------------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    https://www.lammps.org/, Sandia National Laboratories
-   Steve Plimpton, sjplimp@sandia.gov
+   LAMMPS development team: developers@lammps.org
 
    Copyright (2003) Sandia Corporation.  Under the terms of Contract
    DE-AC04-94AL85000 with Sandia Corporation, the U.S. Government retains
@@ -298,7 +298,7 @@ void Respa::init()
   if (atom->torque_flag) cmd += " torque";
   fix_respa = dynamic_cast<FixRespa *>(modify->add_fix(cmd));
 
-  // insure respa inner/middle/outer is using Pair class that supports it
+  // ensure respa inner/middle/outer is using Pair class that supports it
 
   if (level_inner >= 0)
     if (force->pair && force->pair->respa_enable == 0)
@@ -372,7 +372,7 @@ void Respa::setup(int flag)
         mesg += fmt::format(" {}:{}", ilevel + 1, step[ilevel]);
 
       mesg += "\n  r-RESPA fixes :";
-      for (int l = 0; l < modify->n_post_force_respa_any; ++l) {
+      for (int l = 0; l < modify->n_post_force_respa; ++l) {
         Fix *f = modify->get_fix_by_index(modify->list_post_force_respa[l]);
         if (f->respa_level >= 0)
           mesg += fmt::format(" {}:{}[{}]", MIN(f->respa_level + 1, nlevels), f->style, f->id);
@@ -413,7 +413,7 @@ void Respa::setup(int flag)
   ev_set(update->ntimestep);
 
   for (int ilevel = 0; ilevel < nlevels; ilevel++) {
-    force_clear(newton[ilevel]);
+    force_clear();
     modify->setup_pre_force_respa(vflag, ilevel);
 
     if (nhybrid_styles > 0) {
@@ -481,7 +481,7 @@ void Respa::setup_minimal(int flag)
   ev_set(update->ntimestep);
 
   for (int ilevel = 0; ilevel < nlevels; ilevel++) {
-    force_clear(newton[ilevel]);
+    force_clear();
     modify->setup_pre_force_respa(vflag, ilevel);
 
     if (nhybrid_styles > 0) {
@@ -644,7 +644,7 @@ void Respa::recurse(int ilevel)
     // so that any order dependencies are the same
     // when potentials are invoked at same level
 
-    force_clear(newton[ilevel]);
+    force_clear();
     if (modify->n_pre_force_respa) {
       timer->stamp();
       modify->pre_force_respa(vflag, ilevel, iloop);
@@ -717,7 +717,7 @@ void Respa::recurse(int ilevel)
    clear other arrays as needed
 ------------------------------------------------------------------------- */
 
-void Respa::force_clear(int /*newtonflag*/)
+void Respa::force_clear()
 {
   if (external_force_clear) return;
 

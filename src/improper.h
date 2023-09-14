@@ -1,7 +1,7 @@
 /* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    https://www.lammps.org/, Sandia National Laboratories
-   Steve Plimpton, sjplimp@sandia.gov
+   LAMMPS development team: developers@lammps.org
 
    Copyright (2003) Sandia Corporation.  Under the terms of Contract
    DE-AC04-94AL85000 with Sandia Corporation, the U.S. Government retains
@@ -37,6 +37,11 @@ class Improper : protected Pointers {
                              // CENTROID_AVAIL = different and implemented
                              // CENTROID_NOTAVAIL = different, not yet implemented
 
+  int symmatoms[4];          // symmetry atom(s) of improper style
+                             // value of 0: interchangable atoms
+                             // value of 1: central atom
+                             // values >1: additional atoms of symmetry
+
   // KOKKOS host/device flag and data masks
 
   ExecutionSpace execution_space;
@@ -48,7 +53,7 @@ class Improper : protected Pointers {
   virtual void init();
   virtual void init_style() {}
   virtual void compute(int, int) = 0;
-  virtual void settings(int, char **) {}
+  virtual void settings(int, char **);
   virtual void coeff(int, char **) = 0;
   virtual void write_restart(FILE *) = 0;
   virtual void read_restart(FILE *) = 0;

@@ -1,7 +1,7 @@
 /* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    https://www.lammps.org/, Sandia National Laboratories
-   Steve Plimpton, sjplimp@sandia.gov
+   LAMMPS development team: developers@lammps.org
 
    Copyright (2003) Sandia Corporation.  Under the terms of Contract
    DE-AC04-94AL85000 with Sandia Corporation, the U.S. Government retains
@@ -27,7 +27,7 @@ class Update : protected Pointers {
   bigint ntimestep;              // current step (dynamics or min iterations)
   int nsteps;                    // # of steps to run (dynamics or min iter)
   int whichflag;                 // 0 for unset, 1 for dynamics, 2 for min
-  double atime;                  // simulation time at atime_step
+  double atime;                  // simulation time at atimestep
   bigint atimestep;              // last timestep atime was updated
   bigint firststep, laststep;    // 1st & last step of this run
   bigint beginstep, endstep;     // 1st and last step of multiple runs

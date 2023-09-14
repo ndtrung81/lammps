@@ -2,7 +2,7 @@
 /* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    https://www.lammps.org/, Sandia National Laboratories
-   Steve Plimpton, sjplimp@sandia.gov
+   LAMMPS development team: developers@lammps.org
 
    Copyright (2003) Sandia Corporation.  Under the terms of Contract
    DE-AC04-94AL85000 with Sandia Corporation, the U.S. Government retains
@@ -60,6 +60,10 @@ struct fft_plan_3d_kokkos {
   cufftHandle plan_fast;
   cufftHandle plan_mid;
   cufftHandle plan_slow;
+#elif defined(FFT_HIPFFT)
+  hipfftHandle plan_fast;
+  hipfftHandle plan_mid;
+  hipfftHandle plan_slow;
 #else
   kiss_fft_state_kokkos<DeviceType> cfg_fast_forward;
   kiss_fft_state_kokkos<DeviceType> cfg_fast_backward;

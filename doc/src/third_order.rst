@@ -4,7 +4,7 @@
 third_order command
 ===================
 
-Accelerator Variants: third_order/kk
+Accelerator Variant: third_order/kk
 
 Syntax
 """"""
@@ -39,8 +39,9 @@ Description
 
 Calculate the third order force constant tensor by finite difference of the selected group,
 
-.. image:: JPG/third_order_force_constant.png
-   :align: center
+.. math::
+
+    \Phi^{\alpha\beta\gamma}_{ijk} = \frac{\partial^3 U}{\partial x_{i,\alpha} \partial x_{j,\beta} \partial x_{k, \gamma}}
 
 where Phi is the third order force constant tensor.
 
