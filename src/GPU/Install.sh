@@ -75,6 +75,8 @@ action pair_coul_long_gpu.cpp pair_coul_long.cpp
 action pair_coul_long_gpu.h pair_coul_long.cpp
 action pair_coul_long_cs_gpu.cpp pair_coul_long_cs.cpp
 action pair_coul_long_cs_gpu.h pair_coul_long_cs.cpp
+action pair_coul_slater_long_gpu.cpp pair_coul_slater_long.cpp
+action pair_coul_slater_long_gpu.h pair_coul_slater_long.cpp
 action pair_dpd_gpu.cpp pair_dpd.cpp
 action pair_dpd_gpu.h pair_dpd.h
 action pair_dpd_tstat_gpu.cpp pair_dpd_tstat.cpp
