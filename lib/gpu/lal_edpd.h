@@ -38,9 +38,9 @@ class EDPD : public BaseDPD<numtyp, acctyp> {
     * - -4 if the GPU library was not compiled for GPU
     * - -5 Double precision is not supported on card **/
   int init(const int ntypes, double **host_cutsq, double **host_a0,
-           double **host_gamma, double **host_sigma, double **host_cut,
-           double **host_power, double **host_kappa, double **host_powerT,
-           double **host_cutT, double *host_special_lj, bool tstat_only,
+           double **host_gamma, double **host_cut, double **host_power,
+           double **host_kappa, double **host_powerT, double **host_cutT,
+           double *host_special_lj, bool tstat_only,
            const int nlocal, const int nall, const int max_nbors,
            const int maxspecial, const double cell_size, const double gpu_split,
            FILE *screen);
@@ -59,9 +59,12 @@ class EDPD : public BaseDPD<numtyp, acctyp> {
   void update_coeff(int ntypes, double **host_a0, double **host_gamma,
                     double **host_sigma, double **host_cut);
 
+  /// Get the Q array on the host
+  void* get_Q() { return Q.host.begin(); }
+
   // --------------------------- TYPE DATA --------------------------
 
-  /// coeff.x = a0, coeff.y = gamma, coeff.z = sigma, coeff.w = cut
+  /// coeff.x = a0, coeff.y = gamma, coeff.z = cut
   UCL_D_Vec<numtyp4> coeff;
   /// coeff2.x = power, coeff2.y = kappa, coeff2.z = powerT, coeff2.w = cutT
   UCL_D_Vec<numtyp4> coeff2;
@@ -82,7 +85,7 @@ class EDPD : public BaseDPD<numtyp, acctyp> {
 
   /// Per-atom arrays
   UCL_Vector<acctyp,acctyp> Q;
-  int _nmax;
+  int _nmax, _max_q_size;
 
  private:
   bool _allocated;

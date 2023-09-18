@@ -161,6 +161,8 @@ _texture_2d( vel_tex,int4);
 }
 #endif
 
+// note the change in coeff: coeff.x = a0, coeff.y = gamma, coeff.z = cut (no sigma)
+
 __kernel void k_edpd(const __global numtyp4 *restrict x_,
                      const __global numtyp4 *restrict extra,
                      const __global numtyp4 *restrict coeff,
@@ -234,7 +236,7 @@ __kernel void k_edpd(const __global numtyp4 *restrict x_,
         numtyp delvy = iv.y - jv.y;
         numtyp delvz = iv.z - jv.z;
         numtyp dot = delx*delvx + dely*delvy + delz*delvz;
-        numtyp wd = (numtyp)1.0 - r/coeff[mtype].w;
+        numtyp wd = (numtyp)1.0 - r/coeff[mtype].z;
 
         unsigned int tag1=itag, tag2=jtag;
         if (tag1 > tag2) {

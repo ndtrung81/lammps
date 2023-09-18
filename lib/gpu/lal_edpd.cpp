@@ -1,5 +1,5 @@
 /***************************************************************************
-                                   eEDPD.cpp
+                                   edpd.cpp
                              -------------------
                             Trung Dac Nguyen (U Chicago)
 
@@ -46,11 +46,10 @@ int EDPDT::bytes_per_atom(const int max_nbors) const {
 template <class numtyp, class acctyp>
 int EDPDT::init(const int ntypes,
                double **host_cutsq, double **host_a0,
-               double **host_gamma, double **host_sigma,
-               double **host_cut, double **host_power,
-               double **host_kappa, double **host_powerT,
-               double **host_cutT, double *host_special_lj,
-               const bool tstat_only,
+               double **host_gamma, double **host_cut,
+               double **host_power, double **host_kappa,
+               double **host_powerT, double **host_cutT,
+               double *host_special_lj, const bool tstat_only,
                const int nlocal, const int nall,
                const int max_nbors, const int maxspecial,
                const double cell_size,
@@ -95,7 +94,7 @@ int EDPDT::init(const int ntypes,
 
   coeff.alloc(lj_types*lj_types,*(this->ucl_device),UCL_READ_ONLY);
   this->atom->type_pack4(ntypes,lj_types,coeff,host_write,host_a0,host_gamma,
-                         host_sigma,host_cut);
+                         host_cut);
 
   coeff2.alloc(lj_types*lj_types,*(this->ucl_device),UCL_READ_ONLY);
   this->atom->type_pack4(ntypes,lj_types,coeff,host_write,host_power,host_kappa,
@@ -123,10 +122,15 @@ int EDPDT::init(const int ntypes,
   _tstat_only = 0;
   if (tstat_only) _tstat_only=1;
 
-  if (_nmax < nall) {
-    _nmax=static_cast<int>(static_cast<double>(nall)*1.10);
-    Q.alloc(_nmax,*(this->ucl_device),UCL_READ_WRITE,UCL_READ_WRITE);
-  }
+  // allocate per-atom array Q
+
+  int ef_nall=nall;
+  if (ef_nall==0)
+    ef_nall=2000;
+
+  _max_q_size=static_cast<int>(static_cast<double>(ef_nall)*1.10);
+  Q.alloc(_max_q_size,*(this->ucl_device),UCL_READ_WRITE,UCL_READ_WRITE);
+  _nmax = nall;
 
   _allocated=true;
   this->_max_bytes=coeff.row_bytes()+cutsq.row_bytes()+sp_lj.row_bytes()+sp_sqrt.row_bytes();
@@ -161,9 +165,10 @@ int EDPDT::loop(const int eflag, const int vflag) {
   int GX=static_cast<int>(ceil(static_cast<double>(this->ans->inum())/
                                (BX/this->_threads_per_atom)));
 
+  // Resize Q array if necessary
   int nall = this->atom->nall();
-  if (_nmax < nall) {
-    _nmax = nall;
+  if (nall > _max_q_size) {
+    _max_q_size=static_cast<int>(static_cast<double>(nall)*1.10);
     Q.resize(_nmax);
   }
 

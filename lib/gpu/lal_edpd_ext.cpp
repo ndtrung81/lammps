@@ -28,7 +28,7 @@ static EDPD<PRECISION,ACC_PRECISION> EDPDMF;
 // Allocate memory on host and device and copy constants to device
 // ---------------------------------------------------------------------------
 int edpd_gpu_init(const int ntypes, double **cutsq, double **host_a0,
-                  double **host_gamma, double **host_sigma, double **host_cut,
+                  double **host_gamma, double **host_cut,
                   double **host_power, double **host_kappa, double **host_powerT,
                   double **host_cutT, double *special_lj, const int inum,
                   const int nall, const int max_nbors,  const int maxspecial,
@@ -55,7 +55,7 @@ int edpd_gpu_init(const int ntypes, double **cutsq, double **host_a0,
 
   int init_ok=0;
   if (world_me==0)
-    init_ok=EDPDMF.init(ntypes, cutsq, host_a0, host_gamma, host_sigma,
+    init_ok=EDPDMF.init(ntypes, cutsq, host_a0, host_gamma,
                         host_cut, host_power, host_kappa, host_powerT,
                         host_cutT, special_lj, false, inum, nall, max_nbors,
                         maxspecial, cell_size, gpu_split, screen);
@@ -74,7 +74,7 @@ int edpd_gpu_init(const int ntypes, double **cutsq, double **host_a0,
       fflush(screen);
     }
     if (gpu_rank==i && world_me!=0)
-      init_ok=EDPDMF.init(ntypes, cutsq, host_a0, host_gamma, host_sigma,
+      init_ok=EDPDMF.init(ntypes, cutsq, host_a0, host_gamma,
                           host_cut, host_power, host_kappa, host_powerT,
                           host_cutT, special_lj, false, inum, nall, max_nbors,
                           maxspecial, cell_size, gpu_split, screen);
@@ -91,7 +91,7 @@ int edpd_gpu_init(const int ntypes, double **cutsq, double **host_a0,
   return init_ok;
 }
 
-void dpd_gpu_clear() {
+void edpd_gpu_clear() {
   EDPDMF.clear();
 }
 
