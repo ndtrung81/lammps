@@ -207,5 +207,32 @@ void EDPDT::update_coeff(int ntypes, double **host_a0, double **host_gamma,
                          host_sigma,host_cut);
 }
 
+// ---------------------------------------------------------------------------
+// Copy the extra data from host to device
+// ---------------------------------------------------------------------------
+
+template <class numtyp, class acctyp>
+void EDPDT::cast_extra_data(double *host_T, double *host_cv) {
+  // signal that we need to transfer extra data from the host
+
+  atom->extra_data_unavail();
+
+  int _nall=atom->nall();
+  numtyp4 *pextra=reinterpret_cast<numtyp4*>(&(atom->extra[0]));
+
+  int n = 0;
+  int nstride = 1;
+  for (int i = 0; i < _nall; i++) {
+    int idx = n+i*nstride;
+    numtyp4 v;
+    v.x = host_T[i];
+    v.y = host_cv[i];
+    v.z = 0;
+    v.w = 0;
+    pextra[idx] = v;
+  }
+
+}
+
 template class EDPD<PRECISION,ACC_PRECISION>;
 }

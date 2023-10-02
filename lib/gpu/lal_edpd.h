@@ -59,6 +59,8 @@ class EDPD : public BaseDPD<numtyp, acctyp> {
   void update_coeff(int ntypes, double **host_a0, double **host_gamma,
                     double **host_sigma, double **host_cut);
 
+  void cast_extra_data(double *host_T, double *host_cv);
+
   /// Get the Q array on the host
   void* get_Q() { return Q.host.begin(); }
 
