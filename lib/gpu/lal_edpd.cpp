@@ -215,10 +215,10 @@ template <class numtyp, class acctyp>
 void EDPDT::cast_extra_data(double *host_T, double *host_cv) {
   // signal that we need to transfer extra data from the host
 
-  atom->extra_data_unavail();
+  this->atom->extra_data_unavail();
 
-  int _nall=atom->nall();
-  numtyp4 *pextra=reinterpret_cast<numtyp4*>(&(atom->extra[0]));
+  int _nall=this->atom->nall();
+  numtyp4 *pextra=reinterpret_cast<numtyp4*>(&(this->atom->extra[0]));
 
   int n = 0;
   int nstride = 1;

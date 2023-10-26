@@ -307,6 +307,7 @@ __kernel void k_edpd_fast(const __global numtyp4 *restrict x_,
 
   #ifndef ONETYPE
   __local numtyp4 coeff[MAX_SHARED_TYPES*MAX_SHARED_TYPES];
+  __local numtyp4 coeff2[MAX_SHARED_TYPES*MAX_SHARED_TYPES];
   __local numtyp sp_lj[4];
   __local numtyp sp_sqrt[4];
   if (tid<4) {
@@ -315,6 +316,7 @@ __kernel void k_edpd_fast(const __global numtyp4 *restrict x_,
   }
   if (tid<MAX_SHARED_TYPES*MAX_SHARED_TYPES) {
     coeff[tid]=coeff_in[tid];
+    coeff2[tid]=coeff2_in[tid];
   }
   __syncthreads();
   #else
@@ -385,6 +387,28 @@ __kernel void k_edpd_fast(const __global numtyp4 *restrict x_,
         numtyp delvy = iv.y - jv.y;
         numtyp delvz = iv.z - jv.z;
         numtyp dot = delx*delvx + dely*delvy + delz*delvz;
+
+/*
+        double T_ij=0.5*(T[i]+T[j]);
+        double T_pow[4];
+        T_pow[0] = T_ij - 1.0;
+        T_pow[1] = T_pow[0]*T_pow[0];
+        T_pow[2] = T_pow[0]*T_pow[1];
+        T_pow[3] = T_pow[0]*T_pow[2];
+
+        double power_d = power[itype][jtype];
+        if (power_flag) {
+          double factor = 1.0;
+          for (int k = 0; k < 4; k++)
+            factor += sc[itype][jtype][k]*T_pow[k];
+          power_d *= factor;
+        }
+
+        power_d = MAX(0.01,power_d);
+        double wc = 1.0 - r/cut[itype][jtype];
+        wc = MAX(0.0,MIN(1.0,wc));
+        double wr = pow(wc, 0.5*power_d);
+*/
         #ifndef ONETYPE
         const numtyp coeffw=coeff[mtype].w;
         #endif
