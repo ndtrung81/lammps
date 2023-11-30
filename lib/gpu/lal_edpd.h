@@ -40,6 +40,7 @@ class EDPD : public BaseDPD<numtyp, acctyp> {
   int init(const int ntypes, double **host_cutsq, double **host_a0,
            double **host_gamma, double **host_cut, double **host_power,
            double **host_kappa, double **host_powerT, double **host_cutT,
+           double ***host_sc, double ***host_kc,
            double *host_special_lj, bool tstat_only,
            const int nlocal, const int nall, const int max_nbors,
            const int maxspecial, const double cell_size, const double gpu_split,
@@ -70,6 +71,8 @@ class EDPD : public BaseDPD<numtyp, acctyp> {
   UCL_D_Vec<numtyp4> coeff;
   /// coeff2.x = power, coeff2.y = kappa, coeff2.z = powerT, coeff2.w = cutT
   UCL_D_Vec<numtyp4> coeff2;
+
+  UCL_D_Vec<numtyp4> kc, sc;
 
   UCL_D_Vec<numtyp> cutsq;
 

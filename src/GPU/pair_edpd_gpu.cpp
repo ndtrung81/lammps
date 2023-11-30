@@ -35,9 +35,9 @@ using namespace LAMMPS_NS;
 
 int edpd_gpu_init(const int ntypes, double **cutsq, double **host_a0, double **host_gamma,
                   double **host_cut, double **host_power, double **host_kappa,
-                  double **host_powerT, double** host_cutT, double *special_lj, const int inum,
-                  const int nall, const int max_nbors, const int maxspecial, const double cell_size,
-                  int &gpu_mode, FILE *screen);
+                  double **host_powerT, double** host_cutT, double*** host_sc, double ***host_kc,
+                  double *special_lj, const int inum, const int nall, const int max_nbors,
+                  const int maxspecial, const double cell_size, int &gpu_mode, FILE *screen);
 void edpd_gpu_clear();
 int **edpd_gpu_compute_n(const int ago, const int inum_full, const int nall, double **host_x,
                         int *host_type, double *sublo, double *subhi, tagint *tag, int **nspecial,
@@ -150,7 +150,7 @@ void PairEDPDGPU::init_style()
   int mnf = 5e-2 * neighbor->oneatom;
   int success =
       edpd_gpu_init(atom->ntypes + 1, cutsq, a0, gamma, cut, power, kappa, powerT, cutT, 
-                    force->special_lj, atom->nlocal, atom->nlocal + atom->nghost,
+                    sc, kc, force->special_lj, atom->nlocal, atom->nlocal + atom->nghost,
                     mnf, maxspecial, cell_size, gpu_mode, screen);
   GPU_EXTRA::check_flag(success, error, world);
 

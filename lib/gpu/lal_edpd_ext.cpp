@@ -30,8 +30,9 @@ static EDPD<PRECISION,ACC_PRECISION> EDPDMF;
 int edpd_gpu_init(const int ntypes, double **cutsq, double **host_a0,
                   double **host_gamma, double **host_cut,
                   double **host_power, double **host_kappa, double **host_powerT,
-                  double **host_cutT, double *special_lj, const int inum,
-                  const int nall, const int max_nbors,  const int maxspecial,
+                  double **host_cutT, double ***host_sc, double ***host_kc,
+                  double *special_lj, const int inum, const int nall,
+                  const int max_nbors,  const int maxspecial,
                   const double cell_size, int &gpu_mode, FILE *screen) {
   EDPDMF.clear();
   gpu_mode=EDPDMF.device->gpu_mode();
@@ -57,7 +58,8 @@ int edpd_gpu_init(const int ntypes, double **cutsq, double **host_a0,
   if (world_me==0)
     init_ok=EDPDMF.init(ntypes, cutsq, host_a0, host_gamma,
                         host_cut, host_power, host_kappa, host_powerT,
-                        host_cutT, special_lj, false, inum, nall, max_nbors,
+                        host_cutT, host_sc, host_kc,
+                        special_lj, false, inum, nall, max_nbors,
                         maxspecial, cell_size, gpu_split, screen);
 
   EDPDMF.device->world_barrier();
@@ -76,7 +78,8 @@ int edpd_gpu_init(const int ntypes, double **cutsq, double **host_a0,
     if (gpu_rank==i && world_me!=0)
       init_ok=EDPDMF.init(ntypes, cutsq, host_a0, host_gamma,
                           host_cut, host_power, host_kappa, host_powerT,
-                          host_cutT, special_lj, false, inum, nall, max_nbors,
+                          host_cutT, host_sc, host_kc,
+                          special_lj, false, inum, nall, max_nbors,
                           maxspecial, cell_size, gpu_split, screen);
 
     EDPDMF.device->serialize_init();

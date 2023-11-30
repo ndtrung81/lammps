@@ -167,6 +167,8 @@ __kernel void k_edpd(const __global numtyp4 *restrict x_,
                      const __global numtyp4 *restrict extra,
                      const __global numtyp4 *restrict coeff,
                      const __global numtyp4 *restrict coeff2,
+                     const __global numtyp4 *restrict sc,
+                     const __global numtyp4 *restrict kc,
                      const int lj_types,
                      const __global numtyp *restrict sp_lj,
                      const __global numtyp *restrict sp_sqrt,
@@ -262,10 +264,7 @@ __kernel void k_edpd(const __global numtyp4 *restrict x_,
         f.z+=delz*force;
 
         if (EVFLAG && eflag) {
-          // unshifted eng of conservative term:
-          // evdwl = -a0[itype][jtype]*r * (1.0-0.5*r/cut[itype][jtype]);
-          // eng shifted to 0.0 at cutoff
-          numtyp e = (numtyp)0.5*coeff[mtype].x*coeff[mtype].w * wd*wd;
+          numtyp e = (numtyp)0.5*T_ij*coeffx*coeffw * wc*wc;
           energy+=factor_dpd*e;
         }
         if (EVFLAG && vflag) {
@@ -288,6 +287,8 @@ __kernel void k_edpd_fast(const __global numtyp4 *restrict x_,
                           const __global numtyp4 *restrict extra,
                           const __global numtyp4 *restrict coeff_in,
                           const __global numtyp4 *restrict coeff2_in,
+                          const __global numtyp4 *restrict sc_in,
+                          const __global numtyp4 *restrict kc_in,
                           const __global numtyp *restrict sp_lj_in,
                           const __global numtyp *restrict sp_sqrt_in,
                           const __global int * dev_nbor,
@@ -317,6 +318,8 @@ __kernel void k_edpd_fast(const __global numtyp4 *restrict x_,
   if (tid<MAX_SHARED_TYPES*MAX_SHARED_TYPES) {
     coeff[tid]=coeff_in[tid];
     coeff2[tid]=coeff2_in[tid];
+    sc[tid]=sc_in[tid];
+    kc[tid]=kc_in[tid];
   }
   __syncthreads();
   #else
@@ -350,6 +353,10 @@ __kernel void k_edpd_fast(const __global numtyp4 *restrict x_,
     #endif
     numtyp4 iv; fetch4(iv,i,vel_tex); //v_[i];
     int itag=iv.w;
+
+    const numtyp4 Tcvi = extra[i];
+    numtyp Ti = Tcvi.x;
+    numtyp cvi = Tcvi.y;
 
     #ifndef ONETYPE
     numtyp factor_dpd, factor_sqrt;
@@ -388,69 +395,61 @@ __kernel void k_edpd_fast(const __global numtyp4 *restrict x_,
         numtyp delvz = iv.z - jv.z;
         numtyp dot = delx*delvx + dely*delvy + delz*delvz;
 
-/*
-        double T_ij=0.5*(T[i]+T[j]);
-        double T_pow[4];
-        T_pow[0] = T_ij - 1.0;
-        T_pow[1] = T_pow[0]*T_pow[0];
-        T_pow[2] = T_pow[0]*T_pow[1];
-        T_pow[3] = T_pow[0]*T_pow[2];
-
-        double power_d = power[itype][jtype];
-        if (power_flag) {
-          double factor = 1.0;
-          for (int k = 0; k < 4; k++)
-            factor += sc[itype][jtype][k]*T_pow[k];
-          power_d *= factor;
-        }
-
-        power_d = MAX(0.01,power_d);
-        double wc = 1.0 - r/cut[itype][jtype];
-        wc = MAX(0.0,MIN(1.0,wc));
-        double wr = pow(wc, 0.5*power_d);
-*/
-        #ifndef ONETYPE
-        const numtyp coeffw=coeff[mtype].w;
-        #endif
-        numtyp wd = (numtyp)1.0 - r/coeffw;
-
-        unsigned int tag1=itag, tag2=jtag;
-        if (tag1 > tag2) {
-          tag1 = jtag; tag2 = itag;
-        }
-
-        numtyp randnum = (numtyp)0.0;
-        saru(tag1, tag2, seed, timestep, randnum);
-
-        // conservative force = a0 * wd, or 0 if tstat only
-        // drag force = -gamma * wd^2 * (delx dot delv) / r
-        // random force = sigma * wd * rnd * dtinvsqrt;
-
         #ifndef ONETYPE
         const numtyp coeffx=coeff[mtype].x;
         const numtyp coeffy=coeff[mtype].y;
         const numtyp coeffz=coeff[mtype].z;
         #endif
-        numtyp force = (numtyp)0.0;
-        if (!tstat_only) force = coeffx*wd;
-        force -= coeffy*wd*wd*dot*rinv;
-        #ifndef ONETYPE
-        force *= factor_dpd;
-        force += factor_sqrt*coeffz*wd*randnum*dtinvsqrt;
-        #else
-        force += coeffz*wd*randnum*dtinvsqrt;
-        #endif
-        force*=rinv;
+        const numtyp coeffw=coeff[mtype].w; // cut[itype][jtype]
+
+        const numtyp4 Tcvj = extra[j];
+        numtyp Tj = Tcvj.x;
+        numtyp cvj = Tcvj.y;
+
+        unsigned int tag1=itag, tag2=jtag;
+        if (tag1 > tag2) {
+          tag1 = jtag; tag2 = itag;
+        }
+        numtyp randnum = (numtyp)0.0;
+        saru(tag1, tag2, seed, timestep, randnum);
+
+        numtyp T_ij=(numtyp)0.5*(Ti+Tj);
+        numtyp4 T_pow;
+        T_pow.x = T_ij - (numtyp)1.0;
+        T_pow.y = T_pow.x*T_pow.y;
+        T_pow.z = T_pow.x*T_pow.z;
+        T_pow.w = T_pow.x*T_pow.w;
+
+        numtyp power_d = coeff2[mtype].x; // power[itype][jtype]
+        if (1) { // power_flag
+          numtyp factor = (numtyp)1.0;
+          factor += sc[mtype].x*T_pow.x + 
+                    sc[mtype].y*T_pow.y +
+                    sc[mtype].z*T_pow.z +
+                    sc[mtype].w*T_pow.w;
+          power_d *= factor;
+        }
+
+        power_d = MAX((numtyp)0.01,power_d);
+        numtyp wc = (numtyp)1.0 - r/coeffw; // cut[itype][jtype]
+        wc = MAX((numtyp)0.0,MIN((numtyp)1.0,wc));
+        numtyp wr = ucl_pow(wc, (numtyp)0.5*power_d);
+
+        numtyp kboltz = (numtyp)1.0;
+        numtyp GammaIJ = coeff[mtype].y; // gamma[itype][jtype]
+        numtyp SigmaIJ = (numtyp)4.0*GammaIJ*kboltz*Ti*Tj/(Ti+Tj);
+        SigmaIJ = ucl_sqrt(SigmaIJ);
+
+        numtyp force =  coeff[mtype].x*T_ij*wc; // a0[itype][jtype]
+        force += SigmaIJ * wr *randnum * dtinvsqrt;
+        force *= factor_dpd*rinv;
 
         f.x+=delx*force;
         f.y+=dely*force;
         f.z+=delz*force;
 
         if (EVFLAG && eflag) {
-          // unshifted eng of conservative term:
-          // evdwl = -a0[itype][jtype]*r * (1.0-0.5*r/cut[itype][jtype]);
-          // eng shifted to 0.0 at cutoff
-          numtyp e = (numtyp)0.5*coeffx*coeffw * wd*wd;
+          numtyp e = (numtyp)0.5*coeffx*coeffw * wc*wc;
           #ifndef ONETYPE
           energy+=factor_dpd*e;
           #else

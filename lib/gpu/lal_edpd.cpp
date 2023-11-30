@@ -49,6 +49,7 @@ int EDPDT::init(const int ntypes,
                double **host_gamma, double **host_cut,
                double **host_power, double **host_kappa,
                double **host_powerT, double **host_cutT,
+               double ***host_sc, double ***host_kc,
                double *host_special_lj, const bool tstat_only,
                const int nlocal, const int nall,
                const int max_nbors, const int maxspecial,
@@ -100,6 +101,38 @@ int EDPDT::init(const int ntypes,
   this->atom->type_pack4(ntypes,lj_types,coeff,host_write,host_power,host_kappa,
                          host_powerT,host_cutT);
 
+  if (host_sc) {
+    UCL_H_Vec<numtyp4> dview(lj_types*lj_types,*(this->ucl_device),UCL_WRITE_ONLY);;
+
+    sc.alloc(lj_types*lj_types,*(this->ucl_device),UCL_READ_ONLY);
+    int n = 0;
+    for (int i = 1; i < ntypes; i++)
+      for (int j = 1; j < ntypes; j++) {
+        dview[n].x = host_sc[i][j][0];
+        dview[n].y = host_sc[i][j][1];
+        dview[n].z = host_sc[i][j][2];
+        dview[n].w = host_sc[i][j][3];
+        n++;
+      }
+    ucl_copy(sc,dview,false);
+  }
+  
+  if (host_kc) {
+    UCL_H_Vec<numtyp4> dview(lj_types*lj_types,*(this->ucl_device),UCL_WRITE_ONLY);;
+    kc.alloc(lj_types*lj_types,*(this->ucl_device),UCL_READ_ONLY);
+    int n = 0;
+    for (int i = 1; i < ntypes; i++)
+      for (int j = 1; j < ntypes; j++) {
+        dview[n].x = host_kc[i][j][0];
+        dview[n].y = host_kc[i][j][1];
+        dview[n].z = host_kc[i][j][2];
+        dview[n].w = host_kc[i][j][3];
+        n++;
+      }
+    ucl_copy(kc,dview,false);
+  }
+  
+
   UCL_H_Vec<numtyp> host_rsq(lj_types*lj_types,*(this->ucl_device),
                              UCL_WRITE_ONLY);
   cutsq.alloc(lj_types*lj_types,*(this->ucl_device),UCL_READ_ONLY);
@@ -144,6 +177,9 @@ void EDPDT::clear() {
   _allocated=false;
 
   coeff.clear();
+  coeff2.clear();
+  sc.clear();
+  kc.clear();
   cutsq.clear();
   sp_lj.clear();
   sp_sqrt.clear();
@@ -178,7 +214,7 @@ int EDPDT::loop(const int eflag, const int vflag) {
   if (shared_types) {
     this->k_pair_sel->set_size(GX,BX);
     this->k_pair_sel->run(&this->atom->x, &this->atom->extra, &coeff, &coeff2,
-                          &sp_lj, &sp_sqrt, &this->nbor->dev_nbor, &this->_nbor_data->begin(),
+                          &sc, &kc, &sp_lj, &sp_sqrt, &this->nbor->dev_nbor, &this->_nbor_data->begin(),
                           &this->ans->force, &this->ans->engv, &Q, &eflag,
                           &vflag, &ainum, &nbor_pitch, &this->atom->v, &cutsq,
                           &this->_dtinvsqrt, &this->_seed, &this->_timestep,
@@ -186,7 +222,7 @@ int EDPDT::loop(const int eflag, const int vflag) {
   } else {
     this->k_pair.set_size(GX,BX);
     this->k_pair.run(&this->atom->x, &this->atom->extra, &coeff, &coeff2,
-                     &_lj_types, &sp_lj, &sp_sqrt,
+                     &sc, &kc, &_lj_types, &sp_lj, &sp_sqrt,
                      &this->nbor->dev_nbor, &this->_nbor_data->begin(),
                      &this->ans->force, &this->ans->engv, &Q, &eflag, &vflag,
                      &ainum, &nbor_pitch, &this->atom->v, &cutsq, &this->_dtinvsqrt,
