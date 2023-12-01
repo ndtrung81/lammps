@@ -208,6 +208,10 @@ __kernel void k_edpd(const __global numtyp4 *restrict x_,
     numtyp4 iv; fetch4(iv,i,vel_tex); //v_[i];
     int itag=iv.w;
 
+    const numtyp4 Tcvi = extra[i];
+    numtyp Ti = Tcvi.x;
+    numtyp cvi = Tcvi.y;
+
     numtyp factor_dpd, factor_sqrt;
     for ( ; nbor<nbor_end; nbor+=n_stride) {
       ucl_prefetch(dev_packed+nbor+n_stride);
@@ -238,7 +242,15 @@ __kernel void k_edpd(const __global numtyp4 *restrict x_,
         numtyp delvy = iv.y - jv.y;
         numtyp delvz = iv.z - jv.z;
         numtyp dot = delx*delvx + dely*delvy + delz*delvz;
-        numtyp wd = (numtyp)1.0 - r/coeff[mtype].z;
+        
+        const numtyp coeffx=coeff[mtype].x;
+        const numtyp coeffy=coeff[mtype].y;
+        const numtyp coeffz=coeff[mtype].z;
+        const numtyp coeffw=coeff[mtype].w; // cut[itype][jtype]
+
+        const numtyp4 Tcvj = extra[j];
+        numtyp Tj = Tcvj.x;
+        numtyp cvj = Tcvj.y;
 
         unsigned int tag1=itag, tag2=jtag;
         if (tag1 > tag2) {
@@ -248,20 +260,73 @@ __kernel void k_edpd(const __global numtyp4 *restrict x_,
         numtyp randnum = (numtyp)0.0;
         saru(tag1, tag2, seed, timestep, randnum);
 
-        // conservative force = a0 * wd, or 0 if tstat only
-        // drag force = -gamma * wd^2 * (delx dot delv) / r
-        // random force = sigma * wd * rnd * dtinvsqrt;
+        numtyp T_ij=(numtyp)0.5*(Ti+Tj);
+        numtyp4 T_pow;
+        T_pow.x = T_ij - (numtyp)1.0;
+        T_pow.y = T_pow.x*T_pow.y;
+        T_pow.z = T_pow.x*T_pow.z;
+        T_pow.w = T_pow.x*T_pow.w;
 
-        numtyp force = (numtyp)0.0;
-        if (!tstat_only) force = coeff[mtype].x*wd;
-        force -= coeff[mtype].y*wd*wd*dot*rinv;
-        force *= factor_dpd;
-        force += factor_sqrt*coeff[mtype].z*wd*randnum*dtinvsqrt;
-        force*=rinv;
+        numtyp power_d = coeff2[mtype].x; // power[itype][jtype]
+        if (1) { // power_flag
+          numtyp factor = (numtyp)1.0;
+          factor += sc[mtype].x*T_pow.x + 
+                    sc[mtype].y*T_pow.y +
+                    sc[mtype].z*T_pow.z +
+                    sc[mtype].w*T_pow.w;
+          power_d *= factor;
+        }
+
+        power_d = MAX((numtyp)0.01,power_d);
+        numtyp wc = (numtyp)1.0 - r/coeffw; // cut[itype][jtype]
+        wc = MAX((numtyp)0.0,MIN((numtyp)1.0,wc));
+        numtyp wr = ucl_pow(wc, (numtyp)0.5*power_d);
+
+        numtyp kboltz = (numtyp)1.0;
+        numtyp GammaIJ = coeff[mtype].y; // gamma[itype][jtype]
+        numtyp SigmaIJ = (numtyp)4.0*GammaIJ*kboltz*Ti*Tj/(Ti+Tj);
+        SigmaIJ = ucl_sqrt(SigmaIJ);
+
+        numtyp force =  coeff[mtype].x*T_ij*wc; // a0[itype][jtype]
+        force += SigmaIJ * wr *randnum * dtinvsqrt;
+        force *= factor_dpd*rinv;
 
         f.x+=delx*force;
         f.y+=dely*force;
         f.z+=delz*force;
+
+        // heat transfer
+        numtyp dQc,dQd,dQr;
+        numtyp coeff2x = coeff2[mtype].x; //power[itype][jtype]
+        numtyp coeff2y = coeff2[mtype].y; //kappa[itype][jtype]
+        numtyp coeff2z = coeff2[mtype].z; //powerT[itype][jtype]
+        numtyp coeff2w = coeff2[mtype].w; //cutT[itype][jtype]
+        if (r < coeff2w) {  
+          numtyp wrT = 1.0 - r/coeff2w;
+          wrT = MAX(0.0,MIN(1.0,wrT));
+          wrT = pow(wrT, 0.5*coeff2z); // powerT[itype][jtype]
+          numtyp randnumT = saru(tag1, tag2, seed, timestep, randnum); // randomT->gaussian();
+          randnumT = MAX(-5.0,MIN(randnum,5.0));
+
+          numtyp kappaT = coeff2y; // kappa[itype][jtype]
+          if (1) { // kappa_flag
+            numtyp factor = (numtyp)1.0;
+            factor += kc[mtype].x*T_pow.x +
+                      kc[mtype].y*T_pow.y +
+                      kc[mtype].z*T_pow.z +
+                      kc[mtype].w*T_pow.w;
+            kappaT *= factor;
+          }
+
+          numtyp kij = cvi*cvj*kappaT * T_ij*T_ij;
+          numtyp alphaij = ucl_sqrt((numtyp)2.0*kboltz*kij);
+
+          dQc  = kij * wrT*wrT * (Tj - Ti )/(Ti*Tj);
+          dQd  = wr*wr*( GammaIJ * vijeij*vijeij - SigmaIJ*SigmaIJ/mass[itype] ) - SigmaIJ * wr *vijeij *randnum;
+          dQd /= (cvi+cvj);
+          dQr  = alphaij * wrT * dtinvsqrt * randnumT;
+          Q[i] += (dQc + dQd + dQr );
+        }
 
         if (EVFLAG && eflag) {
           numtyp e = (numtyp)0.5*T_ij*coeffx*coeffw * wc*wc;
@@ -448,8 +513,41 @@ __kernel void k_edpd_fast(const __global numtyp4 *restrict x_,
         f.y+=dely*force;
         f.z+=delz*force;
 
+        // heat transfer
+        numtyp dQc,dQd,dQr;
+        numtyp coeff2x = coeff2[mtype].x; //power[itype][jtype]
+        numtyp coeff2y = coeff2[mtype].y; //kappa[itype][jtype]
+        numtyp coeff2z = coeff2[mtype].z; //powerT[itype][jtype]
+        numtyp coeff2w = coeff2[mtype].w; //cutT[itype][jtype]
+        if (r < coeff2w) {  
+          numtyp wrT = 1.0 - r/coeff2w;
+          wrT = MAX(0.0,MIN(1.0,wrT));
+          wrT = pow(wrT, 0.5*coeff2z); // powerT[itype][jtype]
+          numtyp randnumT = saru(tag1, tag2, seed, timestep, randnum); // randomT->gaussian();
+          randnumT = MAX(-5.0,MIN(randnum,5.0));
+
+          numtyp kappaT = coeff2y; // kappa[itype][jtype]
+          if (1) { // kappa_flag
+            numtyp factor = (numtyp)1.0;
+            factor += kc[mtype].x*T_pow.x +
+                      kc[mtype].y*T_pow.y +
+                      kc[mtype].z*T_pow.z +
+                      kc[mtype].w*T_pow.w;
+            kappaT *= factor;
+          }
+
+          numtyp kij = cvi*cvj*kappaT * T_ij*T_ij;
+          numtyp alphaij = ucl_sqrt((numtyp)2.0*kboltz*kij);
+
+          dQc  = kij * wrT*wrT * (Tj - Ti )/(Ti*Tj);
+          dQd  = wr*wr*( GammaIJ * vijeij*vijeij - SigmaIJ*SigmaIJ/mass[itype] ) - SigmaIJ * wr *vijeij *randnum;
+          dQd /= (cvi+cvj);
+          dQr  = alphaij * wrT * dtinvsqrt * randnumT;
+          Q[i] += (dQc + dQd + dQr );
+        }
+
         if (EVFLAG && eflag) {
-          numtyp e = (numtyp)0.5*coeffx*coeffw * wc*wc;
+          numtyp e = (numtyp)0.5*T_ij*coeffx*coeffw * wc*wc;
           #ifndef ONETYPE
           energy+=factor_dpd*e;
           #else
