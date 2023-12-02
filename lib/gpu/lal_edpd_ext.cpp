@@ -126,10 +126,13 @@ void edpd_gpu_compute(const int ago, const int inum_full, const int nall,
                 tag, host_v, dtinvsqrt, seed, timestep, nlocal, boxlo, prd);
 }
 
-void edpd_gpu_update_coeff(int ntypes, double **host_a0, double **host_gamma,
-                          double **host_sigma, double **host_cut)
+void edpd_gpu_cast_data(double *host_T, double *host_cv)
 {
-   EDPDMF.update_coeff(ntypes,host_a0,host_gamma,host_sigma,host_cut);
+  EDPDMF.cast_extra_data(host_T, host_cv);
+}
+
+void edpd_gpu_update_flux(void **flux_ptr) {
+  EDPDMF.update_flux(flux_ptr);
 }
 
 double edpd_gpu_bytes() {

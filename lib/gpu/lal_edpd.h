@@ -62,6 +62,9 @@ class EDPD : public BaseDPD<numtyp, acctyp> {
 
   void cast_extra_data(double *host_T, double *host_cv);
 
+  /// copy Q (flux) from device to host
+  void update_flux(void **flux_ptr);
+
   /// Get the Q array on the host
   void* get_Q() { return Q.host.begin(); }
 
@@ -90,7 +93,7 @@ class EDPD : public BaseDPD<numtyp, acctyp> {
 
   /// Per-atom arrays
   UCL_Vector<acctyp,acctyp> Q;
-  int _nmax, _max_q_size;
+  int _max_q_size;
 
  private:
   bool _allocated;

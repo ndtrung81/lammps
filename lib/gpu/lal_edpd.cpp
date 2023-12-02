@@ -30,7 +30,7 @@ extern Device<PRECISION,ACC_PRECISION> device;
 
 template <class numtyp, class acctyp>
 EDPDT::EDPD() : BaseDPD<numtyp,acctyp>(), _allocated(false) {
-  _nmax = 0;
+  _max_q_size = 0;
 }
 
 template <class numtyp, class acctyp>
@@ -72,8 +72,10 @@ int EDPDT::init(const int ntypes,
   #endif
 
   int success;
+  int extra_fields = 4; // round up to accomodate quadruples of numtyp values
+                        // T and cv
   success=this->init_atomic(nlocal,nall,max_nbors,maxspecial,cell_size,
-                            gpu_split,_screen,edpd,"k_edpd",onetype);
+                            gpu_split,_screen,edpd,"k_edpd",onetype,extra_fields);
   if (success!=0)
     return success;
 
@@ -131,7 +133,6 @@ int EDPDT::init(const int ntypes,
       }
     ucl_copy(kc,dview,false);
   }
-  
 
   UCL_H_Vec<numtyp> host_rsq(lj_types*lj_types,*(this->ucl_device),
                              UCL_WRITE_ONLY);
@@ -151,7 +152,7 @@ int EDPDT::init(const int ntypes,
   sp_sqrt.alloc(4,*(this->ucl_device),UCL_READ_ONLY);
   dview.view(special_sqrt,4,*(this->ucl_device));
   ucl_copy(sp_sqrt,dview,false);
-
+ 
   _tstat_only = 0;
   if (tstat_only) _tstat_only=1;
 
@@ -163,7 +164,6 @@ int EDPDT::init(const int ntypes,
 
   _max_q_size=static_cast<int>(static_cast<double>(ef_nall)*1.10);
   Q.alloc(_max_q_size,*(this->ucl_device),UCL_READ_WRITE,UCL_READ_WRITE);
-  _nmax = nall;
 
   _allocated=true;
   this->_max_bytes=coeff.row_bytes()+cutsq.row_bytes()+sp_lj.row_bytes()+sp_sqrt.row_bytes();
@@ -180,6 +180,7 @@ void EDPDT::clear() {
   coeff2.clear();
   sc.clear();
   kc.clear();
+  Q.clear();
   cutsq.clear();
   sp_lj.clear();
   sp_sqrt.clear();
@@ -191,6 +192,12 @@ double EDPDT::host_memory_usage() const {
   return this->host_memory_usage_atomic()+sizeof(EDPD<numtyp,acctyp>);
 }
 
+template <class numtyp, class acctyp>
+void EDPDT::update_flux(void **flux_ptr) {
+  *flux_ptr=Q.host.begin();
+  Q.update_host(_max_q_size,false);
+}
+
 // ---------------------------------------------------------------------------
 // Calculate energies, forces, and torques
 // ---------------------------------------------------------------------------
@@ -200,15 +207,16 @@ int EDPDT::loop(const int eflag, const int vflag) {
   const int BX=this->block_size();
   int GX=static_cast<int>(ceil(static_cast<double>(this->ans->inum())/
                                (BX/this->_threads_per_atom)));
+  int ainum=this->ans->inum();
 
   // Resize Q array if necessary
-  int nall = this->atom->nall();
-  if (nall > _max_q_size) {
-    _max_q_size=static_cast<int>(static_cast<double>(nall)*1.10);
-    Q.resize(_nmax);
+  //int nall = this->atom->nall();
+  if (ainum > _max_q_size) {
+    _max_q_size=static_cast<int>(static_cast<double>(ainum)*1.10);
+    Q.resize(_max_q_size);
   }
 
-  int ainum=this->ans->inum();
+
   int nbor_pitch=this->nbor->nbor_pitch();
   this->time_pair.start();
   if (shared_types) {
@@ -229,6 +237,7 @@ int EDPDT::loop(const int eflag, const int vflag) {
                      &this->_seed, &this->_timestep, &this->_tstat_only,
                      &this->_threads_per_atom);
   }
+
   this->time_pair.stop();
   return GX;
 }
@@ -267,7 +276,7 @@ void EDPDT::cast_extra_data(double *host_T, double *host_cv) {
     v.w = 0;
     pextra[idx] = v;
   }
-
+  this->atom->add_extra_data();
 }
 
 template class EDPD<PRECISION,ACC_PRECISION>;

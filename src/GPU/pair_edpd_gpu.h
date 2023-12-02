@@ -35,6 +35,9 @@ class PairEDPDGPU : public PairEDPD {
 
   enum { GPU_FORCE, GPU_NEIGH, GPU_HYB_NEIGH };
 
+  void *flux_pinned;
+  bool acc_float;
+
  private:
   int gpu_mode;
   double cpu_time;

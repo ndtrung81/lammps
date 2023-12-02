@@ -22,6 +22,7 @@
 #include "error.h"
 #include "force.h"
 #include "gpu_extra.h"
+#include "info.h"
 #include "neigh_list.h"
 #include "neighbor.h"
 #include "suffix.h"
@@ -52,6 +53,8 @@ void edpd_gpu_compute(const int ago, const int inum_full, const int nall, double
                      const double cpu_time, bool &success, tagint *tag, double **host_v,
                      const double dtinvsqrt, const int seed, const int timestep, const int nlocal,
                      double *boxlo, double *prd);
+void edpd_gpu_cast_data(double *host_T, double *host_cv);
+void edpd_gpu_update_flux(void **flux_ptr);
 double edpd_gpu_bytes();
 
 #define EPSILON 1.0e-10
@@ -60,6 +63,7 @@ double edpd_gpu_bytes();
 
 PairEDPDGPU::PairEDPDGPU(LAMMPS *lmp) : PairEDPD(lmp), gpu_mode(GPU_FORCE)
 {
+  flux_pinned = nullptr;
   respa_enable = 0;
   reinitflag = 0;
   cpu_time = 0.0;
@@ -89,6 +93,11 @@ void PairEDPDGPU::compute(int eflag, int vflag)
 
   bool success = true;
   int *ilist, *numneigh, **firstneigh;
+
+  double *T = atom->edpd_temp;
+  double *cv = atom->edpd_cv;
+  edpd_gpu_cast_data(T, cv);
+
   if (gpu_mode != GPU_FORCE) {
     double sublo[3], subhi[3];
     if (domain->triclinic == 0) {
@@ -113,10 +122,26 @@ void PairEDPDGPU::compute(int eflag, int vflag)
     firstneigh = list->firstneigh;
     edpd_gpu_compute(neighbor->ago, inum, nall, atom->x, atom->type, ilist, numneigh, firstneigh,
                     eflag, vflag, eflag_atom, vflag_atom, host_start, cpu_time, success, atom->tag,
-                    atom->v, dtinvsqrt, seed, update->ntimestep, atom->nlocal, domain->boxlo,
-                    domain->prd);
+                    atom->v, dtinvsqrt, seed, update->ntimestep, atom->nlocal, domain->boxlo, domain->prd);
   }
   if (!success) error->one(FLERR, "Insufficient memory on accelerator");
+
+  // get the heat flux from device
+
+  double *Q = atom->edpd_flux;
+  edpd_gpu_update_flux(&flux_pinned);
+
+  int nlocal = atom->nlocal;
+  if (acc_float) {
+    auto flux_ptr = (float *)flux_pinned;
+    for (int i = 0; i < nlocal; i++)
+      Q[i] = flux_ptr[i];
+
+  } else {
+    auto flux_ptr = (double *)flux_pinned;
+    for (int i = 0; i < nlocal; i++)
+      Q[i] = flux_ptr[i];
+  }
 
   if (atom->molecular != Atom::ATOMIC && neighbor->ago == 0)
     neighbor->build_topology();
@@ -153,6 +178,8 @@ void PairEDPDGPU::init_style()
                     sc, kc, force->special_lj, atom->nlocal, atom->nlocal + atom->nghost,
                     mnf, maxspecial, cell_size, gpu_mode, screen);
   GPU_EXTRA::check_flag(success, error, world);
+
+  acc_float = Info::has_accelerator_feature("GPU", "precision", "single");
 
   if (gpu_mode == GPU_FORCE) neighbor->add_request(this, NeighConst::REQ_FULL);
 }

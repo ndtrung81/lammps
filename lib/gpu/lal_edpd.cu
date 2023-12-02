@@ -161,6 +161,29 @@ _texture_2d( vel_tex,int4);
 }
 #endif
 
+#if (SHUFFLE_AVAIL == 0)
+
+#define store_heatflux(Qi, ii, inum, tid, t_per_atom, offset, Q)                \
+  if (t_per_atom>1) {                                                       \
+    simdsync();                                                             \
+    simd_reduce_add1(t_per_atom, red_acc, offset, tid, Qi);                 \
+  }                                                                         \
+  if (offset==0 && ii<inum) {                                               \
+    Q[ii]=Qi;                                                               \
+  }
+#else
+#define store_heatflux(Qi, ii, inum, tid, t_per_atom, offset, Q)                \
+  if (t_per_atom>1) {                                                       \
+    simd_reduce_add1(t_per_atom,Qi);                                        \
+  }                                                                         \
+  if (offset==0 && ii<inum) {                                               \
+    Q[ii]=Qi;                                                               \
+  }
+#endif
+
+#define MIN(A,B) ((A) < (B) ? (A) : (B))
+#define MAX(A,B) ((A) < (B) ? (B) : (A))
+
 // note the change in coeff: coeff.x = a0, coeff.y = gamma, coeff.z = cut (no sigma)
 
 __kernel void k_edpd(const __global numtyp4 *restrict x_,
@@ -197,6 +220,7 @@ __kernel void k_edpd(const __global numtyp4 *restrict x_,
     energy=(acctyp)0;
     for (int i=0; i<6; i++) virial[i]=(acctyp)0;
   }
+  acctyp Qi = (acctyp)0;
 
   if (ii<inum) {
     int i, numj, nbor, nbor_end;
@@ -242,11 +266,11 @@ __kernel void k_edpd(const __global numtyp4 *restrict x_,
         numtyp delvy = iv.y - jv.y;
         numtyp delvz = iv.z - jv.z;
         numtyp dot = delx*delvx + dely*delvy + delz*delvz;
-        
-        const numtyp coeffx=coeff[mtype].x;
-        const numtyp coeffy=coeff[mtype].y;
-        const numtyp coeffz=coeff[mtype].z;
-        const numtyp coeffw=coeff[mtype].w; // cut[itype][jtype]
+        numtyp vijeij = dot*rinv;
+
+        const numtyp coeffx=coeff[mtype].x; // a0[itype][jtype]
+        const numtyp coeffy=coeff[mtype].y; // gamma[itype][jtype]
+        const numtyp coeffz=coeff[mtype].z; // cut[itype][jtype]
 
         const numtyp4 Tcvj = extra[j];
         numtyp Tj = Tcvj.x;
@@ -278,16 +302,16 @@ __kernel void k_edpd(const __global numtyp4 *restrict x_,
         }
 
         power_d = MAX((numtyp)0.01,power_d);
-        numtyp wc = (numtyp)1.0 - r/coeffw; // cut[itype][jtype]
+        numtyp wc = (numtyp)1.0 - r/coeffz; // cut[itype][jtype]
         wc = MAX((numtyp)0.0,MIN((numtyp)1.0,wc));
         numtyp wr = ucl_pow(wc, (numtyp)0.5*power_d);
 
         numtyp kboltz = (numtyp)1.0;
-        numtyp GammaIJ = coeff[mtype].y; // gamma[itype][jtype]
+        numtyp GammaIJ = coeffy; // gamma[itype][jtype]
         numtyp SigmaIJ = (numtyp)4.0*GammaIJ*kboltz*Ti*Tj/(Ti+Tj);
         SigmaIJ = ucl_sqrt(SigmaIJ);
 
-        numtyp force =  coeff[mtype].x*T_ij*wc; // a0[itype][jtype]
+        numtyp force =  coeffx*T_ij*wc; // a0[itype][jtype]
         force += SigmaIJ * wr *randnum * dtinvsqrt;
         force *= factor_dpd*rinv;
 
@@ -296,17 +320,17 @@ __kernel void k_edpd(const __global numtyp4 *restrict x_,
         f.z+=delz*force;
 
         // heat transfer
-        numtyp dQc,dQd,dQr;
         numtyp coeff2x = coeff2[mtype].x; //power[itype][jtype]
         numtyp coeff2y = coeff2[mtype].y; //kappa[itype][jtype]
         numtyp coeff2z = coeff2[mtype].z; //powerT[itype][jtype]
         numtyp coeff2w = coeff2[mtype].w; //cutT[itype][jtype]
         if (r < coeff2w) {  
-          numtyp wrT = 1.0 - r/coeff2w;
-          wrT = MAX(0.0,MIN(1.0,wrT));
-          wrT = pow(wrT, 0.5*coeff2z); // powerT[itype][jtype]
-          numtyp randnumT = saru(tag1, tag2, seed, timestep, randnum); // randomT->gaussian();
-          randnumT = MAX(-5.0,MIN(randnum,5.0));
+          numtyp wrT = (numtyp)1.0 - r/coeff2w;
+          wrT = MAX((numtyp)0.0,MIN((numtyp)1.0,wrT));
+          wrT = ucl_pow(wrT, (numtyp)0.5*coeff2z); // powerT[itype][jtype]
+          numtyp randnumT = (numtyp)0;
+          saru(tag1, tag2, seed, timestep, randnumT); // randomT->gaussian();
+          randnumT = MAX((numtyp)-5.0,MIN(randnum,(numtyp)5.0));
 
           numtyp kappaT = coeff2y; // kappa[itype][jtype]
           if (1) { // kappa_flag
@@ -321,15 +345,15 @@ __kernel void k_edpd(const __global numtyp4 *restrict x_,
           numtyp kij = cvi*cvj*kappaT * T_ij*T_ij;
           numtyp alphaij = ucl_sqrt((numtyp)2.0*kboltz*kij);
 
-          dQc  = kij * wrT*wrT * (Tj - Ti )/(Ti*Tj);
-          dQd  = wr*wr*( GammaIJ * vijeij*vijeij - SigmaIJ*SigmaIJ/mass[itype] ) - SigmaIJ * wr *vijeij *randnum;
+          numtyp dQc  = kij * wrT*wrT * (Tj - Ti )/(Ti*Tj);
+          numtyp dQd  = 0; // wr*wr*( GammaIJ * vijeij*vijeij - SigmaIJ*SigmaIJ/mass[itype] ) - SigmaIJ * wr *vijeij *randnum;
           dQd /= (cvi+cvj);
-          dQr  = alphaij * wrT * dtinvsqrt * randnumT;
-          Q[i] += (dQc + dQd + dQr );
+          numtyp dQr  = alphaij * wrT * dtinvsqrt * randnumT;
+          Qi += (dQc + dQd + dQr );
         }
 
         if (EVFLAG && eflag) {
-          numtyp e = (numtyp)0.5*T_ij*coeffx*coeffw * wc*wc;
+          numtyp e = (numtyp)0.5*coeffx*T_ij*coeffz * wc*wc;
           energy+=factor_dpd*e;
         }
         if (EVFLAG && vflag) {
@@ -346,6 +370,7 @@ __kernel void k_edpd(const __global numtyp4 *restrict x_,
   } // if ii
   store_answers(f,energy,virial,ii,inum,tid,t_per_atom,offset,eflag,vflag,
                 ans,engv);
+  store_heatflux(Qi,ii,inum,tid,t_per_atom,offset,Q);
 }
 
 __kernel void k_edpd_fast(const __global numtyp4 *restrict x_,
@@ -374,6 +399,8 @@ __kernel void k_edpd_fast(const __global numtyp4 *restrict x_,
   #ifndef ONETYPE
   __local numtyp4 coeff[MAX_SHARED_TYPES*MAX_SHARED_TYPES];
   __local numtyp4 coeff2[MAX_SHARED_TYPES*MAX_SHARED_TYPES];
+  __local numtyp4 sc[MAX_SHARED_TYPES*MAX_SHARED_TYPES];
+  __local numtyp4 kc[MAX_SHARED_TYPES*MAX_SHARED_TYPES];
   __local numtyp sp_lj[4];
   __local numtyp sp_sqrt[4];
   if (tid<4) {
@@ -388,11 +415,16 @@ __kernel void k_edpd_fast(const __global numtyp4 *restrict x_,
   }
   __syncthreads();
   #else
-  const numtyp coeffx=coeff_in[ONETYPE].x;
-  const numtyp coeffy=coeff_in[ONETYPE].y;
-  const numtyp coeffz=coeff_in[ONETYPE].z;
-  const numtyp coeffw=coeff_in[ONETYPE].w;
+  const numtyp coeffx=coeff_in[ONETYPE].x;   // a0[itype][jtype]
+  const numtyp coeffy=coeff_in[ONETYPE].y;   // gamma[itype][jtype]
+  const numtyp coeffz=coeff_in[ONETYPE].z;   // cut[itype][jtype]
+  const numtyp coeff2x=coeff2_in[ONETYPE].x; // power[itype][jtype]
+  const numtyp coeff2y=coeff2_in[ONETYPE].y; // kappa[itype][jtype]
+  const numtyp coeff2z=coeff2_in[ONETYPE].z; // powerT[itype][jtype]
+  const numtyp coeff2w=coeff2_in[ONETYPE].w; // cutT[itype][jtype]
   const numtyp cutsq_p=cutsq[ONETYPE];
+  const numtyp4 sc=sc_in[ONETYPE];
+  const numtyp4 kc=kc_in[ONETYPE];
   #endif
 
   int n_stride;
@@ -405,6 +437,7 @@ __kernel void k_edpd_fast(const __global numtyp4 *restrict x_,
     energy=(acctyp)0;
     for (int i=0; i<6; i++) virial[i]=(acctyp)0;
   }
+  acctyp Qi = (acctyp)0;
 
   if (ii<inum) {
     int i, numj, nbor, nbor_end;
@@ -459,13 +492,19 @@ __kernel void k_edpd_fast(const __global numtyp4 *restrict x_,
         numtyp delvy = iv.y - jv.y;
         numtyp delvz = iv.z - jv.z;
         numtyp dot = delx*delvx + dely*delvy + delz*delvz;
+        numtyp vijeij = dot*rinv;
 
         #ifndef ONETYPE
-        const numtyp coeffx=coeff[mtype].x;
-        const numtyp coeffy=coeff[mtype].y;
-        const numtyp coeffz=coeff[mtype].z;
+        const numtyp coeffx=coeff[mtype].x;   // a0[itype][jtype]
+        const numtyp coeffy=coeff[mtype].y;   // gamma[itype][jtype]
+        const numtyp coeffz=coeff[mtype].z;   // cut[itype][jtype]
+        const numtyp coeff2x=coeff2[mtype].x; // power[itype][jtype]
+        const numtyp coeff2y=coeff2[mtype].y; // kappa[itype][jtype]
+        const numtyp coeff2z=coeff2[mtype].z; // powerT[itype][jtype]
+        const numtyp coeff2w=coeff2[mtype].w; // cutT[itype][jtype]
+        const numtyp4 sc = sc[mtype];
+        const numtyp4 kc = kc[mtype];
         #endif
-        const numtyp coeffw=coeff[mtype].w; // cut[itype][jtype]
 
         const numtyp4 Tcvj = extra[j];
         numtyp Tj = Tcvj.x;
@@ -485,69 +524,70 @@ __kernel void k_edpd_fast(const __global numtyp4 *restrict x_,
         T_pow.z = T_pow.x*T_pow.z;
         T_pow.w = T_pow.x*T_pow.w;
 
-        numtyp power_d = coeff2[mtype].x; // power[itype][jtype]
+        numtyp power_d = coeff2x; // power[itype][jtype]
         if (1) { // power_flag
           numtyp factor = (numtyp)1.0;
-          factor += sc[mtype].x*T_pow.x + 
-                    sc[mtype].y*T_pow.y +
-                    sc[mtype].z*T_pow.z +
-                    sc[mtype].w*T_pow.w;
+          factor += sc.x*T_pow.x + sc.y*T_pow.y + sc.z*T_pow.z + sc.w*T_pow.w;
           power_d *= factor;
         }
 
         power_d = MAX((numtyp)0.01,power_d);
-        numtyp wc = (numtyp)1.0 - r/coeffw; // cut[itype][jtype]
+        numtyp wc = (numtyp)1.0 - r/coeffz; // cut[itype][jtype]
         wc = MAX((numtyp)0.0,MIN((numtyp)1.0,wc));
-        numtyp wr = ucl_pow(wc, (numtyp)0.5*power_d);
+        numtyp wr = ucl_pow((numtyp)wc, (numtyp)0.5*power_d);
 
         numtyp kboltz = (numtyp)1.0;
-        numtyp GammaIJ = coeff[mtype].y; // gamma[itype][jtype]
+        numtyp GammaIJ = coeffy; // gamma[itype][jtype]
         numtyp SigmaIJ = (numtyp)4.0*GammaIJ*kboltz*Ti*Tj/(Ti+Tj);
         SigmaIJ = ucl_sqrt(SigmaIJ);
 
-        numtyp force =  coeff[mtype].x*T_ij*wc; // a0[itype][jtype]
-        force += SigmaIJ * wr *randnum * dtinvsqrt;
-        force *= factor_dpd*rinv;
+        numtyp force =  coeffx*T_ij*wc; // a0[itype][jtype]
 
+        force += SigmaIJ * wr *randnum * dtinvsqrt;
+        #ifndef ONETYPE
+        force *= factor_dpd*rinv;
+        #else
+        force *= rinv;
+        #endif
         f.x+=delx*force;
         f.y+=dely*force;
         f.z+=delz*force;
 
         // heat transfer
-        numtyp dQc,dQd,dQr;
+
+        #ifndef ONETYPE
         numtyp coeff2x = coeff2[mtype].x; //power[itype][jtype]
         numtyp coeff2y = coeff2[mtype].y; //kappa[itype][jtype]
         numtyp coeff2z = coeff2[mtype].z; //powerT[itype][jtype]
         numtyp coeff2w = coeff2[mtype].w; //cutT[itype][jtype]
+        #endif
         if (r < coeff2w) {  
-          numtyp wrT = 1.0 - r/coeff2w;
-          wrT = MAX(0.0,MIN(1.0,wrT));
-          wrT = pow(wrT, 0.5*coeff2z); // powerT[itype][jtype]
-          numtyp randnumT = saru(tag1, tag2, seed, timestep, randnum); // randomT->gaussian();
-          randnumT = MAX(-5.0,MIN(randnum,5.0));
+          numtyp wrT = (numtyp)1.0 - r/coeff2w;
+          wrT = MAX((numtyp)0.0,MIN((numtyp)1.0,wrT));
+          wrT = ucl_pow(wrT, (numtyp)0.5*coeff2z); // powerT[itype][jtype]
+          numtyp randnumT = (numtyp)0;
+          saru(tag1, tag2, seed, timestep, randnumT); // randomT->gaussian();
+          randnumT = MAX((numtyp)-5.0,MIN(randnum,(numtyp)5.0));
 
           numtyp kappaT = coeff2y; // kappa[itype][jtype]
           if (1) { // kappa_flag
             numtyp factor = (numtyp)1.0;
-            factor += kc[mtype].x*T_pow.x +
-                      kc[mtype].y*T_pow.y +
-                      kc[mtype].z*T_pow.z +
-                      kc[mtype].w*T_pow.w;
+            factor += kc.x*T_pow.x +  kc.y*T_pow.y + kc.z*T_pow.z + kc.w*T_pow.w;
             kappaT *= factor;
           }
 
           numtyp kij = cvi*cvj*kappaT * T_ij*T_ij;
           numtyp alphaij = ucl_sqrt((numtyp)2.0*kboltz*kij);
 
-          dQc  = kij * wrT*wrT * (Tj - Ti )/(Ti*Tj);
-          dQd  = wr*wr*( GammaIJ * vijeij*vijeij - SigmaIJ*SigmaIJ/mass[itype] ) - SigmaIJ * wr *vijeij *randnum;
+          numtyp dQc  = kij * wrT*wrT * (Tj - Ti )/(Ti*Tj);
+          numtyp dQd  = 0; //wr*wr*( GammaIJ * vijeij*vijeij - SigmaIJ*SigmaIJ/mass[itype] ) - SigmaIJ * wr *vijeij *randnum;
           dQd /= (cvi+cvj);
-          dQr  = alphaij * wrT * dtinvsqrt * randnumT;
-          Q[i] += (dQc + dQd + dQr );
+          numtyp dQr  = alphaij * wrT * dtinvsqrt * randnumT;
+          Qi += (dQc + dQd + dQr );
         }
 
         if (EVFLAG && eflag) {
-          numtyp e = (numtyp)0.5*T_ij*coeffx*coeffw * wc*wc;
+          numtyp e = (numtyp)0.5*coeffx*T_ij*coeffz * wc*wc;
           #ifndef ONETYPE
           energy+=factor_dpd*e;
           #else
@@ -562,11 +602,14 @@ __kernel void k_edpd_fast(const __global numtyp4 *restrict x_,
           virial[4] += delx*delz*force;
           virial[5] += dely*delz*force;
         }
+
       }
 
     } // for nbor
+
   } // if ii
-  store_answers(f,energy,virial,ii,inum,tid,t_per_atom,offset,eflag,vflag,
-                ans,engv);
+
+  store_answers(f,energy,virial,ii,inum,tid,t_per_atom,offset,eflag,vflag, ans,engv);
+  store_heatflux(Qi,ii,inum,tid,t_per_atom,offset,Q);
 }
 
