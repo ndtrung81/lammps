@@ -163,21 +163,21 @@ _texture_2d( vel_tex,int4);
 
 #if (SHUFFLE_AVAIL == 0)
 
-#define store_heatflux(Qi, ii, inum, tid, t_per_atom, offset, Q)                \
-  if (t_per_atom>1) {                                                       \
-    simdsync();                                                             \
-    simd_reduce_add1(t_per_atom, red_acc, offset, tid, Qi);                 \
-  }                                                                         \
-  if (offset==0 && ii<inum) {                                               \
-    Q[ii]=Qi;                                                               \
+#define store_heatflux(Qi, ii, inum, tid, t_per_atom, offset, Q)             \
+  if (t_per_atom>1) {                                                        \
+    simdsync();                                                              \
+    simd_reduce_add1(t_per_atom, red_acc, offset, tid, Qi);                  \
+  }                                                                          \
+  if (offset==0 && ii<inum) {                                                \
+    Q[ii]=Qi;                                                                \
   }
 #else
-#define store_heatflux(Qi, ii, inum, tid, t_per_atom, offset, Q)                \
-  if (t_per_atom>1) {                                                       \
-    simd_reduce_add1(t_per_atom,Qi);                                        \
-  }                                                                         \
-  if (offset==0 && ii<inum) {                                               \
-    Q[ii]=Qi;                                                               \
+#define store_heatflux(Qi, ii, inum, tid, t_per_atom, offset, Q)             \
+  if (t_per_atom>1) {                                                        \
+    simd_reduce_add1(t_per_atom,Qi);                                         \
+  }                                                                          \
+  if (offset==0 && ii<inum) {                                                \
+    Q[ii]=Qi;                                                                \
   }
 #endif
 
@@ -349,7 +349,7 @@ __kernel void k_edpd(const __global numtyp4 *restrict x_,
           numtyp kij = cvi*cvj*kappaT * T_ij*T_ij;
           numtyp alphaij = ucl_sqrt((numtyp)2.0*kboltz*kij);
 
-          numtyp dQc  = kij * wrT*wrT * (Tj - Ti )/(Ti*Tj);
+          numtyp dQc  = kij * wrT*wrT * (Tj - Ti)/(Ti*Tj);
           numtyp dQd  = wr*wr*( GammaIJ * vijeij*vijeij - SigmaIJ*SigmaIJ/mass_itype ) - SigmaIJ * wr *vijeij *randnum;
           dQd /= (cvi+cvj);
           numtyp dQr  = alphaij * wrT * dtinvsqrt * randnumT;
@@ -558,7 +558,7 @@ __kernel void k_edpd_fast(const __global numtyp4 *restrict x_,
         #else
         force *= rinv;
         #endif
-        
+        //if (i == 0) printf("timestep = %d: Ti = %f; cvi = %f\n", timestep, Ti, cvi);
         f.x+=delx*force;
         f.y+=dely*force;
         f.z+=delz*force;

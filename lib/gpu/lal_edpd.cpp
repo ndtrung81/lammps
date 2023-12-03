@@ -232,10 +232,12 @@ int EDPDT::loop(const int eflag, const int vflag) {
 
   int n = 0;
   int nstride = 1;
+  //printf("pointers temp = %ld cv = %ld\n", edpd_temp, edpd_cv);
   for (int i = 0; i < nall; i++) {
     int idx = n+i*nstride;
     numtyp4 v;
     v.x = edpd_temp[i];
+    //if (i == 0) printf("lib gpu edpd temp = %f cv = %f\n", edpd_temp[i], edpd_cv[i]);
     v.y = edpd_cv[i];
     v.z = 0;
     v.w = 0;
