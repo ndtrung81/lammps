@@ -45,16 +45,17 @@ int EDPDT::bytes_per_atom(const int max_nbors) const {
 
 template <class numtyp, class acctyp>
 int EDPDT::init(const int ntypes,
-               double **host_cutsq, double **host_a0,
-               double **host_gamma, double **host_cut,
-               double **host_power, double **host_kappa,
-               double **host_powerT, double **host_cutT,
-               double ***host_sc, double ***host_kc,
-               double *host_special_lj, const bool tstat_only,
-               const int nlocal, const int nall,
-               const int max_nbors, const int maxspecial,
-               const double cell_size,
-               const double gpu_split, FILE *_screen) {
+                double **host_cutsq, double **host_a0,
+                double **host_gamma, double **host_cut,
+                double **host_power, double **host_kappa,
+                double **host_powerT, double **host_cutT,
+                double ***host_sc, double ***host_kc, double *host_mass,
+                double *host_special_lj, const bool tstat_only,
+                const int power_flag, const int kappa_flag,
+                const int nlocal, const int nall,
+                const int max_nbors, const int maxspecial,
+                const double cell_size,
+                const double gpu_split, FILE *_screen) {
   const int max_shared_types=this->device->max_shared_types();
 
   int onetype=0;
@@ -100,12 +101,18 @@ int EDPDT::init(const int ntypes,
                          host_cut);
 
   coeff2.alloc(lj_types*lj_types,*(this->ucl_device),UCL_READ_ONLY);
-  this->atom->type_pack4(ntypes,lj_types,coeff,host_write,host_power,host_kappa,
+  this->atom->type_pack4(ntypes,lj_types,coeff2,host_write,host_power,host_kappa,
                          host_powerT,host_cutT);
+
+  UCL_H_Vec<int> dview_mass(ntypes, *(this->ucl_device), UCL_WRITE_ONLY);
+  for (int i = 0; i < ntypes; i++)
+    dview_mass[i] = host_mass[i];
+
+  mass.alloc(ntypes,*(this->ucl_device), UCL_READ_ONLY);
+  ucl_copy(mass,dview_mass,false);
 
   if (host_sc) {
     UCL_H_Vec<numtyp4> dview(lj_types*lj_types,*(this->ucl_device),UCL_WRITE_ONLY);;
-
     sc.alloc(lj_types*lj_types,*(this->ucl_device),UCL_READ_ONLY);
     int n = 0;
     for (int i = 1; i < ntypes; i++)
@@ -156,6 +163,9 @@ int EDPDT::init(const int ntypes,
   _tstat_only = 0;
   if (tstat_only) _tstat_only=1;
 
+  _power_flag = power_flag;
+  _kappa_flag = kappa_flag;
+
   // allocate per-atom array Q
 
   int ef_nall=nall;
@@ -164,9 +174,10 @@ int EDPDT::init(const int ntypes,
 
   _max_q_size=static_cast<int>(static_cast<double>(ef_nall)*1.10);
   Q.alloc(_max_q_size,*(this->ucl_device),UCL_READ_WRITE,UCL_READ_WRITE);
-
+  
   _allocated=true;
-  this->_max_bytes=coeff.row_bytes()+cutsq.row_bytes()+sp_lj.row_bytes()+sp_sqrt.row_bytes();
+  this->_max_bytes=coeff.row_bytes()+coeff2.row_bytes()+Q.row_bytes()+
+    sc.row_bytes()+kc.row_bytes()+mass.row_bytes()+cutsq.row_bytes()+sp_lj.row_bytes()+sp_sqrt.row_bytes();
   return 0;
 }
 
@@ -181,6 +192,7 @@ void EDPDT::clear() {
   sc.clear();
   kc.clear();
   Q.clear();
+  mass.clear();
   cutsq.clear();
   sp_lj.clear();
   sp_sqrt.clear();
@@ -203,39 +215,60 @@ void EDPDT::update_flux(void **flux_ptr) {
 // ---------------------------------------------------------------------------
 template <class numtyp, class acctyp>
 int EDPDT::loop(const int eflag, const int vflag) {
+
+  int nall = this->atom->nall();
+
+  // Resize Q array if necessary
+  if (nall > _max_q_size) {
+    _max_q_size=static_cast<int>(static_cast<double>(nall)*1.10);
+    Q.resize(_max_q_size);
+  }
+
+  // signal that we need to transfer extra data from the host
+  
+  this->atom->extra_data_unavail();
+
+  numtyp4 *pextra=reinterpret_cast<numtyp4*>(&(this->atom->extra[0]));
+
+  int n = 0;
+  int nstride = 1;
+  for (int i = 0; i < nall; i++) {
+    int idx = n+i*nstride;
+    numtyp4 v;
+    v.x = edpd_temp[i];
+    v.y = edpd_cv[i];
+    v.z = 0;
+    v.w = 0;
+    pextra[idx] = v;
+  }
+  this->atom->add_extra_data();
+
   // Compute the block size and grid size to keep all cores busy
   const int BX=this->block_size();
   int GX=static_cast<int>(ceil(static_cast<double>(this->ans->inum())/
                                (BX/this->_threads_per_atom)));
+
+
   int ainum=this->ans->inum();
-
-  // Resize Q array if necessary
-  //int nall = this->atom->nall();
-  if (ainum > _max_q_size) {
-    _max_q_size=static_cast<int>(static_cast<double>(ainum)*1.10);
-    Q.resize(_max_q_size);
-  }
-
-
   int nbor_pitch=this->nbor->nbor_pitch();
   this->time_pair.start();
   if (shared_types) {
     this->k_pair_sel->set_size(GX,BX);
-    this->k_pair_sel->run(&this->atom->x, &this->atom->extra, &coeff, &coeff2,
+    this->k_pair_sel->run(&this->atom->x, &this->atom->extra, &coeff, &coeff2, &mass,
                           &sc, &kc, &sp_lj, &sp_sqrt, &this->nbor->dev_nbor, &this->_nbor_data->begin(),
-                          &this->ans->force, &this->ans->engv, &Q, &eflag,
-                          &vflag, &ainum, &nbor_pitch, &this->atom->v, &cutsq,
-                          &this->_dtinvsqrt, &this->_seed, &this->_timestep,
-                          &this->_tstat_only, &this->_threads_per_atom);
+                          &this->ans->force, &this->ans->engv, &Q, &eflag, &vflag,
+                          &_power_flag, &_kappa_flag, &ainum, &nbor_pitch,
+                          &this->atom->v, &cutsq, &this->_dtinvsqrt, &this->_seed,
+                          &this->_timestep, &this->_tstat_only, &this->_threads_per_atom);
   } else {
     this->k_pair.set_size(GX,BX);
-    this->k_pair.run(&this->atom->x, &this->atom->extra, &coeff, &coeff2,
+    this->k_pair.run(&this->atom->x, &this->atom->extra, &coeff, &coeff2, &mass,
                      &sc, &kc, &_lj_types, &sp_lj, &sp_sqrt,
                      &this->nbor->dev_nbor, &this->_nbor_data->begin(),
                      &this->ans->force, &this->ans->engv, &Q, &eflag, &vflag,
-                     &ainum, &nbor_pitch, &this->atom->v, &cutsq, &this->_dtinvsqrt,
-                     &this->_seed, &this->_timestep, &this->_tstat_only,
-                     &this->_threads_per_atom);
+                     &_power_flag, &_kappa_flag,  &ainum, &nbor_pitch,
+                     &this->atom->v, &cutsq, &this->_dtinvsqrt, &this->_seed,
+                     &this->_timestep, &this->_tstat_only, &this->_threads_per_atom);
   }
 
   this->time_pair.stop();
@@ -253,30 +286,13 @@ void EDPDT::update_coeff(int ntypes, double **host_a0, double **host_gamma,
 }
 
 // ---------------------------------------------------------------------------
-// Copy the extra data from host to device
+// Get the extra data from host
 // ---------------------------------------------------------------------------
 
 template <class numtyp, class acctyp>
-void EDPDT::cast_extra_data(double *host_T, double *host_cv) {
-  // signal that we need to transfer extra data from the host
-
-  this->atom->extra_data_unavail();
-
-  int _nall=this->atom->nall();
-  numtyp4 *pextra=reinterpret_cast<numtyp4*>(&(this->atom->extra[0]));
-
-  int n = 0;
-  int nstride = 1;
-  for (int i = 0; i < _nall; i++) {
-    int idx = n+i*nstride;
-    numtyp4 v;
-    v.x = host_T[i];
-    v.y = host_cv[i];
-    v.z = 0;
-    v.w = 0;
-    pextra[idx] = v;
-  }
-  this->atom->add_extra_data();
+void EDPDT::get_extra_data(double *host_T, double *host_cv) {
+  edpd_temp = host_T;
+  edpd_cv = host_cv;
 }
 
 template class EDPD<PRECISION,ACC_PRECISION>;

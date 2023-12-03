@@ -37,7 +37,8 @@ using namespace LAMMPS_NS;
 int edpd_gpu_init(const int ntypes, double **cutsq, double **host_a0, double **host_gamma,
                   double **host_cut, double **host_power, double **host_kappa,
                   double **host_powerT, double** host_cutT, double*** host_sc, double ***host_kc,
-                  double *special_lj, const int inum, const int nall, const int max_nbors,
+                  double *host_mass, double *special_lj, const int power_flag, const int kappa_flag,
+                  const int inum, const int nall, const int max_nbors,
                   const int maxspecial, const double cell_size, int &gpu_mode, FILE *screen);
 void edpd_gpu_clear();
 int **edpd_gpu_compute_n(const int ago, const int inum_full, const int nall, double **host_x,
@@ -53,7 +54,7 @@ void edpd_gpu_compute(const int ago, const int inum_full, const int nall, double
                      const double cpu_time, bool &success, tagint *tag, double **host_v,
                      const double dtinvsqrt, const int seed, const int timestep, const int nlocal,
                      double *boxlo, double *prd);
-void edpd_gpu_cast_data(double *host_T, double *host_cv);
+void edpd_gpu_get_extra_data(double *host_T, double *host_cv);
 void edpd_gpu_update_flux(void **flux_ptr);
 double edpd_gpu_bytes();
 
@@ -96,7 +97,7 @@ void PairEDPDGPU::compute(int eflag, int vflag)
 
   double *T = atom->edpd_temp;
   double *cv = atom->edpd_cv;
-  edpd_gpu_cast_data(T, cv);
+  edpd_gpu_get_extra_data(T, cv);
 
   if (gpu_mode != GPU_FORCE) {
     double sublo[3], subhi[3];
@@ -174,8 +175,9 @@ void PairEDPDGPU::init_style()
   if (atom->molecular != Atom::ATOMIC) maxspecial = atom->maxspecial;
   int mnf = 5e-2 * neighbor->oneatom;
   int success =
-      edpd_gpu_init(atom->ntypes + 1, cutsq, a0, gamma, cut, power, kappa, powerT, cutT, 
-                    sc, kc, force->special_lj, atom->nlocal, atom->nlocal + atom->nghost,
+      edpd_gpu_init(atom->ntypes + 1, cutsq, a0, gamma, cut, power, kappa,
+                    powerT, cutT, sc, kc, atom->mass, force->special_lj,
+                    power_flag, kappa_flag, atom->nlocal, atom->nlocal + atom->nghost,
                     mnf, maxspecial, cell_size, gpu_mode, screen);
   GPU_EXTRA::check_flag(success, error, world);
 

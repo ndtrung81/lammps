@@ -40,8 +40,9 @@ class EDPD : public BaseDPD<numtyp, acctyp> {
   int init(const int ntypes, double **host_cutsq, double **host_a0,
            double **host_gamma, double **host_cut, double **host_power,
            double **host_kappa, double **host_powerT, double **host_cutT,
-           double ***host_sc, double ***host_kc,
+           double ***host_sc, double ***host_kc, double *host_mass,
            double *host_special_lj, bool tstat_only,
+           const int power_flag, const int kappa_flag,
            const int nlocal, const int nall, const int max_nbors,
            const int maxspecial, const double cell_size, const double gpu_split,
            FILE *screen);
@@ -60,13 +61,10 @@ class EDPD : public BaseDPD<numtyp, acctyp> {
   void update_coeff(int ntypes, double **host_a0, double **host_gamma,
                     double **host_sigma, double **host_cut);
 
-  void cast_extra_data(double *host_T, double *host_cv);
+  void get_extra_data(double *host_T, double *host_cv);
 
   /// copy Q (flux) from device to host
   void update_flux(void **flux_ptr);
-
-  /// Get the Q array on the host
-  void* get_Q() { return Q.host.begin(); }
 
   // --------------------------- TYPE DATA --------------------------
 
@@ -76,8 +74,10 @@ class EDPD : public BaseDPD<numtyp, acctyp> {
   UCL_D_Vec<numtyp4> coeff2;
 
   UCL_D_Vec<numtyp4> kc, sc;
-
   UCL_D_Vec<numtyp> cutsq;
+
+  /// per-type array
+  UCL_D_Vec<numtyp> mass;
 
   /// Special LJ values
   UCL_D_Vec<numtyp> sp_lj, sp_sqrt;
@@ -94,6 +94,11 @@ class EDPD : public BaseDPD<numtyp, acctyp> {
   /// Per-atom arrays
   UCL_Vector<acctyp,acctyp> Q;
   int _max_q_size;
+
+  int _power_flag, _kappa_flag;
+
+  /// pointer to host data
+  double *edpd_temp, *edpd_cv;
 
  private:
   bool _allocated;

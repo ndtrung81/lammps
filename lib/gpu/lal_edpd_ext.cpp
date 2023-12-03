@@ -28,10 +28,11 @@ static EDPD<PRECISION,ACC_PRECISION> EDPDMF;
 // Allocate memory on host and device and copy constants to device
 // ---------------------------------------------------------------------------
 int edpd_gpu_init(const int ntypes, double **cutsq, double **host_a0,
-                  double **host_gamma, double **host_cut,
-                  double **host_power, double **host_kappa, double **host_powerT,
-                  double **host_cutT, double ***host_sc, double ***host_kc,
-                  double *special_lj, const int inum, const int nall,
+                  double **host_gamma, double **host_cut, double **host_power,
+                  double **host_kappa, double **host_powerT, double **host_cutT,
+                  double ***host_sc, double ***host_kc, double *host_mass,
+                  double *special_lj, const int power_flag, const int kappa_flag,
+                  const int inum, const int nall,
                   const int max_nbors,  const int maxspecial,
                   const double cell_size, int &gpu_mode, FILE *screen) {
   EDPDMF.clear();
@@ -56,11 +57,12 @@ int edpd_gpu_init(const int ntypes, double **cutsq, double **host_a0,
 
   int init_ok=0;
   if (world_me==0)
-    init_ok=EDPDMF.init(ntypes, cutsq, host_a0, host_gamma,
-                        host_cut, host_power, host_kappa, host_powerT,
-                        host_cutT, host_sc, host_kc,
-                        special_lj, false, inum, nall, max_nbors,
-                        maxspecial, cell_size, gpu_split, screen);
+    init_ok=EDPDMF.init(ntypes, cutsq, host_a0, host_gamma, host_cut,
+                        host_power, host_kappa, host_powerT,
+                        host_cutT, host_sc, host_kc, host_mass,
+                        special_lj, false, power_flag, kappa_flag,
+                        inum, nall, max_nbors,  maxspecial,
+                        cell_size, gpu_split, screen);
 
   EDPDMF.device->world_barrier();
   if (message)
@@ -76,11 +78,12 @@ int edpd_gpu_init(const int ntypes, double **cutsq, double **host_a0,
       fflush(screen);
     }
     if (gpu_rank==i && world_me!=0)
-      init_ok=EDPDMF.init(ntypes, cutsq, host_a0, host_gamma,
-                          host_cut, host_power, host_kappa, host_powerT,
-                          host_cutT, host_sc, host_kc,
-                          special_lj, false, inum, nall, max_nbors,
-                          maxspecial, cell_size, gpu_split, screen);
+      init_ok=EDPDMF.init(ntypes, cutsq, host_a0, host_gamma, host_cut,
+                          host_power, host_kappa, host_powerT, host_cutT,
+                          host_sc, host_kc, host_mass,
+                          special_lj, false, power_flag, kappa_flag,
+                          inum, nall, max_nbors, maxspecial,
+                          cell_size, gpu_split, screen);
 
     EDPDMF.device->serialize_init();
     if (message)
@@ -126,9 +129,9 @@ void edpd_gpu_compute(const int ago, const int inum_full, const int nall,
                 tag, host_v, dtinvsqrt, seed, timestep, nlocal, boxlo, prd);
 }
 
-void edpd_gpu_cast_data(double *host_T, double *host_cv)
+void edpd_gpu_get_extra_data(double *host_T, double *host_cv)
 {
-  EDPDMF.cast_extra_data(host_T, host_cv);
+  EDPDMF.get_extra_data(host_T, host_cv);
 }
 
 void edpd_gpu_update_flux(void **flux_ptr) {

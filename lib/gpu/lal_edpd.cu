@@ -190,6 +190,7 @@ __kernel void k_edpd(const __global numtyp4 *restrict x_,
                      const __global numtyp4 *restrict extra,
                      const __global numtyp4 *restrict coeff,
                      const __global numtyp4 *restrict coeff2,
+                     const __global numtyp *restrict mass,
                      const __global numtyp4 *restrict sc,
                      const __global numtyp4 *restrict kc,
                      const int lj_types,
@@ -200,8 +201,9 @@ __kernel void k_edpd(const __global numtyp4 *restrict x_,
                      __global acctyp3 *restrict ans,
                      __global acctyp *restrict engv,
                      __global acctyp *restrict Q,
-                     const int eflag, const int vflag, const int inum,
-                     const int nbor_pitch,
+                     const int eflag, const int vflag,
+                     const int power_flag, const int kappa_flag,
+                     const int inum, const int nbor_pitch,
                      const __global numtyp4 *restrict v_,
                      const __global numtyp *restrict cutsq,
                      const numtyp dtinvsqrt, const int seed,
@@ -229,6 +231,7 @@ __kernel void k_edpd(const __global numtyp4 *restrict x_,
 
     numtyp4 ix; fetch4(ix,i,pos_tex); //x_[i];
     int itype=ix.w;
+    numtyp mass_itype = mass[itype];
     numtyp4 iv; fetch4(iv,i,vel_tex); //v_[i];
     int itag=iv.w;
 
@@ -292,7 +295,7 @@ __kernel void k_edpd(const __global numtyp4 *restrict x_,
         T_pow.w = T_pow.x*T_pow.w;
 
         numtyp power_d = coeff2[mtype].x; // power[itype][jtype]
-        if (1) { // power_flag
+        if (power_flag) {
           numtyp factor = (numtyp)1.0;
           factor += sc[mtype].x*T_pow.x + 
                     sc[mtype].y*T_pow.y +
@@ -312,6 +315,7 @@ __kernel void k_edpd(const __global numtyp4 *restrict x_,
         SigmaIJ = ucl_sqrt(SigmaIJ);
 
         numtyp force =  coeffx*T_ij*wc; // a0[itype][jtype]
+        force -= GammaIJ *wr*wr *dot*rinv;
         force += SigmaIJ * wr *randnum * dtinvsqrt;
         force *= factor_dpd*rinv;
 
@@ -329,11 +333,11 @@ __kernel void k_edpd(const __global numtyp4 *restrict x_,
           wrT = MAX((numtyp)0.0,MIN((numtyp)1.0,wrT));
           wrT = ucl_pow(wrT, (numtyp)0.5*coeff2z); // powerT[itype][jtype]
           numtyp randnumT = (numtyp)0;
-          saru(tag1, tag2, seed, timestep, randnumT); // randomT->gaussian();
+          saru(tag1, tag2, seed+tag1+tag2, timestep, randnumT); // randomT->gaussian();
           randnumT = MAX((numtyp)-5.0,MIN(randnum,(numtyp)5.0));
 
           numtyp kappaT = coeff2y; // kappa[itype][jtype]
-          if (1) { // kappa_flag
+          if (kappa_flag) {
             numtyp factor = (numtyp)1.0;
             factor += kc[mtype].x*T_pow.x +
                       kc[mtype].y*T_pow.y +
@@ -346,7 +350,7 @@ __kernel void k_edpd(const __global numtyp4 *restrict x_,
           numtyp alphaij = ucl_sqrt((numtyp)2.0*kboltz*kij);
 
           numtyp dQc  = kij * wrT*wrT * (Tj - Ti )/(Ti*Tj);
-          numtyp dQd  = 0; // wr*wr*( GammaIJ * vijeij*vijeij - SigmaIJ*SigmaIJ/mass[itype] ) - SigmaIJ * wr *vijeij *randnum;
+          numtyp dQd  = wr*wr*( GammaIJ * vijeij*vijeij - SigmaIJ*SigmaIJ/mass_itype ) - SigmaIJ * wr *vijeij *randnum;
           dQd /= (cvi+cvj);
           numtyp dQr  = alphaij * wrT * dtinvsqrt * randnumT;
           Qi += (dQc + dQd + dQr );
@@ -377,6 +381,7 @@ __kernel void k_edpd_fast(const __global numtyp4 *restrict x_,
                           const __global numtyp4 *restrict extra,
                           const __global numtyp4 *restrict coeff_in,
                           const __global numtyp4 *restrict coeff2_in,
+                          const __global numtyp *restrict mass,
                           const __global numtyp4 *restrict sc_in,
                           const __global numtyp4 *restrict kc_in,
                           const __global numtyp *restrict sp_lj_in,
@@ -386,8 +391,9 @@ __kernel void k_edpd_fast(const __global numtyp4 *restrict x_,
                           __global acctyp3 *restrict ans,
                           __global acctyp *restrict engv,
                           __global acctyp *restrict Q,
-                          const int eflag, const int vflag, const int inum,
-                          const int nbor_pitch,
+                          const int eflag, const int vflag,
+                          const int power_flag, const int kappa_flag,
+                          const int inum, const int nbor_pitch,
                           const __global numtyp4 *restrict v_,
                           const __global numtyp *restrict cutsq,
                           const numtyp dtinvsqrt, const int seed,
@@ -448,6 +454,9 @@ __kernel void k_edpd_fast(const __global numtyp4 *restrict x_,
     #ifndef ONETYPE
     int iw=ix.w;
     int itype=fast_mul((int)MAX_SHARED_TYPES,iw);
+    numtyp mass_itype = mass[itype];
+    #else
+    numtyp mass_itype = mass[ONETYPE];
     #endif
     numtyp4 iv; fetch4(iv,i,vel_tex); //v_[i];
     int itag=iv.w;
@@ -525,7 +534,7 @@ __kernel void k_edpd_fast(const __global numtyp4 *restrict x_,
         T_pow.w = T_pow.x*T_pow.w;
 
         numtyp power_d = coeff2x; // power[itype][jtype]
-        if (1) { // power_flag
+        if (power_flag) {
           numtyp factor = (numtyp)1.0;
           factor += sc.x*T_pow.x + sc.y*T_pow.y + sc.z*T_pow.z + sc.w*T_pow.w;
           power_d *= factor;
@@ -542,35 +551,30 @@ __kernel void k_edpd_fast(const __global numtyp4 *restrict x_,
         SigmaIJ = ucl_sqrt(SigmaIJ);
 
         numtyp force =  coeffx*T_ij*wc; // a0[itype][jtype]
-
-        force += SigmaIJ * wr *randnum * dtinvsqrt;
+        force -= GammaIJ *wr*wr *dot*rinv;
+        force += SigmaIJ* wr *randnum * dtinvsqrt;
         #ifndef ONETYPE
         force *= factor_dpd*rinv;
         #else
         force *= rinv;
         #endif
+        
         f.x+=delx*force;
         f.y+=dely*force;
         f.z+=delz*force;
 
         // heat transfer
 
-        #ifndef ONETYPE
-        numtyp coeff2x = coeff2[mtype].x; //power[itype][jtype]
-        numtyp coeff2y = coeff2[mtype].y; //kappa[itype][jtype]
-        numtyp coeff2z = coeff2[mtype].z; //powerT[itype][jtype]
-        numtyp coeff2w = coeff2[mtype].w; //cutT[itype][jtype]
-        #endif
         if (r < coeff2w) {  
           numtyp wrT = (numtyp)1.0 - r/coeff2w;
           wrT = MAX((numtyp)0.0,MIN((numtyp)1.0,wrT));
           wrT = ucl_pow(wrT, (numtyp)0.5*coeff2z); // powerT[itype][jtype]
           numtyp randnumT = (numtyp)0;
-          saru(tag1, tag2, seed, timestep, randnumT); // randomT->gaussian();
+          saru(tag1, tag2, seed+tag1+tag2, timestep, randnumT); // randomT->gaussian();
           randnumT = MAX((numtyp)-5.0,MIN(randnum,(numtyp)5.0));
 
           numtyp kappaT = coeff2y; // kappa[itype][jtype]
-          if (1) { // kappa_flag
+          if (kappa_flag) {
             numtyp factor = (numtyp)1.0;
             factor += kc.x*T_pow.x +  kc.y*T_pow.y + kc.z*T_pow.z + kc.w*T_pow.w;
             kappaT *= factor;
@@ -580,7 +584,7 @@ __kernel void k_edpd_fast(const __global numtyp4 *restrict x_,
           numtyp alphaij = ucl_sqrt((numtyp)2.0*kboltz*kij);
 
           numtyp dQc  = kij * wrT*wrT * (Tj - Ti )/(Ti*Tj);
-          numtyp dQd  = 0; //wr*wr*( GammaIJ * vijeij*vijeij - SigmaIJ*SigmaIJ/mass[itype] ) - SigmaIJ * wr *vijeij *randnum;
+          numtyp dQd  = wr*wr*( GammaIJ * vijeij*vijeij - SigmaIJ*SigmaIJ/mass_itype ) - SigmaIJ * wr *vijeij *randnum;
           dQd /= (cvi+cvj);
           numtyp dQr  = alphaij * wrT * dtinvsqrt * randnumT;
           Qi += (dQc + dQd + dQr );
