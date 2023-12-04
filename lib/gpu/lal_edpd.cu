@@ -422,8 +422,14 @@ __kernel void k_edpd_fast(const __global numtyp4 *restrict x_,
   const numtyp coeff2z=coeff2_in[ONETYPE].z; // powerT[itype][jtype]
   const numtyp coeff2w=coeff2_in[ONETYPE].w; // cutT[itype][jtype]
   const numtyp cutsq_p=cutsq[ONETYPE];
-  const numtyp4 sc=sc_in[ONETYPE];
-  const numtyp4 kc=kc_in[ONETYPE];
+  const numtyp scx=sc_in[ONETYPE].x;
+  const numtyp scy=sc_in[ONETYPE].y;
+  const numtyp scz=sc_in[ONETYPE].z;
+  const numtyp scw=sc_in[ONETYPE].w;
+  const numtyp kcx=kc_in[ONETYPE].x;
+  const numtyp kcy=kc_in[ONETYPE].y;
+  const numtyp kcz=kc_in[ONETYPE].z;
+  const numtyp kcw=kc_in[ONETYPE].w;
   #endif
 
   int n_stride;
@@ -502,8 +508,14 @@ __kernel void k_edpd_fast(const __global numtyp4 *restrict x_,
         const numtyp coeff2y=coeff2[mtype].y; // kappa[itype][jtype]
         const numtyp coeff2z=coeff2[mtype].z; // powerT[itype][jtype]
         const numtyp coeff2w=coeff2[mtype].w; // cutT[itype][jtype]
-        const numtyp4 sc = sc[mtype];
-        const numtyp4 kc = kc[mtype];
+        const numtyp scx = sc[mtype].x;
+        const numtyp scy = sc[mtype].y;
+        const numtyp scz = sc[mtype].z;
+        const numtyp scw = sc[mtype].w;
+        const numtyp kcx = kc[mtype].x;
+        const numtyp kcy = kc[mtype].y;
+        const numtyp kcz = kc[mtype].z;
+        const numtyp kcw = kc[mtype].w;
         #endif
 
         const numtyp4 Tcvj = extra[j];
@@ -527,7 +539,7 @@ __kernel void k_edpd_fast(const __global numtyp4 *restrict x_,
         numtyp power_d = coeff2x; // power[itype][jtype]
         if (power_flag) {
           numtyp factor = (numtyp)1.0;
-          factor += sc.x*T_pow.x + sc.y*T_pow.y + sc.z*T_pow.z + sc.w*T_pow.w;
+          factor += scx*T_pow.x + scy*T_pow.y + scz*T_pow.z + scw*T_pow.w;
           power_d *= factor;
         }
 
@@ -567,7 +579,7 @@ __kernel void k_edpd_fast(const __global numtyp4 *restrict x_,
           numtyp kappaT = coeff2y; // kappa[itype][jtype]
           if (kappa_flag) {
             numtyp factor = (numtyp)1.0;
-            factor += kc.x*T_pow.x +  kc.y*T_pow.y + kc.z*T_pow.z + kc.w*T_pow.w;
+            factor += kcx*T_pow.x +  kcy*T_pow.y + kcz*T_pow.z + kcw*T_pow.w;
             kappaT *= factor;
           }
           
