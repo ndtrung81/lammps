@@ -238,13 +238,12 @@ __kernel void k_edpd(const __global numtyp4 *restrict x_,
     numtyp Ti = Tcvi.x;
     numtyp cvi = Tcvi.y;
 
-    numtyp factor_dpd, factor_sqrt;
+    numtyp factor_dpd;
     for ( ; nbor<nbor_end; nbor+=n_stride) {
       ucl_prefetch(dev_packed+nbor+n_stride);
 
       int j=dev_packed[nbor];
       factor_dpd = sp_lj[sbmask(j)];
-      factor_sqrt = sp_sqrt[sbmask(j)];
       j &= NEIGHMASK;
 
       numtyp4 jx; fetch4(jx,j,pos_tex); //x_[j];
@@ -293,7 +292,11 @@ __kernel void k_edpd(const __global numtyp4 *restrict x_,
         T_pow.z = T_pow.x*T_pow.y;
         T_pow.w = T_pow.x*T_pow.z;
 
-        numtyp power_d = coeff2[mtype].x; // power[itype][jtype]
+        numtyp coeff2x = coeff2[mtype].x; //power[itype][jtype]
+        numtyp coeff2y = coeff2[mtype].y; //kappa[itype][jtype]
+        numtyp coeff2z = coeff2[mtype].z; //powerT[itype][jtype]
+        numtyp coeff2w = coeff2[mtype].w; //cutT[itype][jtype]
+        numtyp power_d = coeff2x;
         if (power_flag) {
           numtyp factor = (numtyp)1.0;
           factor += sc[mtype].x*T_pow.x + sc[mtype].y*T_pow.y +
@@ -321,10 +324,7 @@ __kernel void k_edpd(const __global numtyp4 *restrict x_,
         f.z+=delz*force;
 
         // heat transfer
-        numtyp coeff2x = coeff2[mtype].x; //power[itype][jtype]
-        numtyp coeff2y = coeff2[mtype].y; //kappa[itype][jtype]
-        numtyp coeff2z = coeff2[mtype].z; //powerT[itype][jtype]
-        numtyp coeff2w = coeff2[mtype].w; //cutT[itype][jtype]
+        
         if (r < coeff2w) {  
           numtyp wrT = (numtyp)1.0 - r/coeff2w;
           wrT = MAX((numtyp)0.0,MIN((numtyp)1.0,wrT));
@@ -463,7 +463,7 @@ __kernel void k_edpd_fast(const __global numtyp4 *restrict x_,
     numtyp cvi = Tcvi.y;
 
     #ifndef ONETYPE
-    numtyp factor_dpd, factor_sqrt;
+    numtyp factor_dpd;
     #endif
     for ( ; nbor<nbor_end; nbor+=n_stride) {
       ucl_prefetch(dev_packed+nbor+n_stride);
@@ -471,7 +471,6 @@ __kernel void k_edpd_fast(const __global numtyp4 *restrict x_,
       int j=dev_packed[nbor];
       #ifndef ONETYPE
       factor_dpd = sp_lj[sbmask(j)];
-      factor_sqrt = sp_sqrt[sbmask(j)];
       j &= NEIGHMASK;
       #endif
 

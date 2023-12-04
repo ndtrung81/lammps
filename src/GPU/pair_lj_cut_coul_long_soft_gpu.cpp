@@ -257,7 +257,7 @@ void PairLJCutCoulLongSoftGPU::cpu_compute(int start, int inum, int eflag, int /
           prefactor = qqrd2e * lj1[itype][jtype] * qtmp*q[j] / (denc*denc*denc);
 
           forcecoul = prefactor * (erfc + EWALD_F * grij * expm2);
-          if (factor_coul < 1.0) forcecoul -= (1.0 - factor_coul) * prefactor;          
+          if (factor_coul < 1.0) forcecoul -= (1.0 - factor_coul) * prefactor;
         } else
           forcecoul = 0.0;
 

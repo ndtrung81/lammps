@@ -124,7 +124,7 @@ int EDPDT::init(const int ntypes,
       }
     ucl_copy(sc,dview,false);
   }
-  
+
   if (host_kc) {
     UCL_H_Vec<numtyp4> dview(lj_types*lj_types,*(this->ucl_device),UCL_WRITE_ONLY);;
     kc.alloc(lj_types*lj_types,*(this->ucl_device),UCL_READ_ONLY);
@@ -158,7 +158,7 @@ int EDPDT::init(const int ntypes,
   sp_sqrt.alloc(4,*(this->ucl_device),UCL_READ_ONLY);
   dview.view(special_sqrt,4,*(this->ucl_device));
   ucl_copy(sp_sqrt,dview,false);
- 
+
   _power_flag = power_flag;
   _kappa_flag = kappa_flag;
 
@@ -170,7 +170,7 @@ int EDPDT::init(const int ntypes,
 
   _max_q_size=static_cast<int>(static_cast<double>(ef_nall)*1.10);
   Q.alloc(_max_q_size,*(this->ucl_device),UCL_READ_WRITE,UCL_READ_WRITE);
-  
+
   _allocated=true;
   this->_max_bytes=coeff.row_bytes()+coeff2.row_bytes()+Q.row_bytes()+
     sc.row_bytes()+kc.row_bytes()+mass.row_bytes()+cutsq.row_bytes()+sp_lj.row_bytes()+sp_sqrt.row_bytes();
@@ -221,7 +221,7 @@ int EDPDT::loop(const int eflag, const int vflag) {
   }
 
   // signal that we need to transfer extra data from the host
-  
+
   this->atom->extra_data_unavail();
 
   numtyp4 *pextra=reinterpret_cast<numtyp4*>(&(this->atom->extra[0]));
