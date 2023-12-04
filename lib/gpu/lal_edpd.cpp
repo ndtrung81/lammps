@@ -107,7 +107,6 @@ int EDPDT::init(const int ntypes,
   UCL_H_Vec<int> dview_mass(ntypes, *(this->ucl_device), UCL_WRITE_ONLY);
   for (int i = 0; i < ntypes; i++)
     dview_mass[i] = host_mass[i];
-
   mass.alloc(ntypes,*(this->ucl_device), UCL_READ_ONLY);
   ucl_copy(mass,dview_mass,false);
 
@@ -232,12 +231,10 @@ int EDPDT::loop(const int eflag, const int vflag) {
 
   int n = 0;
   int nstride = 1;
-  //printf("pointers temp = %ld cv = %ld\n", edpd_temp, edpd_cv);
   for (int i = 0; i < nall; i++) {
     int idx = n+i*nstride;
     numtyp4 v;
     v.x = edpd_temp[i];
-    //if (i == 0) printf("lib gpu edpd temp = %f cv = %f\n", edpd_temp[i], edpd_cv[i]);
     v.y = edpd_cv[i];
     v.z = 0;
     v.w = 0;
@@ -288,7 +285,7 @@ void EDPDT::update_coeff(int ntypes, double **host_a0, double **host_gamma,
 }
 
 // ---------------------------------------------------------------------------
-// Get the extra data from host
+// Get the extra data pointers from host
 // ---------------------------------------------------------------------------
 
 template <class numtyp, class acctyp>

@@ -290,17 +290,15 @@ __kernel void k_edpd(const __global numtyp4 *restrict x_,
         numtyp T_ij=(numtyp)0.5*(Ti+Tj);
         numtyp4 T_pow;
         T_pow.x = T_ij - (numtyp)1.0;
-        T_pow.y = T_pow.x*T_pow.y;
-        T_pow.z = T_pow.x*T_pow.z;
-        T_pow.w = T_pow.x*T_pow.w;
+        T_pow.y = T_pow.x*T_pow.x;
+        T_pow.z = T_pow.x*T_pow.y;
+        T_pow.w = T_pow.x*T_pow.z;
 
         numtyp power_d = coeff2[mtype].x; // power[itype][jtype]
         if (power_flag) {
           numtyp factor = (numtyp)1.0;
-          factor += sc[mtype].x*T_pow.x + 
-                    sc[mtype].y*T_pow.y +
-                    sc[mtype].z*T_pow.z +
-                    sc[mtype].w*T_pow.w;
+          factor += sc[mtype].x*T_pow.x + sc[mtype].y*T_pow.y +
+            sc[mtype].z*T_pow.z + sc[mtype].w*T_pow.w;
           power_d *= factor;
         }
 
@@ -339,10 +337,8 @@ __kernel void k_edpd(const __global numtyp4 *restrict x_,
           numtyp kappaT = coeff2y; // kappa[itype][jtype]
           if (kappa_flag) {
             numtyp factor = (numtyp)1.0;
-            factor += kc[mtype].x*T_pow.x +
-                      kc[mtype].y*T_pow.y +
-                      kc[mtype].z*T_pow.z +
-                      kc[mtype].w*T_pow.w;
+            factor += kc[mtype].x*T_pow.x + kc[mtype].y*T_pow.y +
+              kc[mtype].z*T_pow.z + kc[mtype].w*T_pow.w;
             kappaT *= factor;
           }
 
@@ -451,12 +447,10 @@ __kernel void k_edpd_fast(const __global numtyp4 *restrict x_,
               n_stride,nbor_end,nbor);
 
     numtyp4 ix; fetch4(ix,i,pos_tex); //x_[i];
-    #ifndef ONETYPE
     int iw=ix.w;
+    numtyp mass_itype = mass[iw];
+    #ifndef ONETYPE
     int itype=fast_mul((int)MAX_SHARED_TYPES,iw);
-    numtyp mass_itype = mass[itype];
-    #else
-    numtyp mass_itype = mass[ONETYPE];
     #endif
     numtyp4 iv; fetch4(iv,i,vel_tex); //v_[i];
     int itag=iv.w;
@@ -529,9 +523,9 @@ __kernel void k_edpd_fast(const __global numtyp4 *restrict x_,
         numtyp T_ij=(numtyp)0.5*(Ti+Tj);
         numtyp4 T_pow;
         T_pow.x = T_ij - (numtyp)1.0;
-        T_pow.y = T_pow.x*T_pow.y;
-        T_pow.z = T_pow.x*T_pow.z;
-        T_pow.w = T_pow.x*T_pow.w;
+        T_pow.y = T_pow.x*T_pow.x;
+        T_pow.z = T_pow.x*T_pow.y;
+        T_pow.w = T_pow.x*T_pow.z;
 
         numtyp power_d = coeff2x; // power[itype][jtype]
         if (power_flag) {
@@ -558,7 +552,7 @@ __kernel void k_edpd_fast(const __global numtyp4 *restrict x_,
         #else
         force *= rinv;
         #endif
-        //if (i == 0) printf("timestep = %d: Ti = %f; cvi = %f\n", timestep, Ti, cvi);
+
         f.x+=delx*force;
         f.y+=dely*force;
         f.z+=delz*force;
@@ -579,10 +573,10 @@ __kernel void k_edpd_fast(const __global numtyp4 *restrict x_,
             factor += kc.x*T_pow.x +  kc.y*T_pow.y + kc.z*T_pow.z + kc.w*T_pow.w;
             kappaT *= factor;
           }
-
+          
           numtyp kij = cvi*cvj*kappaT * T_ij*T_ij;
           numtyp alphaij = ucl_sqrt((numtyp)2.0*kboltz*kij);
-
+         
           numtyp dQc  = kij * wrT*wrT * (Tj - Ti )/(Ti*Tj);
           numtyp dQd  = wr*wr*( GammaIJ * vijeij*vijeij - SigmaIJ*SigmaIJ/mass_itype ) - SigmaIJ * wr *vijeij *randnum;
           dQd /= (cvi+cvj);
