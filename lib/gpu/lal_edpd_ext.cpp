@@ -129,8 +129,7 @@ void edpd_gpu_compute(const int ago, const int inum_full, const int nall,
                 tag, host_v, dtinvsqrt, seed, timestep, nlocal, boxlo, prd);
 }
 
-void edpd_gpu_get_extra_data(double *host_T, double *host_cv)
-{
+void edpd_gpu_get_extra_data(double *host_T, double *host_cv) {
   EDPDMF.get_extra_data(host_T, host_cv);
 }
 
