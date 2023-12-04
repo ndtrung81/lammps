@@ -60,7 +60,7 @@ int edpd_gpu_init(const int ntypes, double **cutsq, double **host_a0,
     init_ok=EDPDMF.init(ntypes, cutsq, host_a0, host_gamma, host_cut,
                         host_power, host_kappa, host_powerT,
                         host_cutT, host_sc, host_kc, host_mass,
-                        special_lj, false, power_flag, kappa_flag,
+                        special_lj, power_flag, kappa_flag,
                         inum, nall, max_nbors,  maxspecial,
                         cell_size, gpu_split, screen);
 
@@ -81,7 +81,7 @@ int edpd_gpu_init(const int ntypes, double **cutsq, double **host_a0,
       init_ok=EDPDMF.init(ntypes, cutsq, host_a0, host_gamma, host_cut,
                           host_power, host_kappa, host_powerT, host_cutT,
                           host_sc, host_kc, host_mass,
-                          special_lj, false, power_flag, kappa_flag,
+                          special_lj, power_flag, kappa_flag,
                           inum, nall, max_nbors, maxspecial,
                           cell_size, gpu_split, screen);
 

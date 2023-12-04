@@ -50,7 +50,7 @@ int EDPDT::init(const int ntypes,
                 double **host_power, double **host_kappa,
                 double **host_powerT, double **host_cutT,
                 double ***host_sc, double ***host_kc, double *host_mass,
-                double *host_special_lj, const bool tstat_only,
+                double *host_special_lj,
                 const int power_flag, const int kappa_flag,
                 const int nlocal, const int nall,
                 const int max_nbors, const int maxspecial,
@@ -159,9 +159,6 @@ int EDPDT::init(const int ntypes,
   dview.view(special_sqrt,4,*(this->ucl_device));
   ucl_copy(sp_sqrt,dview,false);
  
-  _tstat_only = 0;
-  if (tstat_only) _tstat_only=1;
-
   _power_flag = power_flag;
   _kappa_flag = kappa_flag;
 
@@ -258,7 +255,7 @@ int EDPDT::loop(const int eflag, const int vflag) {
                           &this->ans->force, &this->ans->engv, &Q, &eflag, &vflag,
                           &_power_flag, &_kappa_flag, &ainum, &nbor_pitch,
                           &this->atom->v, &cutsq, &this->_dtinvsqrt, &this->_seed,
-                          &this->_timestep, &this->_tstat_only, &this->_threads_per_atom);
+                          &this->_timestep, &this->_threads_per_atom);
   } else {
     this->k_pair.set_size(GX,BX);
     this->k_pair.run(&this->atom->x, &this->atom->extra, &coeff, &coeff2, &mass,
@@ -267,7 +264,7 @@ int EDPDT::loop(const int eflag, const int vflag) {
                      &this->ans->force, &this->ans->engv, &Q, &eflag, &vflag,
                      &_power_flag, &_kappa_flag,  &ainum, &nbor_pitch,
                      &this->atom->v, &cutsq, &this->_dtinvsqrt, &this->_seed,
-                     &this->_timestep, &this->_tstat_only, &this->_threads_per_atom);
+                     &this->_timestep, &this->_threads_per_atom);
   }
 
   this->time_pair.stop();

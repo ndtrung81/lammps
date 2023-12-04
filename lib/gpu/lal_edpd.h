@@ -41,8 +41,7 @@ class EDPD : public BaseDPD<numtyp, acctyp> {
            double **host_gamma, double **host_cut, double **host_power,
            double **host_kappa, double **host_powerT, double **host_cutT,
            double ***host_sc, double ***host_kc, double *host_mass,
-           double *host_special_lj, bool tstat_only,
-           const int power_flag, const int kappa_flag,
+           double *host_special_lj, const int power_flag, const int kappa_flag,
            const int nlocal, const int nall, const int max_nbors,
            const int maxspecial, const double cell_size, const double gpu_split,
            FILE *screen);
@@ -87,9 +86,6 @@ class EDPD : public BaseDPD<numtyp, acctyp> {
 
   /// Number of atom types
   int _lj_types;
-
-  /// Only used for thermostat
-  int _tstat_only;
 
   /// Per-atom arrays
   UCL_Vector<acctyp,acctyp> Q;

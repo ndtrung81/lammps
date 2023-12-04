@@ -207,8 +207,7 @@ __kernel void k_edpd(const __global numtyp4 *restrict x_,
                      const __global numtyp4 *restrict v_,
                      const __global numtyp *restrict cutsq,
                      const numtyp dtinvsqrt, const int seed,
-                     const int timestep, const int tstat_only,
-                     const int t_per_atom) {
+                     const int timestep, const int t_per_atom) {
   int tid, ii, offset;
   atom_info(t_per_atom,ii,tid,offset);
 
@@ -345,10 +344,10 @@ __kernel void k_edpd(const __global numtyp4 *restrict x_,
           numtyp kij = cvi*cvj*kappaT * T_ij*T_ij;
           numtyp alphaij = ucl_sqrt((numtyp)2.0*kboltz*kij);
 
-          numtyp dQc  = kij * wrT*wrT * (Tj - Ti)/(Ti*Tj);
-          numtyp dQd  = wr*wr*( GammaIJ * vijeij*vijeij - SigmaIJ*SigmaIJ/mass_itype ) - SigmaIJ * wr *vijeij *randnum;
+          numtyp dQc = kij * wrT*wrT * (Tj - Ti)/(Ti*Tj);
+          numtyp dQd = wr*wr*( GammaIJ * vijeij*vijeij - SigmaIJ*SigmaIJ/mass_itype ) - SigmaIJ * wr *vijeij *randnum;
           dQd /= (cvi+cvj);
-          numtyp dQr  = alphaij * wrT * dtinvsqrt * randnumT;
+          numtyp dQr = alphaij * wrT * dtinvsqrt * randnumT;
           Qi += (dQc + dQd + dQr );
         }
 
@@ -365,7 +364,6 @@ __kernel void k_edpd(const __global numtyp4 *restrict x_,
           virial[5] += dely*delz*force;
         }
       }
-
     } // for nbor
   } // if ii
   store_answers(f,energy,virial,ii,inum,tid,t_per_atom,offset,eflag,vflag,
@@ -393,8 +391,7 @@ __kernel void k_edpd_fast(const __global numtyp4 *restrict x_,
                           const __global numtyp4 *restrict v_,
                           const __global numtyp *restrict cutsq,
                           const numtyp dtinvsqrt, const int seed,
-                          const int timestep, const int tstat_only,
-                          const int t_per_atom) {
+                          const int timestep, const int t_per_atom) {
   int tid, ii, offset;
   atom_info(t_per_atom,ii,tid,offset);
 
@@ -577,10 +574,10 @@ __kernel void k_edpd_fast(const __global numtyp4 *restrict x_,
           numtyp kij = cvi*cvj*kappaT * T_ij*T_ij;
           numtyp alphaij = ucl_sqrt((numtyp)2.0*kboltz*kij);
          
-          numtyp dQc  = kij * wrT*wrT * (Tj - Ti )/(Ti*Tj);
-          numtyp dQd  = wr*wr*( GammaIJ * vijeij*vijeij - SigmaIJ*SigmaIJ/mass_itype ) - SigmaIJ * wr *vijeij *randnum;
+          numtyp dQc = kij * wrT*wrT * (Tj - Ti )/(Ti*Tj);
+          numtyp dQd = wr*wr*( GammaIJ * vijeij*vijeij - SigmaIJ*SigmaIJ/mass_itype ) - SigmaIJ * wr *vijeij *randnum;
           dQd /= (cvi+cvj);
-          numtyp dQr  = alphaij * wrT * dtinvsqrt * randnumT;
+          numtyp dQr = alphaij * wrT * dtinvsqrt * randnumT;
           Qi += (dQc + dQd + dQr );
         }
 
@@ -602,9 +599,7 @@ __kernel void k_edpd_fast(const __global numtyp4 *restrict x_,
         }
 
       }
-
     } // for nbor
-
   } // if ii
 
   store_answers(f,energy,virial,ii,inum,tid,t_per_atom,offset,eflag,vflag, ans,engv);
