@@ -314,8 +314,7 @@ __kernel void k_mdpd_fast(const __global numtyp4 *restrict x_,
                           const __global numtyp4 *restrict v_,
                           const __global numtyp *restrict cutsq,
                           const numtyp dtinvsqrt, const int seed,
-                          const int timestep, const int tstat_only,
-                          const int t_per_atom) {
+                          const int timestep, const int t_per_atom) {
   int tid, ii, offset;
   atom_info(t_per_atom,ii,tid,offset);
 

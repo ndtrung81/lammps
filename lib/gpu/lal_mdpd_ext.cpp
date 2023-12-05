@@ -30,7 +30,7 @@ static MDPD<PRECISION,ACC_PRECISION> MDPDMF;
 int mdpd_gpu_init(const int ntypes, double **cutsq,
                   double **host_A_att, double **host_B_rep,
                   double **host_gamma, double **host_sigma,
-                  double **host_cut, double **host_cut_r, 
+                  double **host_cut, double **host_cut_r,
                   double *special_lj, const int inum,
                   const int nall, const int max_nbors,  const int maxspecial,
                   const double cell_size, int &gpu_mode, FILE *screen) {

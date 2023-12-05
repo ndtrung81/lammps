@@ -187,7 +187,7 @@ int MDPDT::loop(const int eflag, const int vflag) {
   this->time_pair.start();
   if (shared_types) {
     this->k_pair_sel->set_size(GX,BX);
-    this->k_pair_sel->run(&this->atom->x, &this->atom->extra, &coeff, &coeff2, 
+    this->k_pair_sel->run(&this->atom->x, &this->atom->extra, &coeff, &coeff2,
                           &sp_lj, &sp_sqrt, &this->nbor->dev_nbor, &this->_nbor_data->begin(),
                           &this->ans->force, &this->ans->engv, &eflag, &vflag,
                           &ainum, &nbor_pitch, &this->atom->v, &cutsq, &this->_dtinvsqrt, &this->_seed,
