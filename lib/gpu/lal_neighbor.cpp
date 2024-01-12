@@ -731,7 +731,8 @@ void Neighbor::build_nbor_list(double **x, const int inum, const int host_inum,
       particle_id[ploc]=i;
     }
     time_hybrid2.start();
-    ucl_copy(atom.dev_particle_id,atom.host_particle_id,nall,true);
+    //ucl_copy(atom.dev_particle_id,atom.host_particle_id,nall,true);
+    ucl_copy(atom.dev_particle_id,atom.host_particle_id,nall,false);
     time_hybrid2.stop();
     _bin_time+=MPI_Wtime()-stime;
   }

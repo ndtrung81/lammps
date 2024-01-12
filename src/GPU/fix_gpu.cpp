@@ -276,8 +276,8 @@ void FixGPU::init()
     for (int i = 0; i < hybrid->nstyles; i++)
       if (!utils::strmatch(hybrid->keywords[i],"/gpu$"))
         force->pair->no_virial_fdotr_compute = 1;
-    if (_gpu_mode != GPU_FORCE)
-      error->all(FLERR, "Must not use GPU neighbor lists with hybrid pair style");
+    //if (_gpu_mode != GPU_FORCE)
+      //error->all(FLERR, "Must not use GPU neighbor lists with hybrid pair style");
   }
 
   // rRESPA support
