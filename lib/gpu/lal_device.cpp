@@ -58,7 +58,7 @@ namespace LAMMPS_AL {
 
 template <class numtyp, class acctyp>
 DeviceT::Device() : _init_count(0), _device_init(false),
-                    _gpu_mode(GPU_FORCE), _first_device(0),
+                    _gpu_mode(GPU_FORCE), _first_device(0), _nbor_init(0),
                     _last_device(0), _platform_id(-1), _compiled(false) {
 }
 
@@ -511,25 +511,27 @@ int DeviceT::init(Answer<numtyp,acctyp> &ans, const bool charge,
   if (_particle_split<1.0 && _particle_split>0.0)
     ef_nlocal=static_cast<int>(_particle_split*nlocal);
 
-  int gpu_nbor=0;
+  _gpu_nbor=0;
   if (_gpu_mode==Device<numtyp,acctyp>::GPU_NEIGH)
-    gpu_nbor=1;
+    _gpu_nbor=1;
   else if (_gpu_mode==Device<numtyp,acctyp>::GPU_HYB_NEIGH)
-    gpu_nbor=2;
+    _gpu_nbor=2;
 
   // NOTE: enforce the hybrid mode (binning on the CPU)
   // when not using sorting on the device
   #if !defined(USE_CUDPP) && !defined(USE_HIP_DEVICE_SORT)
-  if (gpu_nbor==1) gpu_nbor=2;
+  if (_gpu_nbor==1)
+    _gpu_nbor=2;
   #endif
   // or when the device supports subgroups
   #ifndef LAL_USE_OLD_NEIGHBOR
-  if (gpu_nbor==1) gpu_nbor=2;
+  if (_gpu_nbor==1)
+    _gpu_nbor=2;
   #endif
 
   if (_init_count==0) {
     // Initialize atom data
-    if (!atom.init(nall,charge,rot,*gpu,gpu_nbor,gpu_nbor>0 && maxspecial>0,vel,extra_fields))
+    if (!atom.init(nall,charge,rot,*gpu,_gpu_nbor,_gpu_nbor>0 && maxspecial>0,vel,extra_fields))
       return -3;
 
     _data_in_estimate++;
@@ -551,7 +553,7 @@ int DeviceT::init(Answer<numtyp,acctyp> &ans, const bool charge,
       _data_in_estimate++;
     if (atom.using_extra() && extra_fields>0)
       _data_in_estimate++;
-    if (!atom.add_fields(charge,rot,gpu_nbor,gpu_nbor>0 && maxspecial,vel,extra_fields))
+    if (!atom.add_fields(charge,rot,_gpu_nbor,_gpu_nbor>0 && maxspecial,vel,extra_fields))
       return -3;
   }
 
@@ -571,7 +573,7 @@ int DeviceT::init(Answer<numtyp,acctyp> &ans, const int nlocal,
     return -5;
 
   if (_init_count==0) {
-    // Initialize atom and nbor data
+    // Initialize atom data
     if (!atom.init(nall,true,false,*gpu,false,false))
       return -3;
   } else
@@ -596,22 +598,8 @@ int DeviceT::init_nbor(Neighbor *nbor, const int nlocal,
   if (_particle_split<1.0 && _particle_split>0.0)
     ef_nlocal=static_cast<int>(_particle_split*nlocal);
 
-  int gpu_nbor=0;
-  if (_gpu_mode==Device<numtyp,acctyp>::GPU_NEIGH)
-    gpu_nbor=1;
-  else if (_gpu_mode==Device<numtyp,acctyp>::GPU_HYB_NEIGH)
-    gpu_nbor=2;
-  #if !defined(USE_CUDPP) && !defined(USE_HIP_DEVICE_SORT)
-  if (gpu_nbor==1)
-    gpu_nbor=2;
-  #endif
-  #ifndef LAL_USE_OLD_NEIGHBOR
-  if (gpu_nbor==1)
-    gpu_nbor=2;
-  #endif
-
   if (!nbor->init(&_neighbor_shared,ef_nlocal,host_nlocal,max_nbors,maxspecial,
-                  *gpu,gpu_nbor,gpu_host,pre_cut,_block_cell_2d,
+                  *gpu,_gpu_nbor,gpu_host,pre_cut,_block_cell_2d,
                   _block_cell_id, _block_nbor_build, threads_per_atom,
                   _simd_size, _time_device, compile_string(), ilist_map))
     return -3;
@@ -625,6 +613,8 @@ int DeviceT::init_nbor(Neighbor *nbor, const int nlocal,
   } else
     _neighbor_shared.setup_auto_cell_size(false,_user_cell_size,nbor->simd_size());
   nbor->set_cutoff(cutoff);
+
+  _nbor_init++;
 
   return 0;
 }
@@ -903,6 +893,8 @@ void DeviceT::output_times(UCL_Timer &time_pair, Answer<numtyp,acctyp> &ans,
       fprintf(screen,"CPU Idle_Time:   %.4f s.\n",times[7]/_replica_size);
       fprintf(screen,"Average split:   %.4f.\n",avg_split);
       fprintf(screen,"Max Mem / Proc:  %.2f MB.\n",max_mb);
+      fprintf(screen,"-------------------------------------");
+      fprintf(screen,"--------------------------------\n");
       fprintf(screen,"Prefetch mode:   ");
       if (_nbor_prefetch==2) fprintf(screen,"Intrinsics.\n");
       else if (_nbor_prefetch==1) fprintf(screen,"API.\n");
@@ -911,6 +903,7 @@ void DeviceT::output_times(UCL_Timer &time_pair, Answer<numtyp,acctyp> &ans,
       fprintf(screen,"Lanes / atom:    %d.\n",threads_per_atom);
       fprintf(screen,"Pair block:      %d.\n",_block_pair);
       fprintf(screen,"Neigh block:     %d.\n",_block_nbor_build);
+      fprintf(screen,"Neighbor lists:  %d\n", _nbor_init);
       if (nbor.gpu_nbor()==2) {
         fprintf(screen,"Neigh mode:      Hybrid (binning on host)");
         if (_use_old_nbor_build == 1) fprintf(screen," - legacy\n");
@@ -920,7 +913,7 @@ void DeviceT::output_times(UCL_Timer &time_pair, Answer<numtyp,acctyp> &ans,
         if (_use_old_nbor_build == 1) fprintf(screen," - legacy\n");
         else  fprintf(screen," - with subgroup support\n");
       } else if (nbor.gpu_nbor()==0)
-        fprintf(screen,"Neigh mode:      Host\n");
+        fprintf(screen,"Neigh build:     Host\n");
 
       fprintf(screen,"-------------------------------------");
       fprintf(screen,"--------------------------------\n\n");
@@ -1029,7 +1022,7 @@ int DeviceT::compile_kernels() {
   int flag=0;
 
   if (_compiled)
-          return flag;
+    return flag;
 
   dev_program=new UCL_Program(*gpu);
   int success=dev_program->load_string(device,compile_string().c_str(),

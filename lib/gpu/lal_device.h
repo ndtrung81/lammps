@@ -340,6 +340,8 @@ class Device {
   double _cpu_full;
   double _ptx_arch;
   double _user_cell_size; // -1 if the cutoff is used
+  int _nbor_init;
+  int _gpu_nbor;
 
   int _config_id, _simd_size, _num_mem_threads, _shuffle_avail, _fast_math;
   int _threads_per_atom, _threads_per_charge, _threads_per_three;
