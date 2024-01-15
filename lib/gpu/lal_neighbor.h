@@ -76,9 +76,9 @@ class Neighbor {
   /// Set the cutoff+skin
   inline void set_cutoff(const double cutoff) {
     _cutoff=cutoff;
-
     #ifndef LAL_USE_OLD_NEIGHBOR
-    _cell_size=_shared->cell_size();
+    //_cell_size=_shared->cell_size();
+    _cell_size=cutoff;
     _auto_cell_size=_shared->auto_cell_size();
     const int cells_in_cutoff=static_cast<int>(ceil(_cutoff/_cell_size));
     if (cells_in_cutoff > 2) _cell_size=_cutoff*0.5;
