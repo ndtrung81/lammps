@@ -528,7 +528,7 @@ int DeviceT::init(Answer<numtyp,acctyp> &ans, const bool charge,
   #endif
 
   if (_init_count==0) {
-    // Initialize atom and nbor data
+    // Initialize atom data
     if (!atom.init(nall,charge,rot,*gpu,gpu_nbor,gpu_nbor>0 && maxspecial>0,vel,extra_fields))
       return -3;
 
