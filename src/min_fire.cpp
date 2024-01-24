@@ -62,6 +62,14 @@ void MinFire::init()
   alpha = alpha0;
   last_negative = ntimestep_start = update->ntimestep;
   vdotf_negatif = 0;
+
+  // detect if any rigid fixes exist so rigid bodies can be rescaled
+  // rfix[] = vector with pointers to each fix rigid
+
+  rfix.clear();
+
+  for (auto &ifix : modify->get_fix_list())
+    if (ifix->rigid_flag) rfix.push_back(ifix);
 }
 
 /* ---------------------------------------------------------------------- */

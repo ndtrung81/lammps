@@ -20,6 +20,7 @@ MinimizeStyle(fire,MinFire);
 #ifndef LMP_MIN_FIRE_H
 #define LMP_MIN_FIRE_H
 
+#include "fix.h"
 #include "min.h"
 
 namespace LAMMPS_NS {
@@ -39,6 +40,8 @@ class MinFire : public Min {
   bigint last_negative, ntimestep_start;
   int vdotf_negatif, flagv0;
   template <int INTEGRATOR, bool ABCFLAG> int run_iterate(int);
+
+  std::vector<Fix *> rfix;       // pointers to rigid fixes
 };
 
 }    // namespace LAMMPS_NS
