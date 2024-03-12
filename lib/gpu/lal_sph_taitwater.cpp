@@ -172,16 +172,11 @@ int SPHTaitwaterT::loop(const int eflag, const int vflag) {
 
   numtyp4 *pextra=reinterpret_cast<numtyp4*>(&(this->atom->extra[0]));
 
-  int n = 0;
-  int nstride = 1;
   for (int i = 0; i < nall; i++) {
-    int idx = n+i*nstride;
     numtyp4 v;
     v.x = rho[i];
-    v.y = 0;
-    v.z = 0;
-    v.w = 0;
-    pextra[idx] = v;
+    v.y = v.z = v.w = 0;
+    pextra[i] = v;
   }
   this->atom->add_extra_data();
 
