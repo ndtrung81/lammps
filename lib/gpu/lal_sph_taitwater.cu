@@ -320,7 +320,7 @@ __kernel void k_sph_taitwater_fast(const __global numtyp4 *restrict x_,
           wfd = (numtyp)-25.066903536973515383 * wfd * wfd * ihsq * ihsq * ihsq * ih;
         } else {
           // Lucy Kernel, 2d
-          wfd = (numtyp)-19.098593171027440292 * wfd * wfd * ihsq * ihsq * ihsq;
+          wfd = (numtyp)-19.098593171027440292 * wfd * wfd * ihsq * ihsq * ihsq;          
         }
 
         // compute pressure  of atom j with Tait EOS
