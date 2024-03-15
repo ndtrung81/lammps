@@ -79,7 +79,7 @@ FixIndent::FixIndent(LAMMPS *lmp, int narg, char **arg) :
     if (!ystr) yvalue *= yscale;
     if (!zstr) zvalue *= zscale;
     if (!rstr) rvalue *= xscale;
-    
+
   } else if (istyle == CONE) {
     if (!xstr) xvalue *= xscale;
     if (!ystr) yvalue *= yscale;
@@ -250,7 +250,7 @@ void FixIndent::post_force(int /*vflag*/)
   indenter[0] = indenter[1] = indenter[2] = indenter[3] = 0.0;
 
   // ctr = current indenter centerz
-  
+
   double ctr[3] {xvalue, yvalue, zvalue};
   if (xstr) ctr[0] = input->variable->compute_equal(xvar);
   if (ystr) ctr[1] = input->variable->compute_equal(yvar);
@@ -372,14 +372,14 @@ void FixIndent::post_force(int /*vflag*/)
         r = sqrt(delx * delx + dely * dely + delz * delz);
 
         // check if particle is inside or outside the cone
-        
+
         bool point_inside_cone = PointInsideCone(cdim, ctr, lo, hi, radiuslo, radiushi, x0);
 
         if (side == INSIDE && point_inside_cone) continue;
         if (side == OUTSIDE && !point_inside_cone) continue;
 
         // find the distance between the point and the cone
-        
+
         if (point_inside_cone) {
           DistanceInteriorPoint(cdim, ctr, lo, hi, radiuslo, radiushi, x0[0], x0[1], x0[2]);
         } else {
@@ -486,7 +486,7 @@ int FixIndent::geometry(int narg, char **arg)
   xvalue = yvalue = zvalue = rvalue = pvalue = 0.0;
 
   // sphere
-  
+
   if (strcmp(arg[0],"sphere") == 0) {
     if (istyle != NONE) error->all(FLERR, "Fix indent requires a single geometry keyword");
     if (5 > narg) utils::missing_cmd_args(FLERR, "fix indent sphere", error);
@@ -503,7 +503,7 @@ int FixIndent::geometry(int narg, char **arg)
     if (utils::strmatch(arg[4],"^v_")) {
       rstr = utils::strdup(arg[4]+2);
     } else rvalue = utils::numeric(FLERR,arg[4],false,lmp);
-    
+
     istyle = SPHERE;
     return 5;
   }
@@ -595,13 +595,13 @@ int FixIndent::geometry(int narg, char **arg)
     if (utils::strmatch(arg[7],"^v_")) {
       histr = utils::strdup(arg[7]+2);
     } else hivalue = utils::numeric(FLERR,arg[7],false,lmp);
-    
+
     istyle = CONE;
     return 8;
   }
 
   // plane
-  
+
   if (strcmp(arg[0],"plane") == 0) {
     if (istyle != NONE) error->all(FLERR, "Fix indent requires a single geometry keyword");
     if (4 > narg) utils::missing_cmd_args(FLERR, "fix indent plane", error);
@@ -609,22 +609,22 @@ int FixIndent::geometry(int narg, char **arg)
     else if (strcmp(arg[1],"y") == 0) cdim = 1;
     else if (strcmp(arg[1],"z") == 0) cdim = 2;
     else error->all(FLERR,"Unknown fix indent plane argument: {}", arg[1]);
-    
+
     if (utils::strmatch(arg[2],"^v_")) {
       pstr = utils::strdup(arg[2]+2);
     } else pvalue = utils::numeric(FLERR,arg[2],false,lmp);
-    
+
     if (strcmp(arg[3],"lo") == 0) planeside = -1;
     else if (strcmp(arg[3],"hi") == 0) planeside = 1;
     else error->all(FLERR,"Unknown fix indent plane argument: {}", arg[3]);
     istyle = PLANE;
     return 4;
   }
-    
+
   // invalid istyle arg
-  
+
   error->all(FLERR,"Unknown fix indent argument: {}", arg[0]);
-  
+
   return 0;
 }
 
