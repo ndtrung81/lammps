@@ -165,8 +165,7 @@ __kernel void k_sph_taitwater(const __global numtyp4 *restrict x_,
         numtyp fvisc = (numtyp)0;
         if (delVdotDelR < (numtyp)0) {
           numtyp mu = h * delVdotDelR / (rsq + (numtyp)0.01 * h * h);
-          fvisc = -coeffx * (soundspeed_itype
-              + soundspeed_jtype) * mu / (rhoi + rhoj);
+          fvisc = -coeffx * (soundspeed_itype + soundspeed_jtype) * mu / (rhoi + rhoj);
         } 
 
         // total pair force & thermal energy increment
@@ -178,15 +177,11 @@ __kernel void k_sph_taitwater(const __global numtyp4 *restrict x_,
         f.z+=delz*force;
 
         // and change in density, drho[i]
-        drhoEacc.x += mass_jtype* delVdotDelR * wfd;
+        drhoEacc.x += mass_jtype * delVdotDelR * wfd;
 
         // change in thermal energy, desph[i]
         drhoEacc.y += deltaE;
 
-        if (EVFLAG && eflag) {
-          numtyp e = (numtyp)0;
-          energy+=e;
-        }
         if (EVFLAG && vflag) {
           virial[0] += delx*delx*force;
           virial[1] += dely*dely*force;
@@ -320,7 +315,7 @@ __kernel void k_sph_taitwater_fast(const __global numtyp4 *restrict x_,
           wfd = (numtyp)-25.066903536973515383 * wfd * wfd * ihsq * ihsq * ihsq * ih;
         } else {
           // Lucy Kernel, 2d
-          wfd = (numtyp)-19.098593171027440292 * wfd * wfd * ihsq * ihsq * ihsq;          
+          wfd = (numtyp)-19.098593171027440292 * wfd * wfd * ihsq * ihsq * ihsq;
         }
 
         // compute pressure  of atom j with Tait EOS
@@ -339,8 +334,7 @@ __kernel void k_sph_taitwater_fast(const __global numtyp4 *restrict x_,
         numtyp fvisc = (numtyp)0;
         if (delVdotDelR < (numtyp)0) {
           numtyp mu = h * delVdotDelR / (rsq + (numtyp)0.01 * h * h);
-          fvisc = -coeffx * (soundspeed_itype
-              + soundspeed_jtype) * mu / (rhoi + rhoj);
+          fvisc = -coeffx * (soundspeed_itype + soundspeed_jtype) * mu / (rhoi + rhoj);
         }
 
         // total pair force & thermal energy increment
@@ -351,16 +345,12 @@ __kernel void k_sph_taitwater_fast(const __global numtyp4 *restrict x_,
         f.y+=dely*force;
         f.z+=delz*force;
 
-        // and change in density
+        // and change in density, drho[i]
         drhoEacc.x += mass_jtype * delVdotDelR * wfd;
 
-        // change in thermal energy
+        // change in thermal energy, desph[i]
         drhoEacc.y += deltaE;
 
-        if (EVFLAG && eflag) {
-          numtyp e = (numtyp)0;
-          energy+=e;
-        }
         if (EVFLAG && vflag) {
           virial[0] += delx*delx*force;
           virial[1] += dely*dely*force;
