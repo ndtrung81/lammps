@@ -1972,7 +1972,8 @@ void FixRigid::setup_bodies_static()
     tensor[0][2] = tensor[2][0] = all[ibody][4];
     tensor[0][1] = tensor[1][0] = all[ibody][5];
 
-    ierror = MathEigen::jacobi3(tensor,inertia[ibody],evectors);
+    //ierror = MathEigen::jacobi3(tensor,inertia[ibody],evectors);
+    ierror = MathExtra::jacobi(tensor,inertia[ibody],evectors);
     if (ierror) error->all(FLERR,
                            "Insufficient Jacobi rotations for rigid body");
 
