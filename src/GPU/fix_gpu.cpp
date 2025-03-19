@@ -160,12 +160,6 @@ FixGPU::FixGPU(LAMMPS *lmp, int narg, char **arg) :
       binsize = utils::numeric(FLERR,arg[iarg+1],false,lmp);
       if (binsize <= 0.0) error->all(FLERR,"Illegal fix GPU command");
       iarg += 2;
-    } else if (strcmp(arg[iarg],"split") == 0) {
-      if (iarg+2 > narg) error->all(FLERR,"Illegal package gpu command");
-      _particle_split = utils::numeric(FLERR,arg[iarg+1],false,lmp);
-      if (_particle_split == 0.0 || _particle_split > 1.0)
-        error->all(FLERR,"Illegal package GPU command");
-      iarg += 2;
     } else if (strcmp(arg[iarg],"gpuID") == 0) {
       if (iarg+2 > narg) error->all(FLERR,"Illegal package gpu command");
       first_gpu_id = utils::inumeric(FLERR,arg[iarg+1],false,lmp);
@@ -217,11 +211,6 @@ FixGPU::FixGPU(LAMMPS *lmp, int narg, char **arg) :
   force->newton_pair = newtonflag;
   if (force->newton_pair || force->newton_bond) force->newton = 1;
   else force->newton = 0;
-
-  // require newton pair off if _particle_split < 1
-
-  if (force->newton_pair == 1 && _particle_split < 1)
-    error->all(FLERR,"Cannot use newton pair on for split less than 1 for now");
 
   // pass params to GPU library
   // change binsize default (0.0) to -1.0 used by GPU lib
