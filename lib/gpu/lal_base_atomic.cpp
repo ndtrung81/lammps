@@ -66,9 +66,7 @@ int BaseAtomicT::init_atomic(const int nlocal, const int nall,
     gpu_nbor=2;
 
   int _gpu_host=0;
-  int host_nlocal=hd_balancer.first_host_count(nlocal,gpu_split,gpu_nbor);
-  if (host_nlocal>0)
-    _gpu_host=1;
+  int host_nlocal=0;
 
   _threads_per_atom=device->threads_per_atom();
 
@@ -97,9 +95,6 @@ int BaseAtomicT::init_atomic(const int nlocal, const int nall,
   if (success!=0)
     return success;
 
-  // Initialize host-device load balancer
-  hd_balancer.init(device,gpu_nbor,gpu_split);
-
   // Initialize timers for the selected GPU
   time_pair.init(*ucl_device);
   time_pair.zero();
@@ -120,14 +115,11 @@ template <class numtyp, class acctyp>
 void BaseAtomicT::clear_atomic() {
   // Output any timing information
   acc_timers();
-  double avg_split=hd_balancer.all_avg_split();
-  _gpu_overhead*=hd_balancer.timestep();
-  _driver_overhead*=hd_balancer.timestep();
+  double avg_split=1.0;
   device->output_times(time_pair,*ans,*nbor,avg_split,_max_bytes+_max_an_bytes,
                        _gpu_overhead,_driver_overhead,_threads_per_atom,screen);
 
   time_pair.clear();
-  hd_balancer.clear();
 
   nbor->clear();
   ans->clear();
@@ -216,8 +208,8 @@ void BaseAtomicT::compute(const int f_ago, const int inum_full,
     return;
   }
 
-  int ago=hd_balancer.ago_first(f_ago);
-  int inum=hd_balancer.balance(ago,inum_full,cpu_time);
+  int ago=f_ago;
+  int inum=inum_full;
   ans->inum(inum);
   host_start=inum;
 
@@ -228,13 +220,11 @@ void BaseAtomicT::compute(const int f_ago, const int inum_full,
   }
 
   atom->cast_x_data(host_x,host_type);
-  hd_balancer.start_timer();
   atom->add_x_data(host_x,host_type);
 
   const int red_blocks=loop(eflag,vflag);
   ans->copy_answers(eflag_in,vflag_in,eatom,vatom,ilist,red_blocks);
   device->add_ans_object(ans);
-  hd_balancer.stop_timer();
 }
 
 // ---------------------------------------------------------------------------
@@ -272,8 +262,7 @@ int **BaseAtomicT::compute(const int ago, const int inum_full,
     return nullptr;
   }
 
-  hd_balancer.balance(cpu_time);
-  int inum=hd_balancer.get_gpu_count(ago,inum_full);
+  int inum=inum_full;
   ans->inum(inum);
   host_start=inum;
 
@@ -283,10 +272,8 @@ int **BaseAtomicT::compute(const int ago, const int inum_full,
                     sublo, subhi, tag, nspecial, special, success);
     if (!success)
       return nullptr;
-    hd_balancer.start_timer();
   } else {
     atom->cast_x_data(host_x,host_type);
-    hd_balancer.start_timer();
     atom->add_x_data(host_x,host_type);
   }
   *ilist=nbor->host_ilist.begin();
@@ -295,7 +282,6 @@ int **BaseAtomicT::compute(const int ago, const int inum_full,
   const int red_blocks=loop(eflag,vflag);
   ans->copy_answers(eflag_in,vflag_in,eatom,vatom,red_blocks);
   device->add_ans_object(ans);
-  hd_balancer.stop_timer();
 
   return nbor->host_jlist.begin()-host_start;
 }
