@@ -168,7 +168,7 @@ __kernel void k_lj_coul_msm(const __global numtyp4 *restrict x_,
           force_lj = (numtyp)0.0;
 
         if (rsq < cut_coulsq) {
-          numtyp r = ucl_rsqrt(r2inv);
+          numtyp r = ucl_sqrt(rsq);
           fetch(prefactor,j,q_tex);
           prefactor *= qqrd2e * qtmp/r;
           numtyp rho = r/cut_coul;
@@ -293,7 +293,7 @@ __kernel void k_lj_coul_msm_fast(const __global numtyp4 *restrict x_,
           force_lj = (numtyp)0.0;
 
         if (rsq < cut_coulsq) {
-          numtyp r = ucl_rsqrt(r2inv);
+          numtyp r = ucl_sqrt(rsq);
           fetch(prefactor,j,q_tex);
           prefactor *= qqrd2e * qtmp/r;
           numtyp rho = r/cut_coul;

@@ -109,7 +109,7 @@ __kernel void k_coul_long_cs(const __global numtyp4 *restrict x_,
 
         numtyp force,prefactor,_erfc;
         numtyp r2inv = ucl_recip(rsq);
-        numtyp r = ucl_rsqrt(r2inv);
+        numtyp r = ucl_sqrt(rsq);
         fetch(prefactor,j,q_tex);
         prefactor *= qqrd2e * scale[mtype] * qtmp;
         if (factor_coul<(numtyp)1.0) {
@@ -230,7 +230,7 @@ __kernel void k_coul_long_cs_fast(const __global numtyp4 *restrict x_,
 
         numtyp force,prefactor,_erfc;
         numtyp r2inv = ucl_recip(rsq);
-        numtyp r = ucl_rsqrt(r2inv);
+        numtyp r = ucl_sqrt(rsq);
         fetch(prefactor,j,q_tex);
         prefactor *= qqrd2e * scale[mtype] * qtmp;
         if (factor_coul<(numtyp)1.0) {

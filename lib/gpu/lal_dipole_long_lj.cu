@@ -305,7 +305,7 @@ __kernel void k_dipole_long_lj(const __global numtyp4 *restrict x_,
 
         if (rsq < cut_coulsq) {
           rinv = ucl_rsqrt(rsq);
-          numtyp r = ucl_rsqrt(r2inv);
+          numtyp r = ucl_sqrt(rsq);
           numtyp grij = g_ewald * r;
           numtyp expm2 = ucl_exp(-grij*grij);
           numtyp t = ucl_recip((numtyp)1.0 + EWALD_P*grij);
@@ -560,7 +560,7 @@ __kernel void k_dipole_long_lj_fast(const __global numtyp4 *restrict x_,
 
         if (rsq < cut_coulsq) {
           rinv = ucl_rsqrt(rsq);
-          numtyp r = ucl_rsqrt(r2inv);
+          numtyp r = ucl_sqrt(rsq);
           numtyp grij = g_ewald * r;
           numtyp expm2 = ucl_exp(-grij*grij);
           numtyp t = ucl_recip((numtyp)1.0 + EWALD_P*grij);

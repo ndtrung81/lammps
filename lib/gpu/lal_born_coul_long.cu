@@ -104,7 +104,7 @@ __kernel void k_born_coul_long(const __global numtyp4 *restrict x_,
         numtyp rexp = (numtyp)0.0;
 
         if (rsq < cut_coulsq) {
-          numtyp r = ucl_rsqrt(r2inv);
+          numtyp r = ucl_sqrt(rsq);
           numtyp grij = g_ewald * r;
           numtyp expm2 = ucl_exp(-grij*grij);
           numtyp t = ucl_recip((numtyp)1.0 + EWALD_P*grij);
@@ -230,7 +230,7 @@ __kernel void k_born_coul_long_fast(const __global numtyp4 *restrict x_,
         numtyp rexp = (numtyp)0.0;
 
         if (rsq < cut_coulsq) {
-          numtyp r=ucl_rsqrt(r2inv);
+          numtyp r=ucl_sqrt(rsq);
           numtyp grij = g_ewald * r;
           numtyp expm2 = ucl_exp(-grij*grij);
           numtyp t = ucl_recip((numtyp)1.0 + EWALD_P*grij);

@@ -124,7 +124,7 @@ __kernel void k_born_coul_wolf_cs(const __global numtyp4 *restrict x_,
         } else forceborn = (numtyp)0.0;
 
         if (rsq < cut_coulsq) {
-          numtyp r = ucl_rsqrt(r2inv);
+          numtyp r = ucl_sqrt(rsq);
           acctyp arij = alf * r;
           acctyp erfcd = ucl_exp(-arij*arij);
           fetch(prefactor,j,q_tex);
