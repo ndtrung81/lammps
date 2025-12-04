@@ -627,6 +627,12 @@ void FixRigidSmall::setup(int vflag)
   if (maxextent > cutghost)
     error->all(FLERR,"Rigid body extent {} > ghost atom cutoff - use comm_modify cutoff", maxextent);
 
+  if (langflag && nlocal_body > maxlang) {
+    memory->destroy(langextra);
+    maxlang = nlocal_body + nghost_body;
+    memory->create(langextra,maxlang,6,"rigid/small:langextra");
+  }
+
   compute_forces_and_torques();
 
   // enforce 2d body forces and torques

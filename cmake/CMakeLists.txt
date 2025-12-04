@@ -293,6 +293,7 @@ set(STANDARD_PACKAGES
   EXTRA-PAIR
   FEP
   GRANULAR
+  GCPM
   H5MD
   INTERLAYER
   KIM
@@ -446,6 +447,7 @@ pkg_depends(CG-DNA MOLECULE)
 pkg_depends(CG-DNA ASPHERE)
 pkg_depends(ELECTRODE KSPACE)
 pkg_depends(EXTRA-MOLECULE MOLECULE)
+pkg_depends(GCPM KSPACE)
 pkg_depends(MESONT MOLECULE)
 pkg_depends(RHEO BPM)
 pkg_depends(APIP ML-PACE)
