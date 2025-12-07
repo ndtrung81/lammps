@@ -45,11 +45,16 @@ class PairLJCutCoulGaussLong : public Pair {
   void *extract(const char *, int &) override;
 
  protected:
+  void dispersion(int, int);
+  void charge_charge(int, int);
+  void polar(int, int);
+
   double cut_lj_global;
   double **cut_lj, **cut_ljsq;
   double cut_coul, cut_coulsq;
   double **epsilon, **sigma;
   double **lj1, **lj2, **lj3, **lj4, **offset;
+  double **alpha_pol;  // polarizability for each type pair
   double *cut_respa;
   double qdist;    // TIP4P distance from O site to negative charge
   double g_ewald;
@@ -57,6 +62,10 @@ class PairLJCutCoulGaussLong : public Pair {
   double coul_smooth, alpha;
   double c0_c, c1_c, c2_c, c3_c, c4_c, c5_c, rsmooth_sq_c;
 
+  double **efield;      // per-atom electric field due to charges
+  double **efield_pol;  // per-atom electric field due to induced dipoles
+  int nmax;
+  
   virtual void allocate();
 };
 

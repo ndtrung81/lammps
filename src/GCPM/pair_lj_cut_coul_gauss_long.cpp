@@ -13,7 +13,8 @@
 ------------------------------------------------------------------------- */
 
 /* ----------------------------------------------------------------------
-   Contributing author: Paul Crozier (SNL)
+   Contributing author: Trung Nguyen (U Chicago)
+   Reference: Paricaud et al., J. Chem. Phys. 122, 244511 (2005)
 ------------------------------------------------------------------------- */
 
 #include "pair_lj_cut_coul_gauss_long.h"
@@ -49,6 +50,10 @@ PairLJCutCoulGaussLong::PairLJCutCoulGaussLong(LAMMPS *lmp) : Pair(lmp)
   ftable = nullptr;
   qdist = 0.0;
   cut_respa = nullptr;
+
+  efield = nullptr;
+  efield_pol = nullptr;
+  nmax = 0;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -63,6 +68,7 @@ PairLJCutCoulGaussLong::~PairLJCutCoulGaussLong()
 
     memory->destroy(cut_lj);
     memory->destroy(cut_ljsq);
+    memory->destroy(alpha_pol);
     memory->destroy(epsilon);
     memory->destroy(sigma);
     memory->destroy(lj1);
@@ -71,12 +77,126 @@ PairLJCutCoulGaussLong::~PairLJCutCoulGaussLong()
     memory->destroy(lj4);
     memory->destroy(offset);
   }
+  memory->destroy(efield);
+  memory->destroy(efield_pol);
   if (ftable) free_tables();
 }
 
 /* ---------------------------------------------------------------------- */
 
 void PairLJCutCoulGaussLong::compute(int eflag, int vflag)
+{
+  ev_init(eflag, vflag);
+
+  if (atom->nmax > nmax) {
+    memory->destroy(efield);
+    memory->destroy(efield_pol);
+    nmax = atom->nmax;
+    memory->create(efield, nmax, 3, "pair:efield");
+    memory->create(efield_pol, nmax, 3, "pair:efield_pol");
+  }
+  
+  // dispersion interactions
+
+  dispersion(eflag, vflag);
+
+  // charge-charge interactions
+
+  charge_charge(eflag, vflag);
+
+  // polar interactions
+
+  polar(eflag, vflag);
+
+  if (vflag_fdotr) virial_fdotr_compute();
+}
+
+/* ----------------------------------------------------------------------
+   dispersion interactions: could be LJ or Buckingham exp-6
+------------------------------------------------------------------------- */
+
+void PairLJCutCoulGaussLong::dispersion(int eflag, int vflag)
+{
+  int i,ii,j,jj,inum,jnum,itype,jtype;
+  double qtmp,xtmp,ytmp,ztmp,delx,dely,delz,evdwl,fpair;
+  double r2inv,r6inv,forcelj,factor_lj;
+  int *ilist,*jlist,*numneigh,**firstneigh;
+  double rsq;
+
+  evdwl = 0.0;
+
+  double **x = atom->x;
+  double **f = atom->f;
+  int *type = atom->type;
+  int nlocal = atom->nlocal;
+  double *special_lj = force->special_lj;
+  int newton_pair = force->newton_pair;
+
+  inum = list->inum;
+  ilist = list->ilist;
+  numneigh = list->numneigh;
+  firstneigh = list->firstneigh;
+
+  // loop over neighbors of my atoms
+
+  for (ii = 0; ii < inum; ii++) {
+    i = ilist[ii];
+    xtmp = x[i][0];
+    ytmp = x[i][1];
+    ztmp = x[i][2];
+    itype = type[i];
+    jlist = firstneigh[i];
+    jnum = numneigh[i];
+
+    for (jj = 0; jj < jnum; jj++) {
+      j = jlist[jj];
+      factor_lj = special_lj[sbmask(j)];
+      j &= NEIGHMASK;
+
+      delx = xtmp - x[j][0];
+      dely = ytmp - x[j][1];
+      delz = ztmp - x[j][2];
+      rsq = delx*delx + dely*dely + delz*delz;
+      jtype = type[j];
+
+      if (rsq < cutsq[itype][jtype]) {
+
+        if (rsq < cut_ljsq[itype][jtype]) {
+          r6inv = r2inv*r2inv*r2inv;
+          forcelj = r6inv * (lj1[itype][jtype]*r6inv - lj2[itype][jtype]);
+        } else forcelj = 0.0;
+
+        fpair = factor_lj*forcelj * r2inv;
+
+        f[i][0] += delx*fpair;
+        f[i][1] += dely*fpair;
+        f[i][2] += delz*fpair;
+        if (newton_pair || j < nlocal) {
+          f[j][0] -= delx*fpair;
+          f[j][1] -= dely*fpair;
+          f[j][2] -= delz*fpair;
+        }
+
+        if (eflag) {
+          if (rsq < cut_ljsq[itype][jtype]) {
+            evdwl = r6inv*(lj3[itype][jtype]*r6inv-lj4[itype][jtype]) -
+              offset[itype][jtype];
+            evdwl *= factor_lj;
+          } else evdwl = 0.0;
+        }
+
+        if (evflag) ev_tally(i,j,nlocal,newton_pair,
+                             evdwl,0.0,fpair,delx,dely,delz);
+      }
+    }
+  }
+}
+
+/* ----------------------------------------------------------------------
+   charge-charge interactions
+------------------------------------------------------------------------- */
+
+void PairLJCutCoulGaussLong::charge_charge(int eflag, int vflag)
 {
   int i,ii,j,jj,inum,jnum,itype,jtype,itable;
   double qtmp,xtmp,ytmp,ztmp,delx,dely,delz,evdwl,ecoul,fpair;
@@ -87,11 +207,9 @@ void PairLJCutCoulGaussLong::compute(int eflag, int vflag)
   double rcu,rqu,sme,smf;
   double erfa,expa,arg,falpha,ealpha;
   double erf;
-
   double rsq;
 
-  evdwl = ecoul = 0.0;
-  ev_init(eflag,vflag);
+  ecoul = 0.0;
 
   double **x = atom->x;
   double **f = atom->f;
@@ -107,6 +225,9 @@ void PairLJCutCoulGaussLong::compute(int eflag, int vflag)
   ilist = list->ilist;
   numneigh = list->numneigh;
   firstneigh = list->firstneigh;
+
+  double efield_i[3];
+  efield_i[0] = efield_i[1] = efield_i[2] = 0.0;
 
   // loop over neighbors of my atoms
 
@@ -164,18 +285,20 @@ void PairLJCutCoulGaussLong::compute(int eflag, int vflag)
             forcecoul = forcecoul*sme - ealpha*smf*r;
             ealpha *= sme;
           }
-        } else forcecoul = 0.0;
+        } else {
+          forcecoul = 0.0;
+          
+        }
 
-        if (rsq < cut_ljsq[itype][jtype]) {
-          r6inv = r2inv*r2inv*r2inv;
-          forcelj = r6inv * (lj1[itype][jtype]*r6inv - lj2[itype][jtype]);
-        } else forcelj = 0.0;
-
-        fpair = (forcecoul + factor_lj*forcelj) * r2inv;
+        fpair = forcecoul * r2inv;
 
         f[i][0] += delx*fpair;
         f[i][1] += dely*fpair;
         f[i][2] += delz*fpair;
+        
+        // accumate electric field on atom i efield_i (Eq. (4) in Paricaud et al.)
+        // ..
+
         if (newton_pair || j < nlocal) {
           f[j][0] -= delx*fpair;
           f[j][1] -= dely*fpair;
@@ -188,22 +311,79 @@ void PairLJCutCoulGaussLong::compute(int eflag, int vflag)
             if (factor_coul < 1.0) ecoul -= (1.0-factor_coul)*prefactor*erfa;
           } else ecoul = 0.0;
 
-          if (rsq < cut_ljsq[itype][jtype]) {
-            evdwl = r6inv*(lj3[itype][jtype]*r6inv-lj4[itype][jtype]) -
-              offset[itype][jtype];
-            evdwl *= factor_lj;
-          } else evdwl = 0.0;
         }
 
         if (evflag) ev_tally(i,j,nlocal,newton_pair,
-                             evdwl,ecoul,fpair,delx,dely,delz);
+                             0.0,ecoul,fpair,delx,dely,delz);
       }
     }
   }
 
-  if (vflag_fdotr) virial_fdotr_compute();
 }
 
+/* ----------------------------------------------------------------------
+   polar interactions:
+     solve for induced dipoles from electrical fields
+------------------------------------------------------------------------- */
+
+void PairLJCutCoulGaussLong::polar(int eflag, int vflag)
+{
+  int i,ii,j,jj,inum,jnum,itype,jtype,itable;
+  double qtmp,xtmp,ytmp,ztmp,delx,dely,delz,evdwl,ecoul,fpair;
+  double r,r2inv,r6inv,forcecoul,forcelj,factor_coul,factor_lj;
+  double grij,expm2,prefactor,t,erfc;
+  int *ilist,*jlist,*numneigh,**firstneigh;
+
+  double rcu,rqu,sme,smf;
+  double erfa,expa,arg,falpha,ealpha;
+  double erf;
+
+  double rsq;
+
+  evdwl = ecoul = 0.0;
+  ev_init(eflag,vflag);
+
+  double **x = atom->x;
+  double **f = atom->f;
+  double *q = atom->q;
+  int *type = atom->type;
+  int nlocal = atom->nlocal;
+  double *special_coul = force->special_coul;
+  double *special_lj = force->special_lj;
+  int newton_pair = force->newton_pair;
+  double qqrd2e = force->qqrd2e;
+
+  inum = list->inum;
+  ilist = list->ilist;
+  numneigh = list->numneigh;
+  firstneigh = list->firstneigh;
+
+  int maxiter = 10;
+
+  // estimate the initial induced dipoles of the molecules from the electrical fields E = E_q + E_p
+  // see Eq. 3 in Paricaud et al. with E_p = 0 for the first iteration
+  // note that efield_i computed in charge_charge() is at individual atom level,
+  // need to be mapped to the corresponding molecules for E_q
+
+  for (int iter = 0; iter < maxiter; iter++) {
+
+    // compute the electrical field on each molecule due to the induced dipoles E_p
+    // see Eqs. 5-7 in Paricaud et al.
+
+    // update the induced dipoles of the molecules from the electrical fields E = E_q + E_p
+    // see Eq. 3 in Paricaud et al.
+    // note that efield_i computed in charge_charge() is at individual atom level,
+    // need to be mapped to the corresponding molecules for E_q
+
+    // check for convergence and break if converged
+
+  }
+
+  // compute atom forces and polar energy (Eq. 9 in Paricaud et al.)
+  // note: need to project the torques from charge-induced dipole interactions
+  // to forces on atoms in each molecule
+
+}
 
 /* ----------------------------------------------------------------------
    allocate all arrays
@@ -223,8 +403,9 @@ void PairLJCutCoulGaussLong::allocate()
 
   memory->create(cut_lj,n+1,n+1,"pair:cut_lj");
   memory->create(cut_ljsq,n+1,n+1,"pair:cut_ljsq");
-  memory->create(epsilon,n+1,n+1,"pair:epsilon");
   memory->create(sigma,n+1,n+1,"pair:sigma");
+  memory->create(epsilon,n+1,n+1,"pair:epsilon");
+  memory->create(alpha_pol,n+1,n+1,"pair:alpha_pol");
   memory->create(lj1,n+1,n+1,"pair:lj1");
   memory->create(lj2,n+1,n+1,"pair:lj2");
   memory->create(lj3,n+1,n+1,"pair:lj3");
@@ -262,7 +443,7 @@ void PairLJCutCoulGaussLong::settings(int narg, char **arg)
 
 void PairLJCutCoulGaussLong::coeff(int narg, char **arg)
 {
-  if (narg < 4 || narg > 5)
+  if (narg < 5 || narg > 6)
     error->all(FLERR,"Incorrect args for pair coefficients" + utils::errorurl(21));
   if (!allocated) allocate();
 
@@ -272,15 +453,17 @@ void PairLJCutCoulGaussLong::coeff(int narg, char **arg)
 
   double epsilon_one = utils::numeric(FLERR,arg[2],false,lmp);
   double sigma_one = utils::numeric(FLERR,arg[3],false,lmp);
+  double alpha_pol_one = utils::numeric(FLERR,arg[4],false,lmp);
 
   double cut_lj_one = cut_lj_global;
-  if (narg == 5) cut_lj_one = utils::numeric(FLERR,arg[4],false,lmp);
+  if (narg == 6) cut_lj_one = utils::numeric(FLERR,arg[5],false,lmp);
 
   int count = 0;
   for (int i = ilo; i <= ihi; i++) {
     for (int j = MAX(jlo,i); j <= jhi; j++) {
       epsilon[i][j] = epsilon_one;
       sigma[i][j] = sigma_one;
+      alpha_pol[i][j] = alpha_pol_one;
       cut_lj[i][j] = cut_lj_one;
       setflag[i][j] = 1;
       count++;
@@ -299,20 +482,11 @@ void PairLJCutCoulGaussLong::init_style()
   if (!atom->q_flag)
     error->all(FLERR,"Pair style lj/cut/coul/gauss/long requires atom attribute q");
 
-  // request regular or rRESPA neighbor list
-
-  int list_style = NeighConst::REQ_DEFAULT;
-
-  if (update->whichflag == 1 && utils::strmatch(update->integrate_style, "^respa")) {
-    auto *respa = dynamic_cast<Respa *>(update->integrate);
-    if (respa->level_inner >= 0) list_style = NeighConst::REQ_RESPA_INOUT;
-    if (respa->level_middle >= 0) list_style = NeighConst::REQ_RESPA_ALL;
-  }
-  neighbor->add_request(this, list_style);
+  neighbor->add_request(this, NeighConst::REQ_FULL);
 
   cut_coulsq = cut_coul * cut_coul;
 
-  //calculation of smoothing coefficients c0_c-c5_c for coulomb smoothing
+  // calculation of smoothing coefficients c0_c-c5_c for coulomb smoothing
 
   c0_c = c1_c = c2_c = c3_c = c4_c = c5_c = 0.0;
   rsmooth_sq_c = cut_coulsq;
@@ -347,6 +521,7 @@ double PairLJCutCoulGaussLong::init_one(int i, int j)
     epsilon[i][j] = mix_energy(epsilon[i][i],epsilon[j][j],
                                sigma[i][i],sigma[j][j]);
     sigma[i][j] = mix_distance(sigma[i][i],sigma[j][j]);
+    alpha_pol[i][j] = mix_distance(alpha_pol[i][i],alpha_pol[j][j]);
     cut_lj[i][j] = mix_distance(cut_lj[i][i],cut_lj[j][j]);
   }
 
@@ -366,6 +541,7 @@ double PairLJCutCoulGaussLong::init_one(int i, int j)
   } else offset[i][j] = 0.0;
 
   cut_ljsq[j][i] = cut_ljsq[i][j];
+  alpha_pol[j][i] = alpha_pol[i][j];
   lj1[j][i] = lj1[i][j];
   lj2[j][i] = lj2[i][j];
   lj3[j][i] = lj3[i][j];

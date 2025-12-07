@@ -20,9 +20,9 @@ create_atoms 0 random 33 34564 NULL mol water 25367 overlap 1.33
 replicate $r $r $r
 
 pair_style lj/cut/coul/gauss/long 0.9 0.608 12.0
-pair_coeff 1 1 0.1550 3.1536
-pair_coeff 2 2 0.0    1.0
-pair_coeff 3 3 0.0    1.0
+pair_coeff 1 1 0.1550 3.1536 1.444
+pair_coeff 2 2 0.0    1.0    0.0
+pair_coeff 3 3 0.0    1.0    0.0
 
 kspace_style pppm 0.0001
 
@@ -35,6 +35,9 @@ timestep 0.5
 #fix 1 all rigid/small molecule langevin 300.0 300.0 100.0 2345634
 
 fix 1 all rigid/nvt/small molecule temp 300.0 300.0 100.0
+
+compute cc1 all chunk/atom molecule
+compute dipole all dipole/chunk cc1
 
 thermo_style custom step temp press ecoul etotal density pe ke
 thermo 1000
