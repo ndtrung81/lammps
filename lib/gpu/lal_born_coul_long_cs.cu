@@ -146,7 +146,7 @@ __kernel void k_born_coul_long_cs(const __global numtyp4 *restrict x_,
             r2inv = ucl_recip(rsq + EPS_EWALD_SQR);
 
             #if defined(_SINGLE_SINGLE)
-            // in the single precision mode, any approximations used for 1/(r+EPS_EWALD) 
+            // in the single precision mode, any approximations used for 1/(r+EPS_EWALD)
             // for prefactor and r2inv will be as good as setting forcecoul to zero
             // bonded interaction is supposed to be dominated by the born term, and bonded interactions
             if (r > EPSILON) forcecoul = (acctyp)0.0;
@@ -301,7 +301,7 @@ __kernel void k_born_coul_long_cs_fast(const __global numtyp4 *restrict x_,
             r2inv = ucl_recip(rsq + EPS_EWALD_SQR);
 
             #if defined(_SINGLE_SINGLE)
-            // in the single precision mode, any approximations used for 1/(r+EPS_EWALD) 
+            // in the single precision mode, any approximations used for 1/(r+EPS_EWALD)
             // for prefactor and r2inv will be as good as setting forcecoul to zero
             // bonded interaction is supposed to be dominated by the born term, and bonded interactions
             if (r > EPSILON) forcecoul = (acctyp)0.0;
