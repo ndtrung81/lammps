@@ -19,6 +19,14 @@ Examples
 
    dielectric 2.0
 
+Used in input scripts:
+
+   .. parsed-literal::
+
+      examples/dreiding/in.dreiding
+      examples/VISCOSITY/in.cos.1000SPCE
+
+
 Description
 """""""""""
 

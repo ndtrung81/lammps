@@ -141,7 +141,12 @@ Used in input scripts:
 
    .. parsed-literal::
 
+      examples/dreiding/in.dreiding
       examples/peptide/in.peptide
+      examples/mc/in.widom.spce
+      examples/rdf-adf/in.spce
+      examples/VISCOSITY/in.cos.1000SPCE
+
 
 Description
 """""""""""

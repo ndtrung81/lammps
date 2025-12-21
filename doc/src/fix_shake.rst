@@ -55,6 +55,19 @@ Examples
    fix 1 sub rattle 0.0001 20 10 t 5 6 m 1.0 a 31
    fix 1 sub rattle 0.0001 20 10 t 5 6 m 1.0 a 31 mol myMol
 
+
+Used in input scripts:
+
+   .. parsed-literal::
+
+      bench/in.rhodo
+      examples/mc/in.gcmc.h2o
+      examples/rdf-adf/in.spce
+      examples/HEAT/in.spce.ehex
+      examples/HEAT/in.spce.hex
+      examples/VISCOSITY/in.cos.1000SPCE
+      examples/wall/in.wall.sphere
+
 Description
 """""""""""
 

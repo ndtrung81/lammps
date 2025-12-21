@@ -45,6 +45,13 @@ Examples
        forceConstant ${kappa}
    }"""
 
+Used in input scripts:
+
+   .. parsed-literal::
+
+      examples/PACKAGES/colvars/in.peptide-colvars
+      examples/PACKAGES/colvars/in.peptide-spring
+
 Description
 """""""""""
 

@@ -121,6 +121,17 @@ Examples
    pair_coeff * * 1.0 1.0
    pair_coeff 1 1 1.0 1.0 2.5
 
+Used in input scripts:
+
+   .. parsed-literal::
+
+      bench/in.rhodo
+      examples/dreiding/in.dreiding
+      examples/mc/in.widom.spce
+      examples/nb3b/in.nb3b
+      examples/VISCOSITY/in.cos.1000SPC
+      examples/wall/in.wall.block
+
 Description
 """""""""""
 
