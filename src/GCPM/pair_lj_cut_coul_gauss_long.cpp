@@ -21,6 +21,7 @@
 
 #include "atom.h"
 #include "comm.h"
+#include "compute.h"
 #include "error.h"
 #include "ewald_const.h"
 #include "force.h"
@@ -28,6 +29,7 @@
 #include "math_const.h"
 #include "math_special.h"
 #include "memory.h"
+#include "modify.h"
 #include "neigh_list.h"
 #include "neighbor.h"
 #include "respa.h"
@@ -39,6 +41,8 @@
 using namespace LAMMPS_NS;
 using namespace MathConst;
 using namespace EwaldConst;
+
+#define EPSILON 1.0e-6
 
 /* ---------------------------------------------------------------------- */
 
@@ -53,7 +57,10 @@ PairLJCutCoulGaussLong::PairLJCutCoulGaussLong(LAMMPS *lmp) : Pair(lmp)
 
   efield = nullptr;
   efield_pol = nullptr;
+  mu_old = nullptr;
   nmax = 0;
+
+  comm_forward = 4;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -79,6 +86,7 @@ PairLJCutCoulGaussLong::~PairLJCutCoulGaussLong()
   }
   memory->destroy(efield);
   memory->destroy(efield_pol);
+
   if (ftable) free_tables();
 }
 
@@ -91,11 +99,13 @@ void PairLJCutCoulGaussLong::compute(int eflag, int vflag)
   if (atom->nmax > nmax) {
     memory->destroy(efield);
     memory->destroy(efield_pol);
+    memory->destroy(mu_old);
     nmax = atom->nmax;
     memory->create(efield, nmax, 3, "pair:efield");
     memory->create(efield_pol, nmax, 3, "pair:efield_pol");
+    memory->create(mu_old, nmax, 4, "pair:mu_old");
   }
-  
+
   // dispersion interactions
 
   dispersion(eflag, vflag);
@@ -202,6 +212,7 @@ void PairLJCutCoulGaussLong::charge_charge(int eflag, int vflag)
   double qtmp,xtmp,ytmp,ztmp,delx,dely,delz,evdwl,ecoul,fpair;
   double r,r2inv,r6inv,forcecoul,forcelj,factor_coul,factor_lj;
   double grij,expm2,prefactor,t,erfc;
+  double efield_i;
   int *ilist,*jlist,*numneigh,**firstneigh;
 
   double rcu,rqu,sme,smf;
@@ -214,6 +225,7 @@ void PairLJCutCoulGaussLong::charge_charge(int eflag, int vflag)
   double **x = atom->x;
   double **f = atom->f;
   double *q = atom->q;
+  double **mu = atom->mu;
   int *type = atom->type;
   int nlocal = atom->nlocal;
   double *special_coul = force->special_coul;
@@ -226,9 +238,6 @@ void PairLJCutCoulGaussLong::charge_charge(int eflag, int vflag)
   numneigh = list->numneigh;
   firstneigh = list->firstneigh;
 
-  double efield_i[3];
-  efield_i[0] = efield_i[1] = efield_i[2] = 0.0;
-
   // loop over neighbors of my atoms
 
   for (ii = 0; ii < inum; ii++) {
@@ -240,6 +249,8 @@ void PairLJCutCoulGaussLong::charge_charge(int eflag, int vflag)
     itype = type[i];
     jlist = firstneigh[i];
     jnum = numneigh[i];
+
+    efield[i][0] = efield[i][1] = efield[i][2] = 0.0;
 
     for (jj = 0; jj < jnum; jj++) {
       j = jlist[jj];
@@ -285,9 +296,13 @@ void PairLJCutCoulGaussLong::charge_charge(int eflag, int vflag)
             forcecoul = forcecoul*sme - ealpha*smf*r;
             ealpha *= sme;
           }
+
+          
+          if (qtmp != 0.0) efield_i = forcecoul / qtmp * r2inv;
+          else efield_i = 0.0;
+
         } else {
           forcecoul = 0.0;
-          
         }
 
         fpair = forcecoul * r2inv;
@@ -295,9 +310,11 @@ void PairLJCutCoulGaussLong::charge_charge(int eflag, int vflag)
         f[i][0] += delx*fpair;
         f[i][1] += dely*fpair;
         f[i][2] += delz*fpair;
-        
-        // accumate electric field on atom i efield_i (Eq. (4) in Paricaud et al.)
-        // ..
+
+        // accumate electric field on atom i efield (Eq. (4) in Paricaud et al.)
+        efield[i][0] += delx * efield_i;
+        efield[i][1] += dely * efield_i;
+        efield[i][2] += delz * efield_i;
 
         if (newton_pair || j < nlocal) {
           f[j][0] -= delx*fpair;
@@ -346,6 +363,7 @@ void PairLJCutCoulGaussLong::polar(int eflag, int vflag)
   double **x = atom->x;
   double **f = atom->f;
   double *q = atom->q;
+  double **mu = atom->mu;
   int *type = atom->type;
   int nlocal = atom->nlocal;
   double *special_coul = force->special_coul;
@@ -365,24 +383,191 @@ void PairLJCutCoulGaussLong::polar(int eflag, int vflag)
   // note that efield_i computed in charge_charge() is at individual atom level,
   // need to be mapped to the corresponding molecules for E_q
 
+  for (ii = 0; ii < inum; ii++) {
+    i = ilist[ii];
+    itype = type[i];
+
+    // efield here is due to charges only
+    // NOTE: using mu[i][3] != 0.0 to indicate a polarizable atom (e.g. the M site of the TIP4P model)
+
+    if (mu[i][3] != 0.0) {
+      efield_pol[i][0] = alpha_pol[itype][itype] * efield[i][0];
+      efield_pol[i][1] = alpha_pol[itype][itype] * efield[i][1];
+      efield_pol[i][2] = alpha_pol[itype][itype] * efield[i][2];
+      
+      mu[i][0] = efield_pol[i][0];
+      mu[i][1] = efield_pol[i][1];
+      mu[i][2] = efield_pol[i][2];
+      mu_old[i][0] = mu[i][0];
+      mu_old[i][1] = mu[i][1];
+      mu_old[i][2] = mu[i][2];
+    }
+    
+  }
+
   for (int iter = 0; iter < maxiter; iter++) {
 
     // compute the electrical field on each molecule due to the induced dipoles E_p
     // see Eqs. 5-7 in Paricaud et al.
 
+    compute_induced_efield(efield_pol);
+
     // update the induced dipoles of the molecules from the electrical fields E = E_q + E_p
     // see Eq. 3 in Paricaud et al.
     // note that efield_i computed in charge_charge() is at individual atom level,
     // need to be mapped to the corresponding molecules for E_q
+    for (ii = 0; ii < inum; ii++) {
+      i = ilist[ii];
+      itype = type[i];
 
-    // check for convergence and break if converged
+      // efield here is due to charges only
+      // NOTE: using mu[i][3] != 0.0 to indicate a polarizable atom (e.g. the M site of the TIP4P model)
+      //       so we keep mu[i][3] untouched here
 
+      if (mu[i][3] != 0.0) {
+        mu[i][0] = alpha_pol[itype][itype] * (efield[i][0] + efield_pol[i][0]);
+        mu[i][1] = alpha_pol[itype][itype] * (efield[i][1] + efield_pol[i][1]);
+        mu[i][2] = alpha_pol[itype][itype] * (efield[i][2] + efield_pol[i][2]);
+      }
+      
+    }
+
+    // communicate the updated induced dipoles mu with neighboring processors
+    //   the updated mu will be used to compute the induced electrical field E_p in the next iteration
+
+    comm->forward_comm(this);
+
+    // check for convergence and break if not converged
+
+    int converged = 1;
+    int all_converged = 0;
+    for (ii = 0; ii < inum; ii++) {
+      i = ilist[ii];
+      itype = type[i];
+      if (mu[i][3] != 0.0) {
+        if (fabs(mu_old[i][0] - mu[i][0]) > EPSILON ||
+            fabs(mu_old[i][1] - mu[i][1]) > EPSILON ||
+            fabs(mu_old[i][2] - mu[i][2]) > EPSILON ) {
+          converged = 0;
+          break;
+        }
+      }
+    }
+
+    MPI_Allreduce(&converged, &all_converged, 1, MPI_INT, MPI_MIN, world);
+    if (all_converged) break;
+
+    // store the current induced dipoles to mu_old for the next iteration
+    for (ii = 0; ii < inum; ii++) {
+      i = ilist[ii];
+      itype = type[i];
+      if (mu[i][3] != 0.0) {
+        mu_old[i][0] = mu[i][0];
+        mu_old[i][1] = mu[i][1];
+        mu_old[i][2] = mu[i][2];
+        mu_old[i][3] = mu[i][3];
+      }
+    }
   }
 
   // compute atom forces and polar energy (Eq. 9 in Paricaud et al.)
   // note: need to project the torques from charge-induced dipole interactions
   // to forces on atoms in each molecule
 
+}
+
+/* ---------------------------------------------------------------------- */
+
+int PairLJCutCoulGaussLong::pack_forward_comm(int n, int *list, double *buf,
+  int /*pbc_flag*/, int * /*pbc*/)
+{
+  int i,j,m;
+  double **mu = atom->mu;
+  m = 0;
+  for (i = 0; i < n; i++) {
+    j = list[i];
+    buf[m++] = mu[j][0];
+    buf[m++] = mu[j][1];
+    buf[m++] = mu[j][2];
+    buf[m++] = mu[j][3];
+  }
+  return m;
+}
+
+/* ---------------------------------------------------------------------- */
+
+void PairLJCutCoulGaussLong::unpack_forward_comm(int n, int first, double *buf)
+{
+  int i,m,last;
+  double **mu = atom->mu;
+  m = 0;
+  last = first + n;
+  for (i = first; i < last; i++) {
+    mu[i][0] = buf[m++];
+    mu[i][1] = buf[m++];
+    mu[i][2] = buf[m++];
+    mu[i][3] = buf[m++];
+  }
+}
+
+/* ----------------------------------------------------------------------
+   allocate all arrays
+------------------------------------------------------------------------- */
+
+void PairLJCutCoulGaussLong::compute_induced_efield(double **efield_pol)
+{
+  int i,ii,j,jj,inum,jnum,itype,jtype;
+  double xtmp,ytmp,ztmp,delx,dely,delz;
+  double r,r2inv,r6inv,efieldx,efieldy,efieldz;
+  int *ilist,*jlist,*numneigh,**firstneigh;
+
+  double rsq;
+
+  double **x = atom->x;
+  int *type = atom->type;
+  int nlocal = atom->nlocal;
+  double *special_coul = force->special_coul;
+  int newton_pair = force->newton_pair;
+
+  inum = list->inum;
+  ilist = list->ilist;
+  numneigh = list->numneigh;
+  firstneigh = list->firstneigh;
+
+  // loop over neighbors of my atoms
+
+  for (ii = 0; ii < inum; ii++) {
+    i = ilist[ii];
+    xtmp = x[i][0];
+    ytmp = x[i][1];
+    ztmp = x[i][2];
+    itype = type[i];
+    jlist = firstneigh[i];
+    jnum = numneigh[i];
+
+    efield_pol[i][0] = efield_pol[i][1] = efield_pol[i][2] = 0.0;
+
+    for (jj = 0; jj < jnum; jj++) {
+      j = jlist[jj];
+      j &= NEIGHMASK;
+
+      delx = xtmp - x[j][0];
+      dely = ytmp - x[j][1];
+      delz = ztmp - x[j][2];
+      rsq = delx*delx + dely*dely + delz*delz;
+      jtype = type[j];
+
+      if (rsq < cutsq[itype][jtype]) {
+        r2inv = 1.0/rsq;
+        r = sqrt(rsq);
+
+        // compute efield components from induced dipole on atom j
+
+        // accumulate efield on atom i due to dipole on atom j
+
+      }
+    }
+  }
 }
 
 /* ----------------------------------------------------------------------
@@ -479,8 +664,8 @@ void PairLJCutCoulGaussLong::coeff(int narg, char **arg)
 
 void PairLJCutCoulGaussLong::init_style()
 {
-  if (!atom->q_flag)
-    error->all(FLERR,"Pair style lj/cut/coul/gauss/long requires atom attribute q");
+  if (!atom->q_flag || !atom->mu_flag)
+    error->all(FLERR,"Pair dipole/cut requires atom attributes q and mu");
 
   neighbor->add_request(this, NeighConst::REQ_FULL);
 

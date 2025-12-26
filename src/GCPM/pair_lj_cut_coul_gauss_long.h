@@ -41,13 +41,16 @@ class PairLJCutCoulGaussLong : public Pair {
   void write_data(FILE *) override;
   void write_data_all(FILE *) override;
   double single(int, int, int, int, double, double, double, double &) override;
-
+  int pack_forward_comm(int n, int *list, double *buf, int /*pbc_flag*/, int * /*pbc*/) override;
+  void unpack_forward_comm(int n, int first, double *buf) override;
   void *extract(const char *, int &) override;
 
  protected:
   void dispersion(int, int);
   void charge_charge(int, int);
   void polar(int, int);
+
+  void compute_induced_efield(double**);
 
   double cut_lj_global;
   double **cut_lj, **cut_ljsq;
@@ -64,6 +67,7 @@ class PairLJCutCoulGaussLong : public Pair {
 
   double **efield;      // per-atom electric field due to charges
   double **efield_pol;  // per-atom electric field due to induced dipoles
+  double **mu_old;      // per-atom induced dipole from previous iteration
   int nmax;
   
   virtual void allocate();
