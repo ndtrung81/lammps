@@ -1,23 +1,18 @@
-# Water box with explicit TIP4P water model, read from tip4p.mol
+# Water box with explicit TIP4P water model for use with fix rigid and  hybrid full and dipole atom styles
 
-variable t index 1000
-variable r index 1
+variable steps index 1000
+variable r     index 4
 
 units real
+atom_style hybrid full dipole
 
-atom_style full
-atom_modify map array
-region box block 0 10 0 10 0 10
-create_box 3 box
+read_data data.tip4p
+
+replicate $r $r $r
 
 mass 1 15.9994
 mass 2 1.008
 mass 3 1.0e-100
-
-molecule water tip4p.mol
-create_atoms 0 random 33 34564 NULL mol water 25367 overlap 1.33
-
-replicate $r $r $r
 
 pair_style lj/cut/coul/gauss/long 0.9 0.608 12.0
 pair_coeff 1 1 0.1550 3.1536 1.444
@@ -32,17 +27,15 @@ velocity all create 300.0 187421 mom yes rot yes
 
 timestep 0.5
 
-#fix 1 all rigid/small molecule langevin 300.0 300.0 100.0 2345634
+fix 1 all rigid/small molecule langevin 300.0 300.0 100.0 2345634
+#fix 1 all rigid/nvt/small molecule temp 300.0 300.0 100.0
 
-fix 1 all rigid/nvt/small molecule temp 300.0 300.0 100.0
+thermo_style custom step temp pe etotal ecoul etotal density press
+thermo 100
 
-compute cc1 all chunk/atom molecule
-compute dipole all dipole/chunk cc1
-
-thermo_style custom step temp press ecoul etotal density pe ke
-thermo 1000
-
-dump 1 all custom 100  dump.txt id mol type q x y z
+dump 1 all custom 100 dump.txt id mol type q x y z mux muy muz
 dump_modify 1 sort id
 
-run $t
+run ${steps}
+
+write_dump all custom final.dump id mol type q x y z mux muy muz modify sort id
