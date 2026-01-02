@@ -42,7 +42,8 @@ using namespace LAMMPS_NS;
 using namespace MathConst;
 using namespace EwaldConst;
 
-#define EPSILON 1.0e-6
+#define EPSILON 1.0e-2
+//#define GCPM_DEBUG
 
 /* ---------------------------------------------------------------------- */
 
@@ -50,6 +51,7 @@ PairLJCutCoulGaussLong::PairLJCutCoulGaussLong(LAMMPS *lmp) : Pair(lmp)
 {
   ewaldflag = pppmflag = 1;
   respa_enable = 1;
+  single_enable = 0;
   writedata = 1;
   ftable = nullptr;
   qdist = 0.0;
@@ -76,6 +78,7 @@ PairLJCutCoulGaussLong::~PairLJCutCoulGaussLong()
     memory->destroy(cut_lj);
     memory->destroy(cut_ljsq);
     memory->destroy(alpha_pol);
+    memory->destroy(sigmaM);
     memory->destroy(epsilon);
     memory->destroy(sigma);
     memory->destroy(lj1);
@@ -376,7 +379,7 @@ void PairLJCutCoulGaussLong::polar(int eflag, int vflag)
   numneigh = list->numneigh;
   firstneigh = list->firstneigh;
 
-  int maxiter = 10;
+  int maxiter = 20;
 
   // estimate the initial induced dipoles of the molecules from the electrical fields E = E_q + E_p
   // see Eq. 3 in Paricaud et al. with E_p = 0 for the first iteration
@@ -391,18 +394,14 @@ void PairLJCutCoulGaussLong::polar(int eflag, int vflag)
     // NOTE: using mu[i][3] != 0.0 to indicate a polarizable atom (e.g. the M site of the TIP4P model)
 
     if (mu[i][3] != 0.0) {
-      efield_pol[i][0] = alpha_pol[itype][itype] * efield[i][0];
-      efield_pol[i][1] = alpha_pol[itype][itype] * efield[i][1];
-      efield_pol[i][2] = alpha_pol[itype][itype] * efield[i][2];
-      
-      mu[i][0] = efield_pol[i][0];
-      mu[i][1] = efield_pol[i][1];
-      mu[i][2] = efield_pol[i][2];
+      mu[i][0] = alpha_pol[itype][itype] * efield[i][0];
+      mu[i][1] = alpha_pol[itype][itype] * efield[i][1];
+      mu[i][2] = alpha_pol[itype][itype] * efield[i][2];
+
       mu_old[i][0] = mu[i][0];
       mu_old[i][1] = mu[i][1];
       mu_old[i][2] = mu[i][2];
     }
-    
   }
 
   for (int iter = 0; iter < maxiter; iter++) {
@@ -441,13 +440,20 @@ void PairLJCutCoulGaussLong::polar(int eflag, int vflag)
 
     int converged = 1;
     int all_converged = 0;
+    double diff, diff_norm = 0.0;
     for (ii = 0; ii < inum; ii++) {
       i = ilist[ii];
       itype = type[i];
       if (mu[i][3] != 0.0) {
+        double norm_old = sqrt(mu_old[i][0]*mu_old[i][0] + mu_old[i][1]*mu_old[i][1] + mu_old[i][2]*mu_old[i][2]);
+        double norm_new = sqrt(mu[i][0]*mu[i][0] + mu[i][1]*mu[i][1] + mu[i][2]*mu[i][2]);
+        diff_norm = MAX(fabs(norm_old - norm_new), diff_norm);
+
         if (fabs(mu_old[i][0] - mu[i][0]) > EPSILON ||
             fabs(mu_old[i][1] - mu[i][1]) > EPSILON ||
             fabs(mu_old[i][2] - mu[i][2]) > EPSILON ) {
+          diff = MAX(fabs(mu_old[i][0] - mu[i][0]), fabs(mu_old[i][1] - mu[i][1]));
+          diff = MAX(diff, fabs(mu_old[i][2] - mu[i][2]));
           converged = 0;
           break;
         }
@@ -455,7 +461,18 @@ void PairLJCutCoulGaussLong::polar(int eflag, int vflag)
     }
 
     MPI_Allreduce(&converged, &all_converged, 1, MPI_INT, MPI_MIN, world);
-    if (all_converged) break;
+    if (all_converged)
+      break;
+ 
+    #ifdef GCPM_DEBUG
+    double diff_all, diff_norm_all;
+    MPI_Allreduce(&diff, &diff_all, 1, MPI_DOUBLE, MPI_MAX, world);
+    MPI_Allreduce(&diff_norm, &diff_norm_all, 1, MPI_DOUBLE, MPI_MAX, world);
+    diff = diff_all;
+    diff_norm = diff_norm_all;
+    if (comm->me == 0)
+      printf("iter = %d: induced dipoles component diff = %f; norm diff = %f \n", iter+1, diff, diff_norm);
+    #endif
 
     // store the current induced dipoles to mu_old for the next iteration
     for (ii = 0; ii < inum; ii++) {
@@ -474,6 +491,55 @@ void PairLJCutCoulGaussLong::polar(int eflag, int vflag)
   // note: need to project the torques from charge-induced dipole interactions
   // to forces on atoms in each molecule
 
+  for (ii = 0; ii < inum; ii++) {
+    i = ilist[ii];
+    qtmp = q[i];
+    xtmp = x[i][0];
+    ytmp = x[i][1];
+    ztmp = x[i][2];
+    itype = type[i];
+    jlist = firstneigh[i];
+    jnum = numneigh[i];
+
+    for (jj = 0; jj < jnum; jj++) {
+      j = jlist[jj];
+      factor_lj = special_lj[sbmask(j)];
+      factor_coul = special_coul[sbmask(j)];
+      j &= NEIGHMASK;
+
+      delx = xtmp - x[j][0];
+      dely = ytmp - x[j][1];
+      delz = ztmp - x[j][2];
+      rsq = delx*delx + dely*dely + delz*delz;
+      jtype = type[j];
+
+      if (rsq < cutsq[itype][jtype]) {
+        r2inv = 1.0/rsq;
+        r = sqrt(rsq);
+
+        // compute force and torque from charge-induced dipole interactions
+        // to be added to the forces from charge-charge interactions
+
+        // charge-dipole interactions
+
+        if (q[i] != 0 && mu[j][3] != 0.0) {
+          
+        }
+
+        // dipole-charge interactions
+
+        if (mu[i][3] != 0.0 && q[j] != 0.0) {
+          
+        }
+
+        // dipole-dipole interactions
+
+        if (mu[i][3] != 0.0 && mu[j][3] != 0.0) {
+          
+        }
+      }
+    }
+  }
 }
 
 /* ---------------------------------------------------------------------- */
@@ -518,12 +584,13 @@ void PairLJCutCoulGaussLong::compute_induced_efield(double **efield_pol)
 {
   int i,ii,j,jj,inum,jnum,itype,jtype;
   double xtmp,ytmp,ztmp,delx,dely,delz;
-  double r,r2inv,r6inv,efieldx,efieldy,efieldz;
+  double r,r2inv,r6inv,ex,ey,ez,r3inv;
   int *ilist,*jlist,*numneigh,**firstneigh;
 
   double rsq;
 
   double **x = atom->x;
+  double **mu = atom->mu;
   int *type = atom->type;
   int nlocal = atom->nlocal;
   double *special_coul = force->special_coul;
@@ -538,6 +605,9 @@ void PairLJCutCoulGaussLong::compute_induced_efield(double **efield_pol)
 
   for (ii = 0; ii < inum; ii++) {
     i = ilist[ii];
+
+    if (mu[i][3] == 0.0) continue;  // skip non-polarizable atoms
+
     xtmp = x[i][0];
     ytmp = x[i][1];
     ztmp = x[i][2];
@@ -545,7 +615,8 @@ void PairLJCutCoulGaussLong::compute_induced_efield(double **efield_pol)
     jlist = firstneigh[i];
     jnum = numneigh[i];
 
-    efield_pol[i][0] = efield_pol[i][1] = efield_pol[i][2] = 0.0;
+    double ex, ey, ez;
+    ex = ey = ez = 0.0;
 
     for (jj = 0; jj < jnum; jj++) {
       j = jlist[jj];
@@ -557,16 +628,51 @@ void PairLJCutCoulGaussLong::compute_induced_efield(double **efield_pol)
       rsq = delx*delx + dely*dely + delz*delz;
       jtype = type[j];
 
+      if (mu[j][3] == 0.0) continue;  // skip non-polarizable atoms
+
       if (rsq < cutsq[itype][jtype]) {
         r2inv = 1.0/rsq;
         r = sqrt(rsq);
+        r3inv = 1.0/rsq/r;
+
+        double sigmaM_ij = sigmaM[itype][jtype];
+        double sigmaM_ij2 = sigmaM_ij * sigmaM_ij;
+        double sigmaM_ij3 = sigmaM_ij2 * sigmaM_ij;
 
         // compute efield components from induced dipole on atom j
+        double _erf = erf(r / sigmaM_ij);
+        double expmsq = exp(- r * r / 4.0 / sigmaM_ij2);
+        double rdivsigmaM = r / MY_PIS / sigmaM_ij;
+        double f = _erf - (rdivsigmaM + rdivsigmaM * rsq / sigmaM_ij2 / 6.0) * expmsq;
+        double g = _erf - rdivsigmaM * expmsq;
+        double Tij[3][3];
+
+        // calculate the Tij tensor components (Eq. 6 in Paricaud et al.)
+        f *= 3.0 * r2inv;
+        Tij[0][0] = r3inv * (f * delx * delx - g);
+        Tij[0][1] = r3inv * f * delx * dely;
+        Tij[0][2] = r3inv * f * delx * delz;
+
+        Tij[1][0] = r3inv * f * dely * delx;
+        Tij[1][1] = r3inv * (f * dely * dely  - g);
+        Tij[1][2] = r3inv * f * dely * delz;
+
+        Tij[2][0] = r3inv * f * delz * delx;
+        Tij[2][1] = r3inv * f * delz * dely;
+        Tij[2][2] = r3inv * (f * delz * delz - g);
 
         // accumulate efield on atom i due to dipole on atom j
+        // Eq. 5  in Paricaud et al.: E = T * mu_j
 
+        ex += Tij[0][0] * mu[j][0] + Tij[0][1] * mu[j][1] + Tij[0][2] * mu[j][2];
+        ey += Tij[1][0] * mu[j][0] + Tij[1][1] * mu[j][1] + Tij[1][2] * mu[j][2];
+        ez += Tij[2][0] * mu[j][0] + Tij[2][1] * mu[j][1] + Tij[2][2] * mu[j][2];
       }
     }
+
+    efield_pol[i][0] = ex;
+    efield_pol[i][1] = ey;
+    efield_pol[i][2] = ez;
   }
 }
 
@@ -591,6 +697,7 @@ void PairLJCutCoulGaussLong::allocate()
   memory->create(sigma,n+1,n+1,"pair:sigma");
   memory->create(epsilon,n+1,n+1,"pair:epsilon");
   memory->create(alpha_pol,n+1,n+1,"pair:alpha_pol");
+  memory->create(sigmaM,n+1,n+1,"pair:sigmaM");
   memory->create(lj1,n+1,n+1,"pair:lj1");
   memory->create(lj2,n+1,n+1,"pair:lj2");
   memory->create(lj3,n+1,n+1,"pair:lj3");
@@ -628,7 +735,7 @@ void PairLJCutCoulGaussLong::settings(int narg, char **arg)
 
 void PairLJCutCoulGaussLong::coeff(int narg, char **arg)
 {
-  if (narg < 5 || narg > 6)
+  if (narg < 6 || narg > 7)
     error->all(FLERR,"Incorrect args for pair coefficients" + utils::errorurl(21));
   if (!allocated) allocate();
 
@@ -639,9 +746,10 @@ void PairLJCutCoulGaussLong::coeff(int narg, char **arg)
   double epsilon_one = utils::numeric(FLERR,arg[2],false,lmp);
   double sigma_one = utils::numeric(FLERR,arg[3],false,lmp);
   double alpha_pol_one = utils::numeric(FLERR,arg[4],false,lmp);
+  double sigmaM_one = utils::numeric(FLERR,arg[5],false,lmp);
 
   double cut_lj_one = cut_lj_global;
-  if (narg == 6) cut_lj_one = utils::numeric(FLERR,arg[5],false,lmp);
+  if (narg == 7) cut_lj_one = utils::numeric(FLERR,arg[6],false,lmp);
 
   int count = 0;
   for (int i = ilo; i <= ihi; i++) {
@@ -649,6 +757,7 @@ void PairLJCutCoulGaussLong::coeff(int narg, char **arg)
       epsilon[i][j] = epsilon_one;
       sigma[i][j] = sigma_one;
       alpha_pol[i][j] = alpha_pol_one;
+      sigmaM[i][j] = sigmaM_one;
       cut_lj[i][j] = cut_lj_one;
       setflag[i][j] = 1;
       count++;
@@ -665,7 +774,10 @@ void PairLJCutCoulGaussLong::coeff(int narg, char **arg)
 void PairLJCutCoulGaussLong::init_style()
 {
   if (!atom->q_flag || !atom->mu_flag)
-    error->all(FLERR,"Pair dipole/cut requires atom attributes q and mu");
+    error->all(FLERR,"Pair lj/cut/coul/gauss/long requires atom attributes q and mu");
+
+  // request full neighbor list so that the electric field on each polarizable atom
+  // can be computed without having to accumulate from neighboring procs
 
   neighbor->add_request(this, NeighConst::REQ_FULL);
 
@@ -707,6 +819,7 @@ double PairLJCutCoulGaussLong::init_one(int i, int j)
                                sigma[i][i],sigma[j][j]);
     sigma[i][j] = mix_distance(sigma[i][i],sigma[j][j]);
     alpha_pol[i][j] = mix_distance(alpha_pol[i][i],alpha_pol[j][j]);
+    sigmaM[i][j] = mix_distance(sigmaM[i][i],sigmaM[j][j]);
     cut_lj[i][j] = mix_distance(cut_lj[i][i],cut_lj[j][j]);
   }
 
@@ -782,6 +895,8 @@ void PairLJCutCoulGaussLong::write_restart(FILE *fp)
       if (setflag[i][j]) {
         fwrite(&epsilon[i][j],sizeof(double),1,fp);
         fwrite(&sigma[i][j],sizeof(double),1,fp);
+        fwrite(&alpha_pol[i][j],sizeof(double),1,fp);
+        fwrite(&sigmaM[i][j],sizeof(double),1,fp);
         fwrite(&cut_lj[i][j],sizeof(double),1,fp);
       }
     }
@@ -807,10 +922,14 @@ void PairLJCutCoulGaussLong::read_restart(FILE *fp)
         if (me == 0) {
           utils::sfread(FLERR,&epsilon[i][j],sizeof(double),1,fp,nullptr,error);
           utils::sfread(FLERR,&sigma[i][j],sizeof(double),1,fp,nullptr,error);
+          utils::sfread(FLERR,&alpha_pol[i][j],sizeof(double),1,fp,nullptr,error);
+          utils::sfread(FLERR,&sigmaM[i][j],sizeof(double),1,fp,nullptr,error);
           utils::sfread(FLERR,&cut_lj[i][j],sizeof(double),1,fp,nullptr,error);
         }
         MPI_Bcast(&epsilon[i][j],1,MPI_DOUBLE,0,world);
         MPI_Bcast(&sigma[i][j],1,MPI_DOUBLE,0,world);
+        MPI_Bcast(&alpha_pol[i][j],1,MPI_DOUBLE,0,world);
+        MPI_Bcast(&sigmaM[i][j],1,MPI_DOUBLE,0,world);
         MPI_Bcast(&cut_lj[i][j],1,MPI_DOUBLE,0,world);
       }
     }
@@ -881,73 +1000,6 @@ void PairLJCutCoulGaussLong::write_data_all(FILE *fp)
   for (int i = 1; i <= atom->ntypes; i++)
     for (int j = i; j <= atom->ntypes; j++)
       fprintf(fp,"%d %d %g %g %g\n",i,j,epsilon[i][j],sigma[i][j],cut_lj[i][j]);
-}
-
-/* ---------------------------------------------------------------------- */
-
-double PairLJCutCoulGaussLong::single(int i, int j, int itype, int jtype,
-                                 double rsq,
-                                 double factor_coul, double factor_lj,
-                                 double &fforce)
-{
-  double r2inv,r6inv,r,grij,expm2,t,erfc,prefactor;
-  double forcecoul,forcelj,phicoul,philj;
-  double rcu,rqu,sme,smf;
-  double erfa,expa,arg,falpha,ealpha;
-  double erf;
-
-  r2inv = 1.0/rsq;
-  if (rsq < cut_coulsq) {
-    // long range - real space
-    grij = g_ewald * r;
-    expm2 = MathSpecial::expmsq(grij);
-    erf = 1 - (MathSpecial::my_erfcx(grij) * expm2);
-
-    // gaussian for 1/r alpha_ij contribution
-    arg = alpha*r;
-    expa = MathSpecial::expmsq(arg);
-    erfa = 1 - (MathSpecial::my_erfcx(arg) * expa);
-
-    prefactor = force->qqrd2e*atom->q[i]*atom->q[j]/r;
-    falpha = erfa - EWALD_F*arg*expa;
-    forcecoul = prefactor * (falpha - erf + EWALD_F*grij*expm2);
-    if (factor_coul < 1.0) forcecoul -= (1.0-factor_coul)*prefactor*falpha;
-
-    // (q*q/r) * (gauss(alpha_ij) - gauss(alpha_long)
-    ealpha = prefactor * (erfa-erf);
-    // smoothing term - NOTE: ingnored in special_bonds correction
-    // since likely rsmooth_sq_c >> d(special)
-    if (rsq > rsmooth_sq_c) {
-      rcu = r*rsq;
-      rqu = rsq*rsq;
-      sme = c5_c*rqu*r + c4_c*rqu + c3_c*rcu + c2_c*rsq + c1_c*r + c0_c;
-      smf = 5.0*c5_c*rqu + 4.0*c4_c*rcu + 3.0*c3_c*rsq + 2.0*c2_c*r + c1_c;
-      forcecoul = forcecoul*sme - ealpha*smf*r;
-      ealpha *= sme;
-    }
-  } else forcecoul = 0.0;
-
-  if (rsq < cut_ljsq[itype][jtype]) {
-    r6inv = r2inv*r2inv*r2inv;
-    forcelj = r6inv * (lj1[itype][jtype]*r6inv - lj2[itype][jtype]);
-  } else forcelj = 0.0;
-
-  fforce = (forcecoul + factor_lj*forcelj) * r2inv;
-
-  double eng = 0.0;
-  if (rsq < cut_coulsq) {
-    phicoul = prefactor*erfc;
-    if (factor_coul < 1.0) phicoul -= (1.0-factor_coul)*prefactor;
-    eng += phicoul;
-  }
-
-  if (rsq < cut_ljsq[itype][jtype]) {
-    philj = r6inv*(lj3[itype][jtype]*r6inv-lj4[itype][jtype]) -
-      offset[itype][jtype];
-    eng += factor_lj*philj;
-  }
-
-  return eng;
 }
 
 /* ---------------------------------------------------------------------- */

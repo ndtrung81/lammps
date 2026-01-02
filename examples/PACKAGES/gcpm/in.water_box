@@ -10,14 +10,14 @@ read_data data.tip4p
 
 replicate $r $r $r
 
-mass 1 15.9994
-mass 2 1.008
-mass 3 1.0e-100
+mass 1 15.9994   # O
+mass 2 1.008     # H
+mass 3 1.0e-100  # site M
 
 pair_style lj/cut/coul/gauss/long 0.9 0.608 12.0
-pair_coeff 1 1 0.1550 3.1536 1.444
-pair_coeff 2 2 0.0    1.0    0.0
-pair_coeff 3 3 0.0    1.0    0.0
+pair_coeff 1 1 0.1550 3.1536 0.0   0.000
+pair_coeff 2 2 0.0    1.0    0.0   0.455
+pair_coeff 3 3 0.0    1.0    1.444 0.610
 
 kspace_style pppm 0.0001
 

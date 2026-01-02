@@ -40,7 +40,6 @@ class PairLJCutCoulGaussLong : public Pair {
   void read_restart_settings(FILE *) override;
   void write_data(FILE *) override;
   void write_data_all(FILE *) override;
-  double single(int, int, int, int, double, double, double, double &) override;
   int pack_forward_comm(int n, int *list, double *buf, int /*pbc_flag*/, int * /*pbc*/) override;
   void unpack_forward_comm(int n, int first, double *buf) override;
   void *extract(const char *, int &) override;
@@ -57,7 +56,8 @@ class PairLJCutCoulGaussLong : public Pair {
   double cut_coul, cut_coulsq;
   double **epsilon, **sigma;
   double **lj1, **lj2, **lj3, **lj4, **offset;
-  double **alpha_pol;  // polarizability for each type pair
+  double **alpha_pol;   // polarizability for each type pair
+  double **sigmaM;      // charge spreading width for each type pair
   double *cut_respa;
   double qdist;    // TIP4P distance from O site to negative charge
   double g_ewald;
