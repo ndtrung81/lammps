@@ -42,7 +42,7 @@ using namespace LAMMPS_NS;
 using namespace MathConst;
 using namespace EwaldConst;
 
-#define EPSILON 1.0e-2
+#define EPSILON 1.0e-5
 //#define GCPM_DEBUG
 
 /* ---------------------------------------------------------------------- */
@@ -54,16 +54,17 @@ PairLJCutCoulGaussLong::PairLJCutCoulGaussLong(LAMMPS *lmp) : Pair(lmp)
   single_enable = 0;
   writedata = 1;
   ftable = nullptr;
-  qdist = 0.0;
   cut_respa = nullptr;
+  qdist = 0.0; // TIP4P distance from O site to negative charge
 
+  enable_polar = 1;
   efield = nullptr;
   efield_pol = nullptr;
   mu_old = nullptr;
   nmax = 0;
-
   maxiter = 20;
   tol = EPSILON;
+
 
   comm_forward = 4;
 }
@@ -122,7 +123,7 @@ void PairLJCutCoulGaussLong::compute(int eflag, int vflag)
 
   // polar interactions
 
-  polar(eflag, vflag);
+  if (enable_polar) polar(eflag, vflag);
 
   if (vflag_fdotr) virial_fdotr_compute();
 }
@@ -399,9 +400,9 @@ void PairLJCutCoulGaussLong::polar(int eflag, int vflag)
     // NOTE: using mu[i][3] != 0.0 to indicate a polarizable atom (e.g. the M site of the TIP4P model)
 
     if (mu[i][3] != 0.0) {
-      mu[i][0] = alpha_pol[itype][itype] * efield[i][0];
-      mu[i][1] = alpha_pol[itype][itype] * efield[i][1];
-      mu[i][2] = alpha_pol[itype][itype] * efield[i][2];
+      mu[i][0] = alpha_pol[itype][itype] * efield[i][0] / MY_4PI;
+      mu[i][1] = alpha_pol[itype][itype] * efield[i][1] / MY_4PI;
+      mu[i][2] = alpha_pol[itype][itype] * efield[i][2] / MY_4PI;
 
       mu_old[i][0] = mu[i][0];
       mu_old[i][1] = mu[i][1];
@@ -414,7 +415,7 @@ void PairLJCutCoulGaussLong::polar(int eflag, int vflag)
     // compute the electrical field on each molecule due to the induced dipoles E_p
     // see Eqs. 5-7 in Paricaud et al.
 
-    compute_induced_efield(efield_pol);
+    compute_induced_efield();
 
     // update the induced dipoles of the molecules from the electrical fields E = E_q + E_p
     // see Eq. 3 in Paricaud et al.
@@ -429,9 +430,9 @@ void PairLJCutCoulGaussLong::polar(int eflag, int vflag)
       //       so we keep mu[i][3] untouched here
 
       if (mu[i][3] != 0.0) {
-        mu[i][0] = alpha_pol[itype][itype] * (efield[i][0] + efield_pol[i][0]);
-        mu[i][1] = alpha_pol[itype][itype] * (efield[i][1] + efield_pol[i][1]);
-        mu[i][2] = alpha_pol[itype][itype] * (efield[i][2] + efield_pol[i][2]);
+        mu[i][0] = alpha_pol[itype][itype] * (efield[i][0] + efield_pol[i][0]) / MY_4PI;
+        mu[i][1] = alpha_pol[itype][itype] * (efield[i][1] + efield_pol[i][1]) / MY_4PI;
+        mu[i][2] = alpha_pol[itype][itype] * (efield[i][2] + efield_pol[i][2]) / MY_4PI;
       }
       
     }
@@ -448,7 +449,6 @@ void PairLJCutCoulGaussLong::polar(int eflag, int vflag)
     double diff, diff_norm = 0.0;
     for (ii = 0; ii < inum; ii++) {
       i = ilist[ii];
-      itype = type[i];
       if (mu[i][3] != 0.0) {
         double norm_old = sqrt(mu_old[i][0]*mu_old[i][0] + mu_old[i][1]*mu_old[i][1] + mu_old[i][2]*mu_old[i][2]);
         double norm_new = sqrt(mu[i][0]*mu[i][0] + mu[i][1]*mu[i][1] + mu[i][2]*mu[i][2]);
@@ -604,14 +604,15 @@ void PairLJCutCoulGaussLong::unpack_forward_comm(int n, int first, double *buf)
    allocate all arrays
 ------------------------------------------------------------------------- */
 
-void PairLJCutCoulGaussLong::compute_induced_efield(double **efield_pol)
+void PairLJCutCoulGaussLong::compute_induced_efield()
 {
   int i,ii,j,jj,inum,jnum,itype,jtype;
   double xtmp,ytmp,ztmp,delx,dely,delz;
-  double r,r2inv,r6inv,ex,ey,ez,r3inv;
+  double rsq,r,r2inv,r6inv,ex,ey,ez,r3inv;
   int *ilist,*jlist,*numneigh,**firstneigh;
-
-  double rsq;
+  double sigmaM_ij,sigmaM_ij2,sigmaM_ij3;
+  double _erf,expmsq,rdivsigmaM,f,g;
+  double Tij[3][3];
 
   double **x = atom->x;
   double **mu = atom->mu;
@@ -659,19 +660,20 @@ void PairLJCutCoulGaussLong::compute_induced_efield(double **efield_pol)
         r = sqrt(rsq);
         r3inv = 1.0/rsq/r;
 
-        double sigmaM_ij = sigmaM[itype][jtype];
-        double sigmaM_ij2 = sigmaM_ij * sigmaM_ij;
-        double sigmaM_ij3 = sigmaM_ij2 * sigmaM_ij;
+        sigmaM_ij = sigmaM[itype][jtype];
+        sigmaM_ij2 = sigmaM_ij * sigmaM_ij;
+        sigmaM_ij3 = sigmaM_ij2 * sigmaM_ij;
 
         // compute efield components from induced dipole on atom j
-        double _erf = erf(r / sigmaM_ij);
-        double expmsq = exp(- r * r / 4.0 / sigmaM_ij2);
-        double rdivsigmaM = r / MY_PIS / sigmaM_ij;
-        double f = _erf - (rdivsigmaM + rdivsigmaM * rsq / sigmaM_ij2 / 6.0) * expmsq;
-        double g = _erf - rdivsigmaM * expmsq;
-        double Tij[3][3];
+
+        _erf = erf(r / sigmaM_ij);
+        expmsq = exp(- r * r / 4.0 / sigmaM_ij2);
+        rdivsigmaM = r / MY_PIS / sigmaM_ij;
+        f = _erf - (rdivsigmaM + rdivsigmaM * rsq / sigmaM_ij2 / 6.0) * expmsq;
+        g = _erf - rdivsigmaM * expmsq;
 
         // calculate the Tij tensor components (Eq. 6 in Paricaud et al.)
+
         f *= 3.0 * r2inv;
         Tij[0][0] = r3inv * (f * delx * delx - g);
         Tij[0][1] = r3inv * f * delx * dely;
@@ -797,8 +799,11 @@ void PairLJCutCoulGaussLong::coeff(int narg, char **arg)
 
 void PairLJCutCoulGaussLong::init_style()
 {
-  if (!atom->q_flag || !atom->mu_flag || !atom->torque_flag)
-    error->all(FLERR,"Pair lj/cut/coul/gauss/long requires atom attributes q, mu and torque");
+  if (!atom->q_flag)
+    error->all(FLERR,"Pair lj/cut/coul/gauss/long requires atom attributes q");
+
+  if (enable_polar && (!atom->mu_flag || !atom->torque_flag))
+    error->all(FLERR,"Pair lj/cut/coul/gauss/long requires atom attributes mu and torque for polarizable simulations");
 
   // request full neighbor list so that the electric field on each polarizable atom
   // can be computed without having to accumulate from neighboring procs

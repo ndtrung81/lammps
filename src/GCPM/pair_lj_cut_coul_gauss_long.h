@@ -49,7 +49,7 @@ class PairLJCutCoulGaussLong : public Pair {
   void charge_charge(int, int);
   void polar(int, int);
 
-  void compute_induced_efield(double**);
+  void compute_induced_efield();
 
   double cut_lj_global;
   double **cut_lj, **cut_ljsq;
@@ -59,9 +59,8 @@ class PairLJCutCoulGaussLong : public Pair {
   double **alpha_pol;   // polarizability for each type pair
   double **sigmaM;      // charge spreading width for each type pair
   double *cut_respa;
-  double qdist;    // TIP4P distance from O site to negative charge
   double g_ewald;
-
+  double qdist;  // TIP4P distance from O site to negative charge
   double coul_smooth, alpha;
   double c0_c, c1_c, c2_c, c3_c, c4_c, c5_c, rsmooth_sq_c;
 
@@ -71,7 +70,8 @@ class PairLJCutCoulGaussLong : public Pair {
   int nmax;
   int maxiter;          // maximum number of induced dipole iterations
   double tol;           // convergence tolerance for induced dipole iterations
-  
+  int enable_polar;     // 1 = polarization calculation enabled, 0 otherwise
+
   virtual void allocate();
 };
 
