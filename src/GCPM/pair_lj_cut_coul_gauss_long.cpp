@@ -350,18 +350,13 @@ void PairLJCutCoulGaussLong::polar(int eflag, int vflag)
 {
   int i,ii,j,jj,inum,jnum,itype,jtype,itable;
   double qtmp,xtmp,ytmp,ztmp,delx,dely,delz,evdwl,ecoul,fpair;
-  double rinv,r2inv,r6inv,forcecoul,forcelj,factor_coul,factor_lj;
-  double fq,grij,expm2,prefactor,t,erfc;
-  int *ilist,*jlist,*numneigh,**firstneigh;
-
+  double rsq,rinv,r2inv,r6inv,forcecoul,forcelj,factor_coul,factor_lj;
+  double fq,grij,expm2,prefactor,t,erfc,erf;
   double rcu,rqu,sme,smf;
   double erfa,expa,arg,falpha,ealpha;
-  double erf;
-
-  double rsq;
+  int *ilist,*jlist,*numneigh,**firstneigh;
 
   evdwl = ecoul = 0.0;
-  ev_init(eflag,vflag);
 
   double **x = atom->x;
   double **f = atom->f;
@@ -488,9 +483,9 @@ void PairLJCutCoulGaussLong::polar(int eflag, int vflag)
     }
   }
 
-  // compute atom forces and polar energy (Eq. 9 in Paricaud et al.)
-  // note: need to project the torques from charge-induced dipole interactions
-  // to forces on atoms in each molecule
+  // after induced dipoles converge, compute atom forces and polar energy
+  // according to Eq. 9 in Paricaud et al.
+  // Note: assume that the polarizable atom carries the torque exerted on the molecule.
 
   fq = factor_coul * qqrd2e;
 
