@@ -316,6 +316,7 @@ void PairLJCutCoulGaussLong::charge_charge(int eflag, int vflag)
 
         } else {
           forcecoul = 0.0;
+          efield_i = 0.0;
         }
 
         fpair = forcecoul * r2inv;
