@@ -69,6 +69,8 @@ class PairLJCutCoulGaussLong : public Pair {
   double **efield_pol;  // per-atom electric field due to induced dipoles
   double **mu_old;      // per-atom induced dipole from previous iteration
   int nmax;
+  int maxiter;          // maximum number of induced dipole iterations
+  double tol;           // convergence tolerance for induced dipole iterations
   
   virtual void allocate();
 };

@@ -4,7 +4,7 @@ variable steps index 1000
 variable r     index 4
 
 units real
-atom_style hybrid full dipole
+atom_style hybrid full dipole sphere
 
 read_data data.tip4p
 

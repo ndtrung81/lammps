@@ -62,6 +62,9 @@ PairLJCutCoulGaussLong::PairLJCutCoulGaussLong(LAMMPS *lmp) : Pair(lmp)
   mu_old = nullptr;
   nmax = 0;
 
+  maxiter = 20;
+  tol = EPSILON;
+
   comm_forward = 4;
 }
 
@@ -220,7 +223,7 @@ void PairLJCutCoulGaussLong::charge_charge(int eflag, int vflag)
 
   double rcu,rqu,sme,smf;
   double erfa,expa,arg,falpha,ealpha;
-  double erf;
+  double erf,prefactorE,ealphaE;
   double rsq;
 
   ecoul = 0.0;
@@ -287,8 +290,14 @@ void PairLJCutCoulGaussLong::charge_charge(int eflag, int vflag)
           forcecoul = prefactor * (falpha - erf + EWALD_F*grij*expm2);
           if (factor_coul < 1.0) forcecoul -= (1.0-factor_coul)*prefactor*falpha;
 
+          prefactorE = qqrd2e*q[j]/r;
+          efield_i = prefactorE * (falpha - erf + EWALD_F*grij*expm2);
+          if (factor_coul < 1.0) efield_i -= (1.0-factor_coul)*prefactorE*falpha;
+
           // (q*q/r) * (gauss(alpha_ij) - gauss(alpha_long)
           ealpha = prefactor * (erfa-erf);
+          ealphaE = prefactorE * (erfa - erf);
+
           // smoothing term - NOTE: ingnored in special_bonds correction
           // since likely rsmooth_sq_c >> d(special)
           if (rsq > rsmooth_sq_c) {
@@ -298,11 +307,12 @@ void PairLJCutCoulGaussLong::charge_charge(int eflag, int vflag)
             smf = 5.0*c5_c*rqu + 4.0*c4_c*rcu + 3.0*c3_c*rsq + 2.0*c2_c*r + c1_c;
             forcecoul = forcecoul*sme - ealpha*smf*r;
             ealpha *= sme;
+
+            efield_i = efield_i*sme - ealphaE*smf*r;
+            ealphaE *= sme;
           }
 
-          
-          if (qtmp != 0.0) efield_i = forcecoul / qtmp * r2inv;
-          else efield_i = 0.0;
+          efield_i = efield_i * r2inv;
 
         } else {
           forcecoul = 0.0;
@@ -375,8 +385,6 @@ void PairLJCutCoulGaussLong::polar(int eflag, int vflag)
   numneigh = list->numneigh;
   firstneigh = list->firstneigh;
 
-  int maxiter = 20;
-
   // estimate the initial induced dipoles of the molecules from the electrical fields E = E_q + E_p
   // see Eq. 3 in Paricaud et al. with E_p = 0 for the first iteration
   // note that efield_i computed in charge_charge() is at individual atom level,
@@ -445,9 +453,9 @@ void PairLJCutCoulGaussLong::polar(int eflag, int vflag)
         double norm_new = sqrt(mu[i][0]*mu[i][0] + mu[i][1]*mu[i][1] + mu[i][2]*mu[i][2]);
         diff_norm = MAX(fabs(norm_old - norm_new), diff_norm);
 
-        if (fabs(mu_old[i][0] - mu[i][0]) > EPSILON ||
-            fabs(mu_old[i][1] - mu[i][1]) > EPSILON ||
-            fabs(mu_old[i][2] - mu[i][2]) > EPSILON ) {
+        if (fabs(mu_old[i][0] - mu[i][0]) > tol ||
+            fabs(mu_old[i][1] - mu[i][1]) > tol ||
+            fabs(mu_old[i][2] - mu[i][2]) > tol ) {
           diff = MAX(fabs(mu_old[i][0] - mu[i][0]), fabs(mu_old[i][1] - mu[i][1]));
           diff = MAX(diff, fabs(mu_old[i][2] - mu[i][2]));
           converged = 0;
@@ -554,6 +562,7 @@ void PairLJCutCoulGaussLong::polar(int eflag, int vflag)
     torque[i][1] += fq*tiycoul;
     torque[i][2] += fq*tizcoul;
   }
+    
 }
 
 /* ---------------------------------------------------------------------- */
@@ -787,8 +796,8 @@ void PairLJCutCoulGaussLong::coeff(int narg, char **arg)
 
 void PairLJCutCoulGaussLong::init_style()
 {
-  if (!atom->q_flag || !atom->mu_flag)
-    error->all(FLERR,"Pair lj/cut/coul/gauss/long requires atom attributes q and mu");
+  if (!atom->q_flag || !atom->mu_flag || !atom->torque_flag)
+    error->all(FLERR,"Pair lj/cut/coul/gauss/long requires atom attributes q, mu and torque");
 
   // request full neighbor list so that the electric field on each polarizable atom
   // can be computed without having to accumulate from neighboring procs
