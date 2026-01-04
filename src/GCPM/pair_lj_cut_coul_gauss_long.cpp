@@ -350,8 +350,8 @@ void PairLJCutCoulGaussLong::polar(int eflag, int vflag)
 {
   int i,ii,j,jj,inum,jnum,itype,jtype,itable;
   double qtmp,xtmp,ytmp,ztmp,delx,dely,delz,evdwl,ecoul,fpair;
-  double r,r2inv,r6inv,forcecoul,forcelj,factor_coul,factor_lj;
-  double grij,expm2,prefactor,t,erfc;
+  double rinv,r2inv,r6inv,forcecoul,forcelj,factor_coul,factor_lj;
+  double fq,grij,expm2,prefactor,t,erfc;
   int *ilist,*jlist,*numneigh,**firstneigh;
 
   double rcu,rqu,sme,smf;
@@ -367,6 +367,7 @@ void PairLJCutCoulGaussLong::polar(int eflag, int vflag)
   double **f = atom->f;
   double *q = atom->q;
   double **mu = atom->mu;
+  double **torque = atom->torque;
   int *type = atom->type;
   int nlocal = atom->nlocal;
   double *special_coul = force->special_coul;
@@ -491,6 +492,8 @@ void PairLJCutCoulGaussLong::polar(int eflag, int vflag)
   // note: need to project the torques from charge-induced dipole interactions
   // to forces on atoms in each molecule
 
+  fq = factor_coul * qqrd2e;
+
   for (ii = 0; ii < inum; ii++) {
     i = ilist[ii];
     qtmp = q[i];
@@ -500,6 +503,17 @@ void PairLJCutCoulGaussLong::polar(int eflag, int vflag)
     itype = type[i];
     jlist = firstneigh[i];
     jnum = numneigh[i];
+
+    // According to Eq. 9 in Paricaud et al., the polar interaction energy
+    // only includes dipole charge interactions, that is, between mu_i and
+    // E_q on atom i due to charges on other atoms
+    // TODO: need to use the efield_i value already computed in charge_charge()
+    // instead of iterating over q[j] as in the loop below.
+    
+    double forcecoulx, forcecouly, forcecoulz;
+    double tixcoul, tiycoul, tizcoul;
+    forcecoulx = forcecouly = forcecoulz = 0.0;
+    tixcoul = tiycoul = tizcoul = 0.0;
 
     for (jj = 0; jj < jnum; jj++) {
       j = jlist[jj];
@@ -515,30 +529,35 @@ void PairLJCutCoulGaussLong::polar(int eflag, int vflag)
 
       if (rsq < cutsq[itype][jtype]) {
         r2inv = 1.0/rsq;
-        r = sqrt(rsq);
+        rinv = sqrt(r2inv);
 
         // compute force and torque from charge-induced dipole interactions
         // to be added to the forces from charge-charge interactions
-
-        // charge-dipole interactions
-
-        if (q[i] != 0 && mu[j][3] != 0.0) {
-          
-        }
-
-        // dipole-charge interactions
+        
 
         if (mu[i][3] != 0.0 && q[j] != 0.0) {
-          
-        }
+          double r3inv = r2inv*rinv;
+          double r5inv = r3inv*r2inv;
+          double pidotr = mu[i][0]*delx + mu[i][1]*dely + mu[i][2]*delz;
+          double pre1 = 3.0*q[j]*r5inv * pidotr;
+          double pre2 = q[j]*r3inv;
 
-        // dipole-dipole interactions
-
-        if (mu[i][3] != 0.0 && mu[j][3] != 0.0) {
-          
+          forcecoulx += pre2*mu[i][0] - pre1*delx;
+          forcecouly += pre2*mu[i][1] - pre1*dely;
+          forcecoulz += pre2*mu[i][2] - pre1*delz;
+          tixcoul += pre2 * (mu[i][1]*delz - mu[i][2]*dely);
+          tiycoul += pre2 * (mu[i][2]*delx - mu[i][0]*delz);
+          tizcoul += pre2 * (mu[i][0]*dely - mu[i][1]*delx);
         }
       }
     }
+
+    f[i][0] += fq*forcecoulx;
+    f[i][1] += fq*forcecouly;
+    f[i][2] += fq*forcecoulz;
+    torque[i][0] += fq*tixcoul;
+    torque[i][1] += fq*tiycoul;
+    torque[i][2] += fq*tizcoul;
   }
 }
 
