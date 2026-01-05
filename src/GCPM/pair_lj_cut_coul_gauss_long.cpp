@@ -50,7 +50,7 @@ using namespace EwaldConst;
 PairLJCutCoulGaussLong::PairLJCutCoulGaussLong(LAMMPS *lmp) : Pair(lmp)
 {
   ewaldflag = pppmflag = 1;
-  respa_enable = 1;
+  respa_enable = 0;
   single_enable = 0;
   writedata = 1;
   ftable = nullptr;
@@ -64,7 +64,6 @@ PairLJCutCoulGaussLong::PairLJCutCoulGaussLong(LAMMPS *lmp) : Pair(lmp)
   nmax = 0;
   maxiter = 20;
   tol = EPSILON;
-
 
   comm_forward = 4;
 }
@@ -257,6 +256,8 @@ void PairLJCutCoulGaussLong::charge_charge(int eflag, int vflag)
     jlist = firstneigh[i];
     jnum = numneigh[i];
 
+    if (qtmp == 0.0) continue;
+
     efield[i][0] = efield[i][1] = efield[i][2] = 0.0;
 
     for (jj = 0; jj < jnum; jj++) {
@@ -264,6 +265,8 @@ void PairLJCutCoulGaussLong::charge_charge(int eflag, int vflag)
       factor_lj = special_lj[sbmask(j)];
       factor_coul = special_coul[sbmask(j)];
       j &= NEIGHMASK;
+
+      if (q[j] == 0.0) continue;
 
       delx = xtmp - x[j][0];
       dely = ytmp - x[j][1];
@@ -282,7 +285,8 @@ void PairLJCutCoulGaussLong::charge_charge(int eflag, int vflag)
           erf = 1 - (MathSpecial::my_erfcx(grij) * expm2);
 
           // gaussian for 1/r alpha_ij contribution
-          arg = alpha*r;
+          double alpha_ij = MY_ISQRT2 / sigmaM[itype][jtype];
+          arg = alpha * r;
           expa = MathSpecial::expmsq(arg);
           erfa = 1 - (MathSpecial::my_erfcx(arg) * expa);
 
@@ -737,13 +741,14 @@ void PairLJCutCoulGaussLong::allocate()
 
 void PairLJCutCoulGaussLong::settings(int narg, char **arg)
 {
- if (narg < 3 || narg > 4) error->all(FLERR,"Illegal pair_style command");
+ if (narg < 4 || narg > 5) error->all(FLERR,"Illegal pair_style command");
 
   coul_smooth = utils::numeric(FLERR,arg[0],false,lmp);
   alpha = utils::numeric(FLERR,arg[1],false,lmp);
-  cut_lj_global = utils::numeric(FLERR,arg[2],false,lmp);
-  if (narg == 3) cut_coul = cut_lj_global;
-  else cut_coul = utils::numeric(FLERR,arg[3],false,lmp);
+  enable_polar = utils::numeric(FLERR,arg[2],false,lmp);
+  cut_lj_global = utils::numeric(FLERR,arg[3],false,lmp);
+  if (narg == 4) cut_coul = cut_lj_global;
+  else cut_coul = utils::numeric(FLERR,arg[4],false,lmp);
 
   // reset cutoffs that have been explicitly set
 
@@ -869,6 +874,7 @@ double PairLJCutCoulGaussLong::init_one(int i, int j)
 
   cut_ljsq[j][i] = cut_ljsq[i][j];
   alpha_pol[j][i] = alpha_pol[i][j];
+  sigmaM[j][i] = sigmaM[i][j];
   lj1[j][i] = lj1[i][j];
   lj2[j][i] = lj2[i][j];
   lj3[j][i] = lj3[i][j];

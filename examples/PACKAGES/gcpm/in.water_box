@@ -14,10 +14,13 @@ mass 1 15.9994   # O
 mass 2 1.008     # H
 mass 3 1.0e-100  # site M
 
-pair_style lj/cut/coul/gauss/long 0.9 0.608 12.0
-pair_coeff 1 1 0.1550 3.1536 0.0   0.000
-pair_coeff 2 2 0.0    1.0    0.0   0.455
-pair_coeff 3 3 0.0    1.0    1.444 0.610
+# pair style parameters:          coul_smooth alpha  enable_polar cutlj [cutcoul]
+pair_style lj/cut/coul/gauss/long 0.95         0.608  1            12.0
+
+# coeffs       epsilon sigma  alpha_pol sigmaM
+pair_coeff 1 1 0.1550  3.1536 0.0       0.000
+pair_coeff 2 2 0.0     1.0    0.0       0.455
+pair_coeff 3 3 0.0     1.0    1.444     0.610
 
 kspace_style pppm 0.0001
 
@@ -31,7 +34,7 @@ fix 1 all rigid/small molecule langevin 300.0 300.0 100.0 2345634
 #fix 1 all rigid/nvt/small molecule temp 300.0 300.0 100.0
 
 #thermo_style custom step temp pe etotal ecoul etotal density press
-thermo_style custom step ke pe etotal ecoul etotal press
+thermo_style custom step ke temp pe etotal ecoul etotal press
 thermo 100
 
 dump 1 all custom 100 dump.txt id mol type q x y z mux muy muz
