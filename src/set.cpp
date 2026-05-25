@@ -1259,7 +1259,7 @@ void Set::invoke_charge(Action *action)
   int nlocal = atom->nlocal;
   double *q = atom->q;
   double *q_scaled = atom->q_scaled;
-  double *epsilon = atom->epsilon;
+  double *epsilon = atom->get_double_variable("epsilon");
 
   int varflag = action->varflag;
   double qvalue = 0.0;
@@ -1660,7 +1660,7 @@ void Set::process_epsilon(int &iarg, int narg, char **arg, Action *action)
 void Set::invoke_epsilon(Action *action)
 {
   int nlocal = atom->nlocal;
-  double *epsilon = atom->epsilon;
+  double *epsilon = atom->get_double_variable("epsilon");
   double *q = atom->q;
   double *q_scaled = atom->q_scaled;
 

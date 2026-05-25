@@ -400,7 +400,7 @@ void FixPolarizeFunctional::charge_rescaled(int scaled2real)
 {
   double *q_scaled = atom->q_scaled;
   double *q = atom->q;
-  double *epsilon = atom->epsilon;
+  double *epsilon = atom->get_double_variable("epsilon");
   int nlocal = atom->nlocal;
 
   if (scaled2real == SCALED2REAL) {
@@ -823,7 +823,7 @@ void FixPolarizeFunctional::calculate_qiRqw_cutoff()
   tagint *tag = atom->tag;
   double **x = atom->x;
   double *q = atom->q_scaled;
-  double *epsilon = atom->epsilon;
+  double *epsilon = atom->get_double_variable("epsilon");
   double *area = atom->area;
   double **norm = atom->mu;
   double *ed = atom->ed;
@@ -1032,7 +1032,7 @@ void FixPolarizeFunctional::set_dielectric_params(double ediff, double emean, do
   double *ed = atom->ed;
   double *em = atom->em;
   double *q = atom->q;
-  double *epsilon = atom->epsilon;
+  double *epsilon = atom->get_double_variable("epsilon");
   int *mask = atom->mask;
   int nlocal = atom->nlocal;
 

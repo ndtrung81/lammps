@@ -53,6 +53,8 @@ AtomVecDielectric::AtomVecDielectric(LAMMPS *_lmp) : AtomVec(_lmp)
   atom->molecule_flag = atom->q_flag = atom->mu_flag = 1;
   atom->dielectric_flag = 1;
 
+  atom->register_variable("epsilon", Atom::DOUBLE);
+
   mu_hold = nullptr;
 
   // strings with peratom variables to include in each AtomVec method
@@ -154,7 +156,7 @@ void AtomVecDielectric::grow_pointers()
   area = atom->area;
   ed = atom->ed;
   em = atom->em;
-  epsilon = atom->epsilon;
+  epsilon = atom->get_double_variable("epsilon");
   curvature = atom->curvature;
   q_scaled = atom->q_scaled;
 }

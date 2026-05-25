@@ -283,7 +283,7 @@ void MSMDielectric::fieldforce()
   double *q = atom->q_scaled;
   double **x = atom->x;
   double **f = atom->f;
-  double *eps = atom->epsilon;
+  double *eps = atom->get_double_variable("epsilon");
   int nlocal = atom->nlocal;
 
   for (i = 0; i < nlocal; i++) {

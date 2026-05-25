@@ -217,7 +217,7 @@ Atom::Atom(LAMMPS *_lmp) : Pointers(_lmp), atom_style(nullptr), avec(nullptr), a
 
   // DIELECTRIC package
 
-  area = ed = em = epsilon = curvature = q_scaled = nullptr;
+  area = ed = em = curvature = q_scaled = nullptr;
 
   // APIP package
 
@@ -570,7 +570,6 @@ void Atom::peratom_create()
   add_peratom("area",&area,DOUBLE,0);
   add_peratom("ed",&ed,DOUBLE,0);
   add_peratom("em",&em,DOUBLE,0);
-  add_peratom("epsilon",&epsilon,DOUBLE,0);
   add_peratom("curvature",&curvature,DOUBLE,0);
   add_peratom("q_scaled",&q_scaled,DOUBLE,0);
 
@@ -636,6 +635,54 @@ void Atom::add_peratom_vary(const std::string &name, void *address,
 {
   PerAtom item = {name, address, length, cols, datatype, -1, collength, 0};
   peratom.push_back(item);
+}
+
+/* ----------------------------------------------------------------------
+   register a per-atom variable owned by an AtomVec subclass
+   must be called before setup_fields() so the name is in atom->peratom
+------------------------------------------------------------------------- */
+
+void Atom::register_variable(const std::string &name, int datatype, int cols)
+{
+  // flag convention matches add_custom: 0=int, 1=double
+  int flag = (datatype == DOUBLE) ? 1 : 0;
+  int index = add_custom(name.c_str(), flag, cols, 0, false);
+
+  if (datatype == DOUBLE && cols == 0)
+    add_peratom(name, &dvector[index], DOUBLE, 0);
+  else if (datatype == DOUBLE && cols > 0)
+    add_peratom(name, &darray[index], DOUBLE, cols);
+  else if (datatype == INT && cols == 0)
+    add_peratom(name, &ivector[index], INT, 0);
+  else
+    error->all(FLERR, "register_variable: unsupported datatype/cols for {}", name);
+}
+
+double *Atom::get_double_variable(const std::string &name)
+{
+  int flag, cols;
+  int index = find_custom(name.c_str(), flag, cols);
+  if (index < 0 || flag != 1 || cols != 0)
+    error->all(FLERR, "Per-atom double scalar variable {} not found", name);
+  return dvector[index];
+}
+
+double **Atom::get_double2_variable(const std::string &name)
+{
+  int flag, cols;
+  int index = find_custom(name.c_str(), flag, cols);
+  if (index < 0 || flag != 1 || cols == 0)
+    error->all(FLERR, "Per-atom double array variable {} not found", name);
+  return darray[index];
+}
+
+int *Atom::get_int_variable(const std::string &name)
+{
+  int flag, cols;
+  int index = find_custom(name.c_str(), flag, cols);
+  if (index < 0 || flag != 0 || cols != 0)
+    error->all(FLERR, "Per-atom int scalar variable {} not found", name);
+  return ivector[index];
 }
 
 /* ----------------------------------------------------------------------
@@ -2829,7 +2876,7 @@ This function is called, e.g. from :doc:`fix property/atom <fix_property_atom>`.
  * \param ghost Whether property is communicated to ghost atoms: 0 for no, 1 for yes
  * \return index of property in the respective list of properties
  */
-int Atom::add_custom(const char *name, int flag, int cols, int ghost)
+int Atom::add_custom(const char *name, int flag, int cols, int ghost, bool allocate)
 {
   int index = -1;
 
@@ -2841,7 +2888,8 @@ int Atom::add_custom(const char *name, int flag, int cols, int ghost)
     ivghost = (int *) memory->srealloc(ivghost,nivector*sizeof(int),"atom:ivghost");
     ivghost[index] = ghost;
     ivector = (int **) memory->srealloc(ivector,nivector*sizeof(int *),"atom:ivector");
-    memory->create(ivector[index],nmax,"atom:ivector");
+    if (allocate) memory->create(ivector[index],nmax,"atom:ivector");
+    else ivector[index] = nullptr;
 
   } else if ((flag == 1) && (cols == 0)) {
     index = ndvector;
@@ -2851,7 +2899,8 @@ int Atom::add_custom(const char *name, int flag, int cols, int ghost)
     dvghost = (int *) memory->srealloc(dvghost,ndvector*sizeof(int),"atom:dvghost");
     dvghost[index] = ghost;
     dvector = (double **) memory->srealloc(dvector,ndvector*sizeof(double *),"atom:dvector");
-    memory->create(dvector[index],nmax,"atom:dvector");
+    if (allocate) memory->create(dvector[index],nmax,"atom:dvector");
+    else dvector[index] = nullptr;
 
   } else if ((flag == 0) && (cols > 0)) {
     index = niarray;
@@ -2861,7 +2910,8 @@ int Atom::add_custom(const char *name, int flag, int cols, int ghost)
     iaghost = (int *) memory->srealloc(iaghost,niarray*sizeof(int),"atom:iaghost");
     iaghost[index] = ghost;
     iarray = (int ***) memory->srealloc(iarray,niarray*sizeof(int **),"atom:iarray");
-    memory->create(iarray[index],nmax,cols,"atom:iarray");
+    if (allocate) memory->create(iarray[index],nmax,cols,"atom:iarray");
+    else iarray[index] = nullptr;
     icols = (int *) memory->srealloc(icols,niarray*sizeof(int),"atom:icols");
     icols[index] = cols;
 
@@ -2873,7 +2923,8 @@ int Atom::add_custom(const char *name, int flag, int cols, int ghost)
     daghost = (int *) memory->srealloc(daghost,ndarray*sizeof(int),"atom:daghost");
     daghost[index] = ghost;
     darray = (double ***) memory->srealloc(darray,ndarray*sizeof(double **),"atom:darray");
-    memory->create(darray[index],nmax,cols,"atom:darray");
+    if (allocate) memory->create(darray[index],nmax,cols,"atom:darray");
+    else darray[index] = nullptr;
     dcols = (int *) memory->srealloc(dcols,ndarray*sizeof(int),"atom:dcols");
     dcols[index] = cols;
   }
@@ -3188,7 +3239,7 @@ void *Atom::extract(const char *name)
   if (strcmp(name,"area") == 0) return (void *) area;
   if (strcmp(name,"ed") == 0) return (void *) ed;
   if (strcmp(name,"em") == 0) return (void *) em;
-  if (strcmp(name,"epsilon") == 0) return (void *) epsilon;
+  if (strcmp(name,"epsilon") == 0) return (void *) get_double_variable("epsilon");
   if (strcmp(name,"curvature") == 0) return (void *) curvature;
   if (strcmp(name,"q_scaled") == 0) return (void *) q_scaled;
 

@@ -527,7 +527,7 @@ void PPPMDispDielectric::compute(int eflag, int vflag)
 
 void PPPMDispDielectric::compute_ave_epsilon()
 {
-  const double * const epsilon = atom->epsilon;
+  const double * const epsilon = atom->get_double_variable("epsilon");
   const int nlocal = atom->nlocal;
   double epsilon_local(0.0);
 
@@ -550,7 +550,7 @@ void PPPMDispDielectric::compute_ave_epsilon()
 void PPPMDispDielectric::qsum_qsq(int warning_flag)
 {
   const double * const q = atom->q;
-  const double * const epsilon = atom->epsilon;
+  const double * const epsilon = atom->get_double_variable("epsilon");
   const int nlocal = atom->nlocal;
   double qsum_local(0.0), qsqsum_local(0.0), qsqsume_local(0.0);
   double qsqsume;
@@ -661,7 +661,7 @@ void PPPMDispDielectric::fieldforce_c_ik()
   double *q = atom->q;
   double **x = atom->x;
   double **f = atom->f;
-  double *eps = atom->epsilon;
+  double *eps = atom->get_double_variable("epsilon");
   int nlocal = atom->nlocal;
 
   for (i = 0; i < nlocal; i++) {
@@ -879,7 +879,7 @@ void PPPMDispDielectric::slabcorr(int /*eflag*/)
 
   double *q = atom->q;
   double **x = atom->x;
-  double *eps = atom->epsilon;
+  double *eps = atom->get_double_variable("epsilon");
   double zprd_slab = domain->zprd*slab_volfactor;
   int nlocal = atom->nlocal;
 

@@ -252,7 +252,7 @@ void FixPolarizeBEMICC::compute_induced_charges()
   double *area = atom->area;
   double *ed = atom->ed;
   double *em = atom->em;
-  double *epsilon = atom->epsilon;
+  double *epsilon = atom->get_double_variable("epsilon");
   int *mask = atom->mask;
   int nlocal = atom->nlocal;
   int itr;
@@ -458,7 +458,7 @@ void FixPolarizeBEMICC::set_dielectric_params(double ediff, double emean, double
   double *em = atom->em;
   double *q = atom->q;
   double *q_scaled = atom->q_scaled;
-  double *epsilon = atom->epsilon;
+  double *epsilon = atom->get_double_variable("epsilon");
   int *mask = atom->mask;
   int nlocal = atom->nlocal;
 

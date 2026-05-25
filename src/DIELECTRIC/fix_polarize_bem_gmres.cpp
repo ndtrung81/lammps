@@ -348,7 +348,7 @@ void FixPolarizeBEMGMRES::compute_induced_charges()
   double *area = atom->area;
   double *ed = atom->ed;
   double *em = atom->em;
-  double *epsilon = atom->epsilon;
+  double *epsilon = atom->get_double_variable("epsilon");
   int nlocal = atom->nlocal;
 
   // flag that we only need to compute the global energy
@@ -622,7 +622,7 @@ void FixPolarizeBEMGMRES::apply_operator(double *w, double *Aw, int /*n*/)
   double *area = atom->area;
   double *ed = atom->ed;
   double *em = atom->em;
-  double *epsilon = atom->epsilon;
+  double *epsilon = atom->get_double_variable("epsilon");
   int nlocal = atom->nlocal;
   int eflag = 1;
   int vflag = 0;
@@ -691,7 +691,7 @@ void FixPolarizeBEMGMRES::update_residual(double *w, double *r, int /*n*/)
   double *area = atom->area;
   double *ed = atom->ed;
   double *em = atom->em;
-  double *epsilon = atom->epsilon;
+  double *epsilon = atom->get_double_variable("epsilon");
   int nlocal = atom->nlocal;
   int eflag = 1;
   int vflag = 0;
@@ -963,7 +963,7 @@ void FixPolarizeBEMGMRES::set_dielectric_params(double ediff, double emean, doub
   double *ed = atom->ed;
   double *em = atom->em;
   double *q = atom->q;
-  double *epsilon = atom->epsilon;
+  double *epsilon = atom->get_double_variable("epsilon");
   int *mask = atom->mask;
   int nlocal = atom->nlocal;
 

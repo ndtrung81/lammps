@@ -175,7 +175,7 @@ class Atom : protected Pointers {
 
   // DIELECTRIC package
 
-  double *area, *ed, *em, *epsilon, *curvature, *q_scaled;
+  double *area, *ed, *em, *curvature, *q_scaled;
 
   // APIP package
 
@@ -250,7 +250,7 @@ class Atom : protected Pointers {
 
   std::vector<PerAtom> peratom;
 
-  // custom vectors and arrays used by fix property/atom
+  // custom vectors and arrays used by fix property/atom and register_variable
 
   int **ivector, ***iarray;
   double **dvector, ***darray;
@@ -325,6 +325,10 @@ class Atom : protected Pointers {
   void add_peratom(const std::string &, void *, int, int, int threadflag = 0);
   void add_peratom_change_columns(const std::string &, int);
   void add_peratom_vary(const std::string &, void *, int, int *, void *, int collength = 0);
+  void register_variable(const std::string &, int datatype, int cols = 0);
+  double  *get_double_variable(const std::string &);
+  double **get_double2_variable(const std::string &);
+  int     *get_int_variable(const std::string &);
   void create_avec(const std::string &, int, char **, int);
   virtual AtomVec *new_avec(const std::string &, int, int &);
 
@@ -381,7 +385,7 @@ class Atom : protected Pointers {
 
   int find_custom(const char *, int &, int &);
   int find_custom_ghost(const char *, int &, int &, int &);
-  virtual int add_custom(const char *, int, int, int ghost = 0);
+  virtual int add_custom(const char *, int, int, int ghost = 0, bool allocate = true);
   virtual void remove_custom(int, int, int);
 
   void *extract(const char *);

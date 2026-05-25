@@ -74,7 +74,7 @@ void PairCoulLongDielectric::compute(int eflag, int vflag)
   double **x = atom->x;
   double **f = atom->f;
   double *q = atom->q_scaled;
-  double *eps = atom->epsilon;
+  double *eps = atom->get_double_variable("epsilon");
   double **norm = atom->mu;
   double *curvature = atom->curvature;
   double *area = atom->area;

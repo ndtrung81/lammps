@@ -82,7 +82,7 @@ void PairLJCutCoulLongDielectric::compute(int eflag, int vflag)
   double **x = atom->x;
   double **f = atom->f;
   double *q = atom->q_scaled;
-  double *eps = atom->epsilon;
+  double *eps = atom->get_double_variable("epsilon");
   double **norm = atom->mu;
   double *curvature = atom->curvature;
   double *area = atom->area;
@@ -253,7 +253,7 @@ double PairLJCutCoulLongDielectric::single(int i, int j, int itype, int jtype, d
   double fraction, table, forcecoul, forcelj, phicoul, philj;
   int itable;
   double *q = atom->q_scaled;
-  double *eps = atom->epsilon;
+  double *eps = atom->get_double_variable("epsilon");
 
   r2inv = 1.0 / rsq;
   if (rsq < cut_coulsq) {
