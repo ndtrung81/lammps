@@ -368,6 +368,30 @@ int AtomKokkos::add_custom(const char *name, int flag, int cols, int ghost, bool
     else darray[index] = nullptr;
     dcols = (int *) memory->srealloc(dcols, ndarray * sizeof(int), "atom:dcols");
     dcols[index] = cols;
+
+  } else if (flag == 2 && cols == 0) {
+    index = nbvector;
+    nbvector++;
+    bvname = (char **) memory->srealloc(bvname, nbvector * sizeof(char *), "atom:bvname");
+    bvname[index] = utils::strdup(name);
+    bvghost = (int *) memory->srealloc(bvghost, nbvector * sizeof(int), "atom:bvghost");
+    bvghost[index] = ghost;
+    bvector = (bigint **) memory->srealloc(bvector, nbvector * sizeof(bigint *), "atom:bvector");
+    if (allocate) memory->create(bvector[index], nmax, "atom:bvector");
+    else bvector[index] = nullptr;
+
+  } else if (flag == 2 && cols) {
+    index = nbarray;
+    nbarray++;
+    baname = (char **) memory->srealloc(baname, nbarray * sizeof(char *), "atom:baname");
+    baname[index] = utils::strdup(name);
+    baghost = (int *) memory->srealloc(baghost, nbarray * sizeof(int), "atom:baghost");
+    baghost[index] = ghost;
+    barray = (bigint ***) memory->srealloc(barray, nbarray * sizeof(bigint **), "atom:barray");
+    if (allocate) memory->create(barray[index], nmax, cols, "atom:barray");
+    else barray[index] = nullptr;
+    bcols = (int *) memory->srealloc(bcols, nbarray * sizeof(int), "atom:bcols");
+    bcols[index] = cols;
   }
 
   if (index < 0)
@@ -406,6 +430,18 @@ void AtomKokkos::remove_custom(int index, int flag, int cols)
     darray[index] = nullptr;
     delete[] daname[index];
     daname[index] = nullptr;
+
+  } else if (flag == 2 && cols == 0) {
+    memory->destroy(bvector[index]);
+    bvector[index] = nullptr;
+    delete[] bvname[index];
+    bvname[index] = nullptr;
+
+  } else if (flag == 2 && cols) {
+    memory->destroy(barray[index]);
+    barray[index] = nullptr;
+    delete[] baname[index];
+    baname[index] = nullptr;
   }
 }
 

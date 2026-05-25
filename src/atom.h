@@ -254,10 +254,14 @@ class Atom : protected Pointers {
 
   int **ivector, ***iarray;
   double **dvector, ***darray;
-  int *icols, *dcols;
+  bigint **bvector, ***barray;
+  int *icols, *dcols, *bcols;
   char **ivname, **dvname, **ianame, **daname;
+  char **bvname, **baname;
   int nivector, ndvector, niarray, ndarray;
+  int nbvector, nbarray;
   int *ivghost, *dvghost, *iaghost, *daghost;
+  int *bvghost, *baghost;
 
   // molecule templates
   // each template can be a set of consecutive molecules
@@ -329,6 +333,7 @@ class Atom : protected Pointers {
   double  *get_double_variable(const std::string &);
   double **get_double2_variable(const std::string &);
   int     *get_int_variable(const std::string &);
+  bigint  *get_bigint_variable(const std::string &);
   void create_avec(const std::string &, int, char **, int);
   virtual AtomVec *new_avec(const std::string &, int, int &);
 

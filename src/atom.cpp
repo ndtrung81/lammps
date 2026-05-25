@@ -241,13 +241,18 @@ Atom::Atom(LAMMPS *_lmp) : Pointers(_lmp), atom_style(nullptr), avec(nullptr), a
   // custom atom arrays
 
   nivector = ndvector = niarray = ndarray = 0;
+  nbvector = nbarray = 0;
   ivector = nullptr;
   dvector = nullptr;
   iarray = nullptr;
   darray = nullptr;
-  icols = dcols = nullptr;
+  bvector = nullptr;
+  barray = nullptr;
+  icols = dcols = bcols = nullptr;
   ivname = dvname = ianame = daname = nullptr;
+  bvname = baname = nullptr;
   ivghost = dvghost = iaghost = daghost = nullptr;
+  bvghost = baghost = nullptr;
 
   // initialize atom style and array existence flags
 
@@ -336,21 +341,36 @@ Atom::~Atom()
     delete[] daname[i];
     memory->destroy(darray[i]);
   }
+  for (int i = 0; i < nbvector; i++) {
+    delete[] bvname[i];
+    memory->destroy(bvector[i]);
+  }
+  for (int i = 0; i < nbarray; i++) {
+    delete[] baname[i];
+    memory->destroy(barray[i]);
+  }
 
   memory->sfree(ivname);
   memory->sfree(dvname);
   memory->sfree(ianame);
   memory->sfree(daname);
+  memory->sfree(bvname);
+  memory->sfree(baname);
   memory->sfree(ivector);
   memory->sfree(dvector);
   memory->sfree(iarray);
   memory->sfree(darray);
+  memory->sfree(bvector);
+  memory->sfree(barray);
   memory->sfree(icols);
   memory->sfree(dcols);
+  memory->sfree(bcols);
   memory->destroy(ivghost);
   memory->destroy(dvghost);
   memory->destroy(iaghost);
   memory->destroy(daghost);
+  memory->destroy(bvghost);
+  memory->destroy(baghost);
 
   // delete user-defined molecules
 
@@ -640,12 +660,15 @@ void Atom::add_peratom_vary(const std::string &name, void *address,
 /* ----------------------------------------------------------------------
    register a per-atom variable owned by an AtomVec subclass
    must be called before setup_fields() so the name is in atom->peratom
+   add_custom() with allocate = false meaning register only to store
+     the field metadata. Memory is allocated later by AtomVec::grow()
+     on the first nmax expansion
 ------------------------------------------------------------------------- */
 
 void Atom::register_variable(const std::string &name, int datatype, int cols)
 {
-  // flag convention matches add_custom: 0=int, 1=double
-  int flag = (datatype == DOUBLE) ? 1 : 0;
+  // flag convention matches add_custom: 0=int, 1=double, 2=bigint
+  int flag = (datatype == DOUBLE) ? 1 : (datatype == BIGINT) ? 2 : 0;
   int index = add_custom(name.c_str(), flag, cols, 0, false);
 
   if (datatype == DOUBLE && cols == 0)
@@ -654,6 +677,12 @@ void Atom::register_variable(const std::string &name, int datatype, int cols)
     add_peratom(name, &darray[index], DOUBLE, cols);
   else if (datatype == INT && cols == 0)
     add_peratom(name, &ivector[index], INT, 0);
+  else if (datatype == INT && cols > 0)
+    add_peratom(name, &iarray[index], INT, cols);
+  else if (datatype == BIGINT && cols == 0)
+    add_peratom(name, &bvector[index], BIGINT, 0);
+  else if (datatype == BIGINT && cols > 0)
+    add_peratom(name, &barray[index], BIGINT, cols);
   else
     error->all(FLERR, "register_variable: unsupported datatype/cols for {}", name);
 }
@@ -683,6 +712,15 @@ int *Atom::get_int_variable(const std::string &name)
   if (index < 0 || flag != 0 || cols != 0)
     error->all(FLERR, "Per-atom int scalar variable {} not found", name);
   return ivector[index];
+}
+
+bigint *Atom::get_bigint_variable(const std::string &name)
+{
+  int flag, cols;
+  int index = find_custom(name.c_str(), flag, cols);
+  if (index < 0 || flag != 2 || cols != 0)
+    error->all(FLERR, "Per-atom bigint scalar variable {} not found", name);
+  return bvector[index];
 }
 
 /* ----------------------------------------------------------------------
@@ -2832,6 +2870,20 @@ int Atom::find_custom(const char *name, int &flag, int &cols)
       return i;
     }
 
+  for (int i = 0; i < nbvector; i++)
+    if (bvname[i] && strcmp(bvname[i],name) == 0) {
+      flag = 2;
+      cols = 0;
+      return i;
+    }
+
+  for (int i = 0; i < nbarray; i++)
+    if (baname[i] && strcmp(baname[i],name) == 0) {
+      flag = 2;
+      cols = bcols[i];
+      return i;
+    }
+
   return -1;
 }
 
@@ -2927,6 +2979,30 @@ int Atom::add_custom(const char *name, int flag, int cols, int ghost, bool alloc
     else darray[index] = nullptr;
     dcols = (int *) memory->srealloc(dcols,ndarray*sizeof(int),"atom:dcols");
     dcols[index] = cols;
+
+  } else if ((flag == 2) && (cols == 0)) {
+    index = nbvector;
+    nbvector++;
+    bvname = (char **) memory->srealloc(bvname,nbvector*sizeof(char *),"atom:bvname");
+    bvname[index] = utils::strdup(name);
+    bvghost = (int *) memory->srealloc(bvghost,nbvector*sizeof(int),"atom:bvghost");
+    bvghost[index] = ghost;
+    bvector = (bigint **) memory->srealloc(bvector,nbvector*sizeof(bigint *),"atom:bvector");
+    if (allocate) memory->create(bvector[index],nmax,"atom:bvector");
+    else bvector[index] = nullptr;
+
+  } else if ((flag == 2) && (cols > 0)) {
+    index = nbarray;
+    nbarray++;
+    baname = (char **) memory->srealloc(baname,nbarray*sizeof(char *),"atom:baname");
+    baname[index] = utils::strdup(name);
+    baghost = (int *) memory->srealloc(baghost,nbarray*sizeof(int),"atom:baghost");
+    baghost[index] = ghost;
+    barray = (bigint ***) memory->srealloc(barray,nbarray*sizeof(bigint **),"atom:barray");
+    if (allocate) memory->create(barray[index],nmax,cols,"atom:barray");
+    else barray[index] = nullptr;
+    bcols = (int *) memory->srealloc(bcols,nbarray*sizeof(int),"atom:bcols");
+    bcols[index] = cols;
   }
 
   if (index < 0)
@@ -2973,6 +3049,18 @@ void Atom::remove_custom(int index, int flag, int cols)
     darray[index] = nullptr;
     delete[] daname[index];
     daname[index] = nullptr;
+
+  } else if (flag == 2 && cols == 0) {
+    memory->destroy(bvector[index]);
+    bvector[index] = nullptr;
+    delete[] bvname[index];
+    bvname[index] = nullptr;
+
+  } else if (flag == 2 && cols) {
+    memory->destroy(barray[index]);
+    barray[index] = nullptr;
+    delete[] baname[index];
+    baname[index] = nullptr;
   }
 }
 
