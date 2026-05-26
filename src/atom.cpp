@@ -2356,6 +2356,12 @@ void Atom::add_molecule_atom(Molecule *onemol, int iatom, int ilocal, tagint off
     if (daname[i])
       for (int j = 0; j < dcols[i]; ++j)
         darray[i][ilocal][j] = 0.0;
+  for (int i = 0; i < nbvector; ++i)
+    if (bvname[i]) bvector[i][ilocal] = 0;
+  for (int i = 0; i < nbarray; ++i)
+    if (baname[i])
+      for (int j = 0; j < bcols[i]; ++j)
+        barray[i][ilocal][j] = 0;
 
   if (molecular != Atom::MOLECULAR) return;
 
@@ -2912,6 +2918,8 @@ int Atom::find_custom_ghost(const char *name, int &flag, int &cols, int &ghost)
   else if ((flag == 1) && (cols == 0)) ghost = dvghost[i];
   else if ((flag == 0) && (cols > 0)) ghost = iaghost[i];
   else if ((flag == 1) && (cols > 0)) ghost = daghost[i];
+  else if ((flag == 2) && (cols == 0)) ghost = bvghost[i];
+  else if ((flag == 2) && (cols > 0)) ghost = baghost[i];
   return i;
 }
 
