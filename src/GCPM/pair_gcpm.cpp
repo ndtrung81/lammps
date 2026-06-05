@@ -22,9 +22,11 @@
      A   = 6*eps*exp(gamma)/(gamma-6)
      rho = sigma/gamma  (i.e. buck2 = 1/rho = gamma/sigma)
      C6  = gamma*eps*sigma^6/(gamma-6)
+   Coulomb interactions are computed with Gaussian charge smearing and
+    long-range k-space summation.
 ------------------------------------------------------------------------- */
 
-#include "pair_buck6_coul_gauss_long.h"
+#include "pair_gcpm.h"
 
 #include "atom.h"
 #include "comm.h"
@@ -52,7 +54,7 @@ using namespace EwaldConst;
 
 /* ---------------------------------------------------------------------- */
 
-PairBuck6CoulGaussLong::PairBuck6CoulGaussLong(LAMMPS *lmp) : Pair(lmp)
+PairGCPM::PairGCPM(LAMMPS *lmp) : Pair(lmp)
 {
   ewaldflag = pppmflag = 1;
   respa_enable = 0;
@@ -70,12 +72,15 @@ PairBuck6CoulGaussLong::PairBuck6CoulGaussLong(LAMMPS *lmp) : Pair(lmp)
   maxiter = 20;
   tol = EPSILON;
 
+  // set comm size needed by this Pair
+
   comm_forward = 4;
+  comm_reverse = 3;
 }
 
 /* ---------------------------------------------------------------------- */
 
-PairBuck6CoulGaussLong::~PairBuck6CoulGaussLong()
+PairGCPM::~PairGCPM()
 {
   if (copymode) return;
 
@@ -104,7 +109,7 @@ PairBuck6CoulGaussLong::~PairBuck6CoulGaussLong()
 
 /* ---------------------------------------------------------------------- */
 
-void PairBuck6CoulGaussLong::compute(int eflag, int vflag)
+void PairGCPM::compute(int eflag, int vflag)
 {
   ev_init(eflag, vflag);
 
@@ -138,7 +143,7 @@ void PairBuck6CoulGaussLong::compute(int eflag, int vflag)
    where buck1=A, buck2=gamma/sigma, buck3=C6 (precomputed in init_one)
 ------------------------------------------------------------------------- */
 
-void PairBuck6CoulGaussLong::dispersion(int eflag, int /*vflag*/)
+void PairGCPM::dispersion(int eflag, int /*vflag*/)
 {
   int i,ii,j,jj,inum,jnum,itype,jtype;
   double xtmp,ytmp,ztmp,delx,dely,delz,evdwl,fpair;
@@ -212,10 +217,11 @@ void PairBuck6CoulGaussLong::dispersion(int eflag, int /*vflag*/)
 }
 
 /* ----------------------------------------------------------------------
-   charge-charge interactions
+   charge-charge interactions between 2 Gaussian charge distributions
+   (Eq. 4 in Paricaud et al.)
 ------------------------------------------------------------------------- */
 
-void PairBuck6CoulGaussLong::charge_charge(int eflag, int /*vflag*/)
+void PairGCPM::charge_charge(int eflag, int /*vflag*/)
 {
   int i,ii,j,jj,inum,jnum,itype,jtype;
   double qtmp,xtmp,ytmp,ztmp,delx,dely,delz,ecoul,fpair;
@@ -345,10 +351,10 @@ void PairBuck6CoulGaussLong::charge_charge(int eflag, int /*vflag*/)
 }
 
 /* ----------------------------------------------------------------------
-   polar interactions: iterative solver for induced dipoles (Eqs. 3-9)
+   polar interactions: iterative solver for induced dipoles (Eqs. 3 and 5)
 ------------------------------------------------------------------------- */
 
-void PairBuck6CoulGaussLong::polar(int eflag, int vflag)
+void PairGCPM::polar(int eflag, int vflag)
 {
   int i,ii,j,jj,inum,jnum,itype,jtype;
   double qtmp,xtmp,ytmp,ztmp,delx,dely,delz,ecoul;
@@ -390,7 +396,15 @@ void PairBuck6CoulGaussLong::polar(int eflag, int vflag)
 
   for (int iter = 0; iter < maxiter; iter++) {
 
+    // Eq. (5): compute E_p from current dipole estimates, then update dipoles from total field
+
     compute_induced_efield();
+
+    // communicate and sum per-atom induced efield
+
+    if (newton_pair) comm->reverse_comm(this);
+
+    // Eq. (3): p_i = alpha_i * (E_q_i + E_p_i)
 
     for (ii = 0; ii < inum; ii++) {
       i = ilist[ii];
@@ -402,7 +416,11 @@ void PairBuck6CoulGaussLong::polar(int eflag, int vflag)
       }
     }
 
+    // communicate updated dipoles for next iteration of induced field calculation
+
     comm->forward_comm(this);
+
+    // check for convergence of dipoles: max change in any component of any dipole < tol
 
     int converged = 1, all_converged = 0;
     double diff = 0.0;
@@ -516,7 +534,7 @@ void PairBuck6CoulGaussLong::polar(int eflag, int vflag)
 
 /* ---------------------------------------------------------------------- */
 
-int PairBuck6CoulGaussLong::pack_forward_comm(int n, int *list, double *buf,
+int PairGCPM::pack_forward_comm(int n, int *list, double *buf,
   int /*pbc_flag*/, int * /*pbc*/)
 {
   int i,j,m;
@@ -534,7 +552,7 @@ int PairBuck6CoulGaussLong::pack_forward_comm(int n, int *list, double *buf,
 
 /* ---------------------------------------------------------------------- */
 
-void PairBuck6CoulGaussLong::unpack_forward_comm(int n, int first, double *buf)
+void PairGCPM::unpack_forward_comm(int n, int first, double *buf)
 {
   int i,m,last;
   double **mu = atom->mu;
@@ -550,7 +568,41 @@ void PairBuck6CoulGaussLong::unpack_forward_comm(int n, int first, double *buf)
 
 /* ---------------------------------------------------------------------- */
 
-void PairBuck6CoulGaussLong::compute_induced_efield()
+int PairGCPM::pack_reverse_comm(int n, int first, double *buf)
+{
+  int i,m,last;
+
+  m = 0;
+  last = first + n;
+  for (i = first; i < last; i++) {
+    buf[m++] = efield_pol[i][0];
+    buf[m++] = efield_pol[i][1];
+    buf[m++] = efield_pol[i][2];
+  }
+  return m;
+}
+
+/* ---------------------------------------------------------------------- */
+
+void PairGCPM::unpack_reverse_comm(int n, int *list, double *buf)
+{
+  int i,j,m;
+
+  m = 0;
+  for (i = 0; i < n; i++) {
+    j = list[i];
+    efield_pol[j][0] += buf[m++];
+    efield_pol[j][1] += buf[m++];
+    efield_pol[j][2] += buf[m++];
+  }
+}
+
+/* ----------------------------------------------------------------------
+   compute induced electric field (Eq. 5) using current dipole estimates
+     using Eqs. (6) and (7)
+------------------------------------------------------------------------- */
+
+void PairGCPM::compute_induced_efield()
 {
   int i,ii,j,jj,inum,jnum,itype,jtype;
   double xtmp,ytmp,ztmp,delx,dely,delz;
@@ -606,11 +658,15 @@ void PairBuck6CoulGaussLong::compute_induced_efield()
         sigmaM_ij2 = sigmaM_ij * sigmaM_ij;
         sigmaM_ij3 = sigmaM_ij2 * sigmaM_ij;
 
-        _erf = erf(r / (2.0 * sigmaM_ij));          // Eq. (7): erf(r/(2*sigma_M))
+        // Eq. (7): T_ij = f(r)*r^-5*r_ij*r_ij - g(r)*r^-3*I
+
+        _erf = erf(r / (2.0 * sigmaM_ij));          // erf(r/(2*sigma_M))
         expmsq = exp(-r * r / 4.0 / sigmaM_ij2);    // exp(-r^2/(4*sigma_M^2))
-        rdivsigmaM = r / MY_PIS / sigmaM_ij;         // r/(sqrt(pi)*sigma_M)
+        rdivsigmaM = r / MY_PIS / sigmaM_ij;        // r/(sqrt(pi)*sigma_M)
         f = _erf - (rdivsigmaM + rdivsigmaM * rsq / sigmaM_ij2 / 6.0) * expmsq;
         g = _erf - rdivsigmaM * expmsq;
+
+        // Eq. (6): T_ij = 3f*r^-5*r_ij*r_ij - g*r^-3*I
 
         f *= 3.0 * r2inv;
         Tij[0][0] = r3inv * (f * delx * delx - g);
@@ -624,6 +680,8 @@ void PairBuck6CoulGaussLong::compute_induced_efield()
         Tij[2][0] = r3inv * f * delz * delx;
         Tij[2][1] = r3inv * f * delz * dely;
         Tij[2][2] = r3inv * (f * delz * delz - g);
+
+        // E_p_i = sum_j T_ij . p_j
 
         ex += Tij[0][0]*mu[j][0] + Tij[0][1]*mu[j][1] + Tij[0][2]*mu[j][2];
         ey += Tij[1][0]*mu[j][0] + Tij[1][1]*mu[j][1] + Tij[1][2]*mu[j][2];
@@ -639,7 +697,7 @@ void PairBuck6CoulGaussLong::compute_induced_efield()
 
 /* ---------------------------------------------------------------------- */
 
-void PairBuck6CoulGaussLong::allocate()
+void PairGCPM::allocate()
 {
   allocated = 1;
   int n = atom->ntypes;
@@ -666,7 +724,7 @@ void PairBuck6CoulGaussLong::allocate()
 
 /* ---------------------------------------------------------------------- */
 
-void PairBuck6CoulGaussLong::settings(int narg, char **arg)
+void PairGCPM::settings(int narg, char **arg)
 {
   if (narg < 4 || narg > 5) error->all(FLERR,"Illegal pair_style command");
 
@@ -687,7 +745,7 @@ void PairBuck6CoulGaussLong::settings(int narg, char **arg)
 
 /* ---------------------------------------------------------------------- */
 
-void PairBuck6CoulGaussLong::coeff(int narg, char **arg)
+void PairGCPM::coeff(int narg, char **arg)
 {
   // pair_coeff i j epsilon sigma gamma alpha_pol sigmaM [cut_lj]
   if (narg < 7 || narg > 8)
@@ -729,13 +787,13 @@ void PairBuck6CoulGaussLong::coeff(int narg, char **arg)
 
 /* ---------------------------------------------------------------------- */
 
-void PairBuck6CoulGaussLong::init_style()
+void PairGCPM::init_style()
 {
   if (!atom->q_flag)
-    error->all(FLERR,"Pair buck6/coul/gauss/long requires atom attribute q");
+    error->all(FLERR,"Pair gcpm requires atom attribute q");
 
   if (enable_polar && (!atom->mu_flag || !atom->torque_flag))
-    error->all(FLERR,"Pair buck6/coul/gauss/long requires atom attributes mu and torque for polarizable simulations");
+    error->all(FLERR,"Pair gcpm requires atom attributes mu and torque for polarizable simulations");
 
   neighbor->add_request(this, NeighConst::REQ_FULL);
 
@@ -764,7 +822,7 @@ void PairBuck6CoulGaussLong::init_style()
 
 /* ---------------------------------------------------------------------- */
 
-double PairBuck6CoulGaussLong::init_one(int i, int j)
+double PairGCPM::init_one(int i, int j)
 {
   if (setflag[i][j] == 0) {
     epsilon[i][j]    = mix_energy(epsilon[i][i],epsilon[j][j],sigma[i][i],sigma[j][j]);
@@ -815,7 +873,7 @@ double PairBuck6CoulGaussLong::init_one(int i, int j)
 
 /* ---------------------------------------------------------------------- */
 
-void PairBuck6CoulGaussLong::write_restart(FILE *fp)
+void PairGCPM::write_restart(FILE *fp)
 {
   write_restart_settings(fp);
   int i,j;
@@ -835,7 +893,7 @@ void PairBuck6CoulGaussLong::write_restart(FILE *fp)
 
 /* ---------------------------------------------------------------------- */
 
-void PairBuck6CoulGaussLong::read_restart(FILE *fp)
+void PairGCPM::read_restart(FILE *fp)
 {
   read_restart_settings(fp);
   allocate();
@@ -866,7 +924,7 @@ void PairBuck6CoulGaussLong::read_restart(FILE *fp)
 
 /* ---------------------------------------------------------------------- */
 
-void PairBuck6CoulGaussLong::write_restart_settings(FILE *fp)
+void PairGCPM::write_restart_settings(FILE *fp)
 {
   fwrite(&cut_lj_global,sizeof(double),1,fp);
   fwrite(&cut_coul,sizeof(double),1,fp);
@@ -879,7 +937,7 @@ void PairBuck6CoulGaussLong::write_restart_settings(FILE *fp)
 
 /* ---------------------------------------------------------------------- */
 
-void PairBuck6CoulGaussLong::read_restart_settings(FILE *fp)
+void PairGCPM::read_restart_settings(FILE *fp)
 {
   if (comm->me == 0) {
     utils::sfread(FLERR,&cut_lj_global,sizeof(double),1,fp,nullptr,error);
@@ -901,7 +959,7 @@ void PairBuck6CoulGaussLong::read_restart_settings(FILE *fp)
 
 /* ---------------------------------------------------------------------- */
 
-void PairBuck6CoulGaussLong::write_data(FILE *fp)
+void PairGCPM::write_data(FILE *fp)
 {
   for (int i = 1; i <= atom->ntypes; i++)
     fprintf(fp,"%d %g %g %g\n",i,epsilon[i][i],sigma[i][i],gamma_buck[i][i]);
@@ -909,7 +967,7 @@ void PairBuck6CoulGaussLong::write_data(FILE *fp)
 
 /* ---------------------------------------------------------------------- */
 
-void PairBuck6CoulGaussLong::write_data_all(FILE *fp)
+void PairGCPM::write_data_all(FILE *fp)
 {
   for (int i = 1; i <= atom->ntypes; i++)
     for (int j = i; j <= atom->ntypes; j++)
@@ -919,7 +977,7 @@ void PairBuck6CoulGaussLong::write_data_all(FILE *fp)
 
 /* ---------------------------------------------------------------------- */
 
-void *PairBuck6CoulGaussLong::extract(const char *str, int &dim)
+void *PairGCPM::extract(const char *str, int &dim)
 {
   dim = 0;
   if (strcmp(str,"cut_coul") == 0) return (void *) &cut_coul;

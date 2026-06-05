@@ -1,0 +1,154 @@
+LAMMPS (30 Mar 2026 - Development - r14624-38243-g8ca023e860)
+OMP_NUM_THREADS environment is not set. Defaulting to 1 thread.
+  using 1 OpenMP thread(s) per MPI task
+# Water box with explicit TIP4P water model for use with fix rigid and  hybrid full and dipole atom styles
+
+variable steps index 1000
+variable r     index 4
+
+units real
+atom_style hybrid full dipole sphere
+WARNING: Atom style hybrid defines both, per-type and per-atom masses; both must be set, but only per-atom masses will be used (src/atom_vec_hybrid.cpp:132)
+
+read_data data.tip4p
+Reading data file ...
+  orthogonal box = (-1 -1 -1) to (2.11766 2.11766 2.11766)
+  1 by 2 by 2 MPI processor grid
+WARNING: Atom style in data file full + dipole + sphere differs from currently defined atom style hybrid (src/read_data.cpp:726)
+  reading atoms ...
+  4 atoms
+Finding 1-2 1-3 1-4 neighbors ...
+  special bond factors lj:    0        0        0       
+  special bond factors coul:  0        0        0       
+     0 = max # of 1-2 neighbors
+     0 = max # of 1-3 neighbors
+     0 = max # of 1-4 neighbors
+     1 = max # of special neighbors
+  special bonds CPU = 0.000 seconds
+  read_data CPU = 0.021 seconds
+
+replicate $r $r $r
+replicate 4 $r $r
+replicate 4 4 $r
+replicate 4 4 4
+Replication is creating a 4x4x4 = 64 times larger system...
+WARNING: Atom style hybrid defines both, per-type and per-atom masses; both must be set, but only per-atom masses will be used (src/atom_vec_hybrid.cpp:132)
+  orthogonal box = (-1 -1 -1) to (11.47064 11.47064 11.47064)
+  1 by 2 by 2 MPI processor grid
+  256 atoms
+Finding 1-2 1-3 1-4 neighbors ...
+  special bond factors lj:    0        0        0       
+  special bond factors coul:  0        0        0       
+     0 = max # of 1-2 neighbors
+     0 = max # of 1-3 neighbors
+     0 = max # of 1-4 neighbors
+     1 = max # of special neighbors
+  special bonds CPU = 0.000 seconds
+  replicate CPU = 0.002 seconds
+
+mass 1 15.9994   # O
+mass 2 1.008     # H
+mass 3 1.0e-100  # site M
+
+# pair style parameters:  coul_smooth alpha  enable_polar cutlj [cutcoul]
+pair_style gcpm           0.95         0.608  1            12.0
+
+# coeffs       epsilon sigma  gamma  alpha_pol sigmaM
+pair_coeff 1 1 0.1550  3.1536 12.75  0.0       0.000
+pair_coeff 2 2 0.0     1.0    12.75  0.0       0.455
+pair_coeff 3 3 0.0     1.0    12.75  1.444     0.610
+
+kspace_style pppm 0.0001
+
+neigh_modify exclude molecule/intra all
+
+velocity all create 300.0 187421 mom yes rot yes
+
+timestep 0.5
+
+fix 1 all rigid/small molecule langevin 300.0 300.0 100.0 2345634
+Fix rigid/small setup ...
+  create bodies CPU = 0.000 seconds
+  64 rigid bodies with 256 atoms
+  0.87347849 = max distance from body owner to body atom
+#fix 1 all rigid/nvt/small molecule temp 300.0 300.0 100.0
+
+#thermo_style custom step temp pe etotal ecoul etotal density press
+thermo_style custom step ke temp pe etotal ecoul etotal press
+thermo 100
+
+dump 1 all custom 100 dump.txt id mol type q x y z mux muy muz
+dump_modify 1 sort id
+
+run ${steps}
+run 1000
+PPPM initialization ...
+  using 12-bit tables for long-range coulomb
+  G vector (1/distance) = 0.24656652
+  grid = 8 8 8
+  stencil order = 5
+  estimated absolute RMS force accuracy = 0.0063013391
+  estimated relative force accuracy = 1.8976296e-05
+  using double precision FFTW3
+  3d grid and FFT values/proc = 1815 128
+Generated 3 of 3 mixed pair_coeff terms from geometric mixing rule
+WARNING: Neighbor exclusions used with KSpace solver may give inconsistent Coulombic energies (src/neighbor.cpp:659)
+Neighbor list info ...
+  update: every = 1 steps, delay = 0 steps, check = yes
+  max neighbors/atom: 2000, page size: 100000
+  master list distance cutoff = 14
+  ghost atom cutoff = 14
+  binsize = 7, bins = 2 2 2
+  1 neighbor lists, perpetual/occasional/extra = 1 0 0
+  (1) pair gcpm, perpetual
+      attributes: full, newton on
+      pair build: full/bin
+      stencil: full/bin/3d
+      bin: standard
+Per MPI rank memory allocation (min/avg/max) = 13.76 | 13.76 | 13.76 Mbytes
+   Step         KinEng          Temp          PotEng         TotEng         E_coul         TotEng         Press     
+         0   98.088442      522.32761     -4843.837      -4745.7486      58.001488     -4745.7486      14426.334    
+       100   656.12773      3493.9247     -5787.2673     -5131.1396     -1110.531      -5131.1396      3000.6236    
+       200   510.91531      2720.6587     -6075.1853     -5564.27       -1400.7871     -5564.27       -6503.7999    
+       300   393.41219      2094.9466     -6277.7189     -5884.3067     -1701.597      -5884.3067     -16240.333    
+       400   311.52151      1658.8732     -6412.7532     -6101.2317     -1848.4264     -6101.2317     -753.39179    
+       500   288.8212       1537.9925     -6512.3962     -6223.575      -2016.6361     -6223.575      -12280.217    
+       600   246.89633      1314.7397     -6573.5617     -6326.6654     -2125.4733     -6326.6654     -6827.9921    
+       700   187.41418      997.99322     -6644.7488     -6457.3346     -2157.8279     -6457.3346     -17287.243    
+       800   160.573        855.0621      -6705.0051     -6544.4321     -2230.719      -6544.4321     -21387.679    
+       900   169.99697      905.24541     -6721.7119     -6551.7149     -2279.6315     -6551.7149     -17994.617    
+      1000   148.04806      788.36595     -6735.3025     -6587.2544     -2302.8808     -6587.2544     -14235.705    
+Loop time of 14.7415 on 4 procs for 1000 steps with 256 atoms
+
+Performance: 2.931 ns/day, 8.190 hours/ns, 67.836 timesteps/s, 17.366 katom-step/s
+94.8% CPU use with 4 MPI tasks x 1 OpenMP threads
+
+MPI task timing breakdown:
+Section |  min time  |  avg time  |  max time  |%varavg| %total
+---------------------------------------------------------------
+Pair    | 13.615     | 13.76      | 13.888     |   2.6 | 93.34
+Bond    | 8.8694e-05 | 0.0001243  | 0.00018433 |   0.0 |  0.00
+Kspace  | 0.11416    | 0.24871    | 0.41143    |  21.3 |  1.69
+Neigh   | 0.097514   | 0.11715    | 0.12533    |   3.4 |  0.79
+Comm    | 0.26363    | 0.26549    | 0.26653    |   0.2 |  1.80
+Output  | 0.0018863  | 0.0021826  | 0.0024226  |   0.4 |  0.01
+Modify  | 0.32935    | 0.33042    | 0.3313     |   0.1 |  2.24
+Other   |            | 0.01769    |            |       |  0.12
+
+Nlocal:             64 ave          76 max          44 min
+Histogram: 1 0 0 0 0 0 1 0 1 1
+Nghost:         6410.5 ave        6699 max        6126 min
+Histogram: 1 0 0 0 1 1 0 0 0 1
+Neighs:              0 ave           0 max           0 min
+Histogram: 4 0 0 0 0 0 0 0 0 0
+FullNghs:      94779.5 ave      112951 max       65764 min
+Histogram: 1 0 0 0 0 0 1 0 1 1
+
+Total # of neighbors = 379118
+Ave neighs/atom = 1480.9297
+Ave special neighs/atom = 0
+Neighbor list builds = 30
+Dangerous builds = 0
+
+write_dump all custom final.dump id mol type q x y z mux muy muz modify sort id
+Total wall time: 0:00:14

@@ -13,22 +13,22 @@
 
 #ifdef PAIR_CLASS
 // clang-format off
-PairStyle(buck6/coul/gauss/long,PairBuck6CoulGaussLong);
+PairStyle(gcpm,PairGCPM);
 // clang-format on
 #else
 
-#ifndef LMP_PAIR_BUCK6_COUL_GAUSS_LONG_H
-#define LMP_PAIR_BUCK6_COUL_GAUSS_LONG_H
+#ifndef LMP_PAIR_GCPM_H
+#define LMP_PAIR_GCPM_H
 
 #include "pair.h"
 
 namespace LAMMPS_NS {
 
-class PairBuck6CoulGaussLong : public Pair {
+class PairGCPM : public Pair {
 
  public:
-  PairBuck6CoulGaussLong(class LAMMPS *);
-  ~PairBuck6CoulGaussLong() override;
+  PairGCPM(class LAMMPS *);
+  ~PairGCPM() override;
   void compute(int, int) override;
   void settings(int, char **) override;
   void coeff(int, char **) override;
@@ -42,6 +42,8 @@ class PairBuck6CoulGaussLong : public Pair {
   void write_data_all(FILE *) override;
   int pack_forward_comm(int n, int *list, double *buf, int /*pbc_flag*/, int * /*pbc*/) override;
   void unpack_forward_comm(int n, int first, double *buf) override;
+  int pack_reverse_comm(int, int, double *) override;
+  void unpack_reverse_comm(int, int *, double *) override;
   void *extract(const char *, int &) override;
 
  protected:
