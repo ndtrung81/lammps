@@ -78,6 +78,7 @@ class PairGCPM : public Pair {
   int maxiter;
   double tol;
   int enable_polar;
+  int comm_mode;        // 0 = reverse-comm efield, 1 = reverse-comm efield_pol
 
   virtual void allocate();
 };

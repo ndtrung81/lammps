@@ -50,6 +50,8 @@ using namespace MathConst;
 using namespace EwaldConst;
 
 #define EPSILON 1.0e-5
+
+enum {EFIELD, EFIELD_POL};
 //#define GCPM_DEBUG
 
 /* ---------------------------------------------------------------------- */
@@ -76,6 +78,7 @@ PairGCPM::PairGCPM(LAMMPS *lmp) : Pair(lmp)
 
   comm_forward = 4;
   comm_reverse = 3;
+  comm_mode = EFIELD_POL;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -132,7 +135,13 @@ void PairGCPM::compute(int eflag, int vflag)
 
   dispersion(eflag, vflag);
   charge_charge(eflag, vflag);
-  if (enable_polar) polar(eflag, vflag);
+  if (enable_polar) {
+    if (force->newton_pair) {
+      comm_mode = EFIELD;
+      comm->reverse_comm(this);
+    }
+    polar(eflag, vflag);
+  }
 
   if (vflag_fdotr) virial_fdotr_compute();
 }
@@ -232,7 +241,7 @@ void PairGCPM::charge_charge(int eflag, int /*vflag*/)
 
   double rcu,rqu,sme,smf;
   double erfa,expa,arg,falpha,ealpha;
-  double erf,prefactorE,ealphaE;
+  double erf,efield_scalar,erfalpha_scalar;
   double rsq;
 
   ecoul = 0.0;
@@ -294,12 +303,14 @@ void PairGCPM::charge_charge(int eflag, int /*vflag*/)
           forcecoul = prefactor * (falpha - erf + EWALD_F*grij*expm2);
           if (factor_coul < 1.0) forcecoul -= (1.0-factor_coul)*prefactor*falpha;
 
-          prefactorE = qqrd2e*q[j]/r;
-          efield_i = prefactorE * (falpha - erf + EWALD_F*grij*expm2);
-          if (factor_coul < 1.0) efield_i -= (1.0-factor_coul)*prefactorE*falpha;
+          // charge-independent field scalar (q[j] factored out so the Newton
+          // partner can reuse the same value with q[i] in the reverse direction)
+          double scale = qqrd2e / r;
+          efield_scalar = scale * (falpha - erf + EWALD_F*grij*expm2);
+          if (factor_coul < 1.0) efield_scalar -= (1.0-factor_coul) * scale * falpha;
+          erfalpha_scalar = scale * (erfa - erf);
 
           ealpha = prefactor * (erfa-erf);
-          ealphaE = prefactorE * (erfa - erf);
 
           if (rsq > rsmooth_sq_c) {
             rcu = r*rsq;
@@ -309,15 +320,14 @@ void PairGCPM::charge_charge(int eflag, int /*vflag*/)
             forcecoul = forcecoul*sme - ealpha*smf*r;
             ealpha *= sme;
 
-            efield_i = efield_i*sme - ealphaE*smf*r;
-            ealphaE *= sme;
+            efield_scalar = efield_scalar*sme - erfalpha_scalar*smf*r;
           }
 
-          efield_i = efield_i * r2inv;
+          efield_scalar *= r2inv;
 
         } else {
           forcecoul = 0.0;
-          efield_i = 0.0;
+          efield_scalar = 0.0;
         }
 
         fpair = forcecoul * r2inv;
@@ -326,14 +336,18 @@ void PairGCPM::charge_charge(int eflag, int /*vflag*/)
         f[i][1] += dely*fpair;
         f[i][2] += delz*fpair;
 
-        efield[i][0] += delx * efield_i;
-        efield[i][1] += dely * efield_i;
-        efield[i][2] += delz * efield_i;
+        efield[i][0] += delx * q[j] * efield_scalar;
+        efield[i][1] += dely * q[j] * efield_scalar;
+        efield[i][2] += delz * q[j] * efield_scalar;
 
         if (newton_pair || j < nlocal) {
           f[j][0] -= delx*fpair;
           f[j][1] -= dely*fpair;
           f[j][2] -= delz*fpair;
+
+          efield[j][0] -= delx * qtmp * efield_scalar;
+          efield[j][1] -= dely * qtmp * efield_scalar;
+          efield[j][2] -= delz * qtmp * efield_scalar;
         }
 
         if (eflag) {
@@ -402,7 +416,10 @@ void PairGCPM::polar(int eflag, int vflag)
 
     // communicate and sum per-atom induced efield
 
-    if (newton_pair) comm->reverse_comm(this);
+    if (newton_pair) {
+      comm_mode = EFIELD_POL;
+      comm->reverse_comm(this);
+    }
 
     // Eq. (3): p_i = alpha_i * (E_q_i + E_p_i)
 
@@ -423,7 +440,6 @@ void PairGCPM::polar(int eflag, int vflag)
     // check for convergence of dipoles: max change in any component of any dipole < tol
 
     int converged = 1, all_converged = 0;
-    double diff = 0.0;
     for (ii = 0; ii < inum; ii++) {
       i = ilist[ii];
       if (mu[i][3] != 0.0) {
@@ -571,13 +587,14 @@ void PairGCPM::unpack_forward_comm(int n, int first, double *buf)
 int PairGCPM::pack_reverse_comm(int n, int first, double *buf)
 {
   int i,m,last;
+  double **arr = (comm_mode == EFIELD) ? efield : efield_pol;
 
   m = 0;
   last = first + n;
   for (i = first; i < last; i++) {
-    buf[m++] = efield_pol[i][0];
-    buf[m++] = efield_pol[i][1];
-    buf[m++] = efield_pol[i][2];
+    buf[m++] = arr[i][0];
+    buf[m++] = arr[i][1];
+    buf[m++] = arr[i][2];
   }
   return m;
 }
@@ -587,13 +604,14 @@ int PairGCPM::pack_reverse_comm(int n, int first, double *buf)
 void PairGCPM::unpack_reverse_comm(int n, int *list, double *buf)
 {
   int i,j,m;
+  double **arr = (comm_mode == EFIELD) ? efield : efield_pol;
 
   m = 0;
   for (i = 0; i < n; i++) {
     j = list[i];
-    efield_pol[j][0] += buf[m++];
-    efield_pol[j][1] += buf[m++];
-    efield_pol[j][2] += buf[m++];
+    arr[j][0] += buf[m++];
+    arr[j][1] += buf[m++];
+    arr[j][2] += buf[m++];
   }
 }
 
@@ -608,7 +626,7 @@ void PairGCPM::compute_induced_efield()
   double xtmp,ytmp,ztmp,delx,dely,delz;
   double rsq,r,r2inv,r3inv;
   int *ilist,*jlist,*numneigh,**firstneigh;
-  double sigmaM_ij,sigmaM_ij2,sigmaM_ij3;
+  double sigmaM_ij,sigmaM_ij2;
   double _erf,expmsq,rdivsigmaM,f,g;
   double Tij[3][3];
 
@@ -616,6 +634,14 @@ void PairGCPM::compute_induced_efield()
   double **mu = atom->mu;
   int *type = atom->type;
   double qqrd2e = force->qqrd2e;
+  int nlocal = atom->nlocal;
+  int newton_pair = force->newton_pair;
+
+  // zero efield_pol for all atoms (local + ghost) before accumulation
+
+  int ntotal = atom->nlocal + atom->nghost;
+  for (i = 0; i < ntotal; i++)
+    efield_pol[i][0] = efield_pol[i][1] = efield_pol[i][2] = 0.0;
 
   inum = list->inum;
   ilist = list->ilist;
@@ -634,20 +660,17 @@ void PairGCPM::compute_induced_efield()
     jlist = firstneigh[i];
     jnum = numneigh[i];
 
-    double ex, ey, ez;
-    ex = ey = ez = 0.0;
-
     for (jj = 0; jj < jnum; jj++) {
       j = jlist[jj];
       j &= NEIGHMASK;
+
+      if (mu[j][3] == 0.0) continue;
 
       delx = xtmp - x[j][0];
       dely = ytmp - x[j][1];
       delz = ztmp - x[j][2];
       rsq = delx*delx + dely*dely + delz*delz;
       jtype = type[j];
-
-      if (mu[j][3] == 0.0) continue;
 
       if (rsq < cutsq[itype][jtype]) {
         r2inv = 1.0/rsq;
@@ -656,42 +679,41 @@ void PairGCPM::compute_induced_efield()
 
         sigmaM_ij = sigmaM[itype][jtype];
         sigmaM_ij2 = sigmaM_ij * sigmaM_ij;
-        sigmaM_ij3 = sigmaM_ij2 * sigmaM_ij;
 
-        // Eq. (7): T_ij = f(r)*r^-5*r_ij*r_ij - g(r)*r^-3*I
+        // Eq. (7): scalars f and g for the T_ij tensor
 
-        _erf = erf(r / (2.0 * sigmaM_ij));          // erf(r/(2*sigma_M))
-        expmsq = exp(-r * r / 4.0 / sigmaM_ij2);    // exp(-r^2/(4*sigma_M^2))
-        rdivsigmaM = r / MY_PIS / sigmaM_ij;        // r/(sqrt(pi)*sigma_M)
+        _erf = erf(r / (2.0 * sigmaM_ij));
+        expmsq = exp(-r * r / 4.0 / sigmaM_ij2);
+        rdivsigmaM = r / MY_PIS / sigmaM_ij;
         f = _erf - (rdivsigmaM + rdivsigmaM * rsq / sigmaM_ij2 / 6.0) * expmsq;
         g = _erf - rdivsigmaM * expmsq;
 
         // Eq. (6): T_ij = 3f*r^-5*r_ij*r_ij - g*r^-3*I
+        // T_ij is symmetric (T_ij[a][b] = T_ij[b][a]) and T_ij = T_ji
 
         f *= 3.0 * r2inv;
         Tij[0][0] = r3inv * (f * delx * delx - g);
         Tij[0][1] = r3inv * f * delx * dely;
         Tij[0][2] = r3inv * f * delx * delz;
-
-        Tij[1][0] = r3inv * f * dely * delx;
         Tij[1][1] = r3inv * (f * dely * dely - g);
         Tij[1][2] = r3inv * f * dely * delz;
-
-        Tij[2][0] = r3inv * f * delz * delx;
-        Tij[2][1] = r3inv * f * delz * dely;
         Tij[2][2] = r3inv * (f * delz * delz - g);
 
-        // E_p_i = sum_j T_ij . p_j
+        // E_p_i += T_ij . mu_j
 
-        ex += Tij[0][0]*mu[j][0] + Tij[0][1]*mu[j][1] + Tij[0][2]*mu[j][2];
-        ey += Tij[1][0]*mu[j][0] + Tij[1][1]*mu[j][1] + Tij[1][2]*mu[j][2];
-        ez += Tij[2][0]*mu[j][0] + Tij[2][1]*mu[j][1] + Tij[2][2]*mu[j][2];
+        efield_pol[i][0] += qqrd2e * (Tij[0][0]*mu[j][0] + Tij[0][1]*mu[j][1] + Tij[0][2]*mu[j][2]);
+        efield_pol[i][1] += qqrd2e * (Tij[0][1]*mu[j][0] + Tij[1][1]*mu[j][1] + Tij[1][2]*mu[j][2]);
+        efield_pol[i][2] += qqrd2e * (Tij[0][2]*mu[j][0] + Tij[1][2]*mu[j][1] + Tij[2][2]*mu[j][2]);
+
+        // Newton partner: E_p_j += T_ji . mu_i = T_ij . mu_i (T symmetric)
+
+        if (newton_pair || j < nlocal) {
+          efield_pol[j][0] += qqrd2e * (Tij[0][0]*mu[i][0] + Tij[0][1]*mu[i][1] + Tij[0][2]*mu[i][2]);
+          efield_pol[j][1] += qqrd2e * (Tij[0][1]*mu[i][0] + Tij[1][1]*mu[i][1] + Tij[1][2]*mu[i][2]);
+          efield_pol[j][2] += qqrd2e * (Tij[0][2]*mu[i][0] + Tij[1][2]*mu[i][1] + Tij[2][2]*mu[i][2]);
+        }
       }
     }
-
-    efield_pol[i][0] = ex * qqrd2e;
-    efield_pol[i][1] = ey * qqrd2e;
-    efield_pol[i][2] = ez * qqrd2e;
   }
 }
 
@@ -795,7 +817,7 @@ void PairGCPM::init_style()
   if (enable_polar && (!atom->mu_flag || !atom->torque_flag))
     error->all(FLERR,"Pair gcpm requires atom attributes mu and torque for polarizable simulations");
 
-  neighbor->add_request(this, NeighConst::REQ_FULL);
+  neighbor->add_request(this);
 
   cut_coulsq = cut_coul * cut_coul;
 

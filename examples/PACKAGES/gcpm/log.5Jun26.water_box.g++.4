@@ -1,4 +1,4 @@
-LAMMPS (30 Mar 2026 - Development - r14624-38243-g8ca023e860)
+LAMMPS (30 Mar 2026 - Development - r14624-38244-g038e69cff9-modified)
 OMP_NUM_THREADS environment is not set. Defaulting to 1 thread.
   using 1 OpenMP thread(s) per MPI task
 # Water box with explicit TIP4P water model for use with fix rigid and  hybrid full and dipole atom styles
@@ -25,7 +25,7 @@ Finding 1-2 1-3 1-4 neighbors ...
      0 = max # of 1-4 neighbors
      1 = max # of special neighbors
   special bonds CPU = 0.000 seconds
-  read_data CPU = 0.021 seconds
+  read_data CPU = 0.002 seconds
 
 replicate $r $r $r
 replicate 4 $r $r
@@ -101,54 +101,52 @@ Neighbor list info ...
   binsize = 7, bins = 2 2 2
   1 neighbor lists, perpetual/occasional/extra = 1 0 0
   (1) pair gcpm, perpetual
-      attributes: full, newton on
-      pair build: full/bin
-      stencil: full/bin/3d
+      attributes: half, newton on
+      pair build: half/bin/newton
+      stencil: half/bin/3d
       bin: standard
 Per MPI rank memory allocation (min/avg/max) = 13.76 | 13.76 | 13.76 Mbytes
    Step         KinEng          Temp          PotEng         TotEng         E_coul         TotEng         Press     
-         0   98.088442      522.32761     -4843.837      -4745.7486      58.001488     -4745.7486      14426.334    
-       100   656.12773      3493.9247     -5787.2673     -5131.1396     -1110.531      -5131.1396      3000.6236    
-       200   510.91531      2720.6587     -6075.1853     -5564.27       -1400.7871     -5564.27       -6503.7999    
-       300   393.41219      2094.9466     -6277.7189     -5884.3067     -1701.597      -5884.3067     -16240.333    
-       400   311.52151      1658.8732     -6412.7532     -6101.2317     -1848.4264     -6101.2317     -753.39179    
-       500   288.8212       1537.9925     -6512.3962     -6223.575      -2016.6361     -6223.575      -12280.217    
-       600   246.89633      1314.7397     -6573.5617     -6326.6654     -2125.4733     -6326.6654     -6827.9921    
-       700   187.41418      997.99322     -6644.7488     -6457.3346     -2157.8279     -6457.3346     -17287.243    
-       800   160.573        855.0621      -6705.0051     -6544.4321     -2230.719      -6544.4321     -21387.679    
-       900   169.99697      905.24541     -6721.7119     -6551.7149     -2279.6315     -6551.7149     -17994.617    
-      1000   148.04806      788.36595     -6735.3025     -6587.2544     -2302.8808     -6587.2544     -14235.705    
-Loop time of 14.7415 on 4 procs for 1000 steps with 256 atoms
+         0   98.088442      522.32761     -4827.6436     -4729.5551      21.492783     -4729.5551      10536.211    
+       100   377.22981      2008.7744     -5273.4963     -4896.2665     -513.3227      -4896.2665     -7693.2714    
+       200   355.30502      1892.0234     -5368.3968     -5013.0918     -655.19571     -5013.0918     -12548.726    
+       300   308.95857      1645.2253     -5421.6604     -5112.7018     -739.051       -5112.7018     -8720.0959    
+       400   348.51094      1855.8444     -5446.3079     -5097.7969     -749.00617     -5097.7969     -4242.42      
+       500   359.13722      1912.4301     -5414.7958     -5055.6586     -713.06388     -5055.6586     -8006.8137    
+       600   343.9132       1831.3611     -5374.1583     -5030.2451     -729.03418     -5030.2451      4414.8883    
+       700   279.62166      1489.0043     -5350.8501     -5071.2285     -708.77387     -5071.2285     -1715.4378    
+       800   299.05924      1592.5107     -5391.9048     -5092.8456     -747.45011     -5092.8456      1709.2269    
+       900   303.80346      1617.774      -5384.2322     -5080.4287     -712.89051     -5080.4287     -1035.3174    
+      1000   346.11414      1843.0813     -5355.8634     -5009.7493     -704.54543     -5009.7493     -3360.0691    
+Loop time of 9.38555 on 4 procs for 1000 steps with 256 atoms
 
-Performance: 2.931 ns/day, 8.190 hours/ns, 67.836 timesteps/s, 17.366 katom-step/s
-94.8% CPU use with 4 MPI tasks x 1 OpenMP threads
+Performance: 4.603 ns/day, 5.214 hours/ns, 106.547 timesteps/s, 27.276 katom-step/s
+91.8% CPU use with 4 MPI tasks x 1 OpenMP threads
 
 MPI task timing breakdown:
 Section |  min time  |  avg time  |  max time  |%varavg| %total
 ---------------------------------------------------------------
-Pair    | 13.615     | 13.76      | 13.888     |   2.6 | 93.34
-Bond    | 8.8694e-05 | 0.0001243  | 0.00018433 |   0.0 |  0.00
-Kspace  | 0.11416    | 0.24871    | 0.41143    |  21.3 |  1.69
-Neigh   | 0.097514   | 0.11715    | 0.12533    |   3.4 |  0.79
-Comm    | 0.26363    | 0.26549    | 0.26653    |   0.2 |  1.80
-Output  | 0.0018863  | 0.0021826  | 0.0024226  |   0.4 |  0.01
-Modify  | 0.32935    | 0.33042    | 0.3313     |   0.1 |  2.24
-Other   |            | 0.01769    |            |       |  0.12
+Pair    | 8.3549     | 8.4937     | 8.5762     |   3.0 | 90.50
+Bond    | 8.8643e-05 | 9.8928e-05 | 0.00011091 |   0.0 |  0.00
+Kspace  | 0.12801    | 0.21441    | 0.37064    |  21.0 |  2.28
+Neigh   | 0.054627   | 0.07208    | 0.07804    |   3.8 |  0.77
+Comm    | 0.25875    | 0.2604     | 0.26203    |   0.2 |  2.77
+Output  | 0.0018917  | 0.002169   | 0.0024078  |   0.4 |  0.02
+Modify  | 0.32394    | 0.32605    | 0.3285     |   0.4 |  3.47
+Other   |            | 0.01669    |            |       |  0.18
 
-Nlocal:             64 ave          76 max          44 min
-Histogram: 1 0 0 0 0 0 1 0 1 1
-Nghost:         6410.5 ave        6699 max        6126 min
-Histogram: 1 0 0 0 1 1 0 0 0 1
-Neighs:              0 ave           0 max           0 min
-Histogram: 4 0 0 0 0 0 0 0 0 0
-FullNghs:      94779.5 ave      112951 max       65764 min
-Histogram: 1 0 0 0 0 0 1 0 1 1
+Nlocal:             64 ave          67 max          57 min
+Histogram: 1 0 0 0 0 0 0 0 1 2
+Nghost:         6137.5 ave        6223 max        6075 min
+Histogram: 1 0 0 2 0 0 0 0 0 1
+Neighs:        47809.2 ave       65776 max       28231 min
+Histogram: 1 0 0 0 0 2 0 0 0 1
 
-Total # of neighbors = 379118
-Ave neighs/atom = 1480.9297
+Total # of neighbors = 191237
+Ave neighs/atom = 747.01953
 Ave special neighs/atom = 0
-Neighbor list builds = 30
+Neighbor list builds = 35
 Dangerous builds = 0
 
 write_dump all custom final.dump id mol type q x y z mux muy muz modify sort id
-Total wall time: 0:00:14
+Total wall time: 0:00:09
