@@ -212,7 +212,7 @@ void PairBuck6CoulGaussLong::dispersion(int eflag, int /*vflag*/)
 }
 
 /* ----------------------------------------------------------------------
-   charge-charge interactions (identical to lj/cut/coul/gauss/long)
+   charge-charge interactions
 ------------------------------------------------------------------------- */
 
 void PairBuck6CoulGaussLong::charge_charge(int eflag, int /*vflag*/)
