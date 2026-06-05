@@ -1,4 +1,4 @@
-The GCPM package implements the Gaussian charge polarizable model (GCPM) 
+The GCPM package implements the Gaussian charge polarizable model (GCPM)
 described in Paricaud, Predota, Chiavlo and Cummings, J. Chem. Phys. 122, 244511 (2005)
 in the pair style pair buck6/coul/gauss/long
 

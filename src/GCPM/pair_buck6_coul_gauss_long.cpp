@@ -13,7 +13,8 @@
 ------------------------------------------------------------------------- */
 
 /* ----------------------------------------------------------------------
-   Contributing author: Trung Nguyen (U Chicago) with Claude Code Sonnet 4.6
+   Contributing author: Trung Nguyen (ndactrung@gmail.com)
+                        with Claude Code Sonnet 4.6
    Reference: Paricaud et al., J. Chem. Phys. 122, 244511 (2005)
    Buckingham exp-6 dispersion: Eq. (10) of the reference
      phi = eps/(1-6/gamma) * [6/gamma * exp(gamma*(1-r/sigma)) - (sigma/r)^6]
