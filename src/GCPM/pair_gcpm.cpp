@@ -64,7 +64,6 @@ PairGCPM::PairGCPM(LAMMPS *lmp) : Pair(lmp)
   writedata = 1;
   ftable = nullptr;
   cut_respa = nullptr;
-  qdist = 0.0;
 
   enable_polar = 1;
   efield = nullptr;
@@ -79,6 +78,7 @@ PairGCPM::PairGCPM(LAMMPS *lmp) : Pair(lmp)
   comm_forward = 4;
   comm_reverse = 3;
   comm_mode = EFIELD_POL;
+  first_polar = 1;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -393,15 +393,26 @@ void PairGCPM::polar(int eflag, int vflag)
   numneigh = list->numneigh;
   firstneigh = list->firstneigh;
 
-  // initial dipole estimate from charge field only (E_p = 0)
+  // on the very first call: estimate mu from efield only (E_p assumed to be 0)
+  // on subsequent time step: start from the previous timestep's converged dipoles
 
+  if (first_polar) {
+    for (ii = 0; ii < inum; ii++) {
+      i = ilist[ii];
+      itype = type[i];
+      if (mu[i][3] != 0.0) {
+        mu[i][0] = alpha_pol[itype][itype] * efield[i][0] / qqrd2e;
+        mu[i][1] = alpha_pol[itype][itype] * efield[i][1] / qqrd2e;
+        mu[i][2] = alpha_pol[itype][itype] * efield[i][2] / qqrd2e;
+      }
+    }
+    first_polar = 0;
+  }
+
+  // seed mu_old from the starting guess so the convergence check is correct on iter 1
   for (ii = 0; ii < inum; ii++) {
     i = ilist[ii];
-    itype = type[i];
     if (mu[i][3] != 0.0) {
-      mu[i][0] = alpha_pol[itype][itype] * efield[i][0] / qqrd2e;
-      mu[i][1] = alpha_pol[itype][itype] * efield[i][1] / qqrd2e;
-      mu[i][2] = alpha_pol[itype][itype] * efield[i][2] / qqrd2e;
       mu_old[i][0] = mu[i][0];
       mu_old[i][1] = mu[i][1];
       mu_old[i][2] = mu[i][2];
@@ -872,7 +883,7 @@ double PairGCPM::init_one(int i, int j)
     offset[i][j] = buck1[i][j]*rexp - buck3[i][j]*r6inv;
   } else offset[i][j] = 0.0;
 
-  double cut = MAX(cut_lj[i][j], cut_coul+2.0*qdist);
+  double cut = MAX(cut_lj[i][j], cut_coul);
 
   // per-pair Gaussian width for charge-charge interactions: 1/sqrt(2*(si^2+sj^2))
   double si = sigmaM[i][i], sj = sigmaM[j][j];
@@ -1006,5 +1017,6 @@ void *PairGCPM::extract(const char *str, int &dim)
   dim = 2;
   if (strcmp(str,"epsilon") == 0) return (void *) epsilon;
   if (strcmp(str,"sigma") == 0) return (void *) sigma;
+  if (strcmp(str,"alpha_pol") == 0) return (void *) alpha_pol;
   return nullptr;
 }

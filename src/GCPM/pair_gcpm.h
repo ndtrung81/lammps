@@ -66,19 +66,19 @@ class PairGCPM : public Pair {
   double **sigmaM;      // Gaussian charge width of M site (individual, per type pair)
   double **alpha_ij;    // per-pair Ewald Gaussian parameter: 1/sqrt(2*(si^2+sj^2)) [1/A]
   double *cut_respa;
-  double g_ewald;
-  double qdist;
+  double g_ewald;       // g_ewald = 5.6/sigma for Coulomb interactions with Gaussian charge smearing
   double coul_smooth, alpha;
   double c0_c, c1_c, c2_c, c3_c, c4_c, c5_c, rsmooth_sq_c;
 
   double **efield;      // per-atom electric field due to charges
   double **efield_pol;  // per-atom electric field due to induced dipoles
   double **mu_old;      // per-atom induced dipole from previous iteration
-  int nmax;
-  int maxiter;
-  double tol;
-  int enable_polar;
+  int nmax;             // maximum number of atoms that can be stored in efield arrays
+  int maxiter;          // max iterations for induced dipole convergence
+  double tol;           // tolerance for induced dipole convergence
+  int enable_polar;     // 1 if polar interactions enabled, 0 if not
   int comm_mode;        // 0 = reverse-comm efield, 1 = reverse-comm efield_pol
+  int first_polar;      // 1 on first call to polar(), 0 thereafter (warm-start flag)
 
   virtual void allocate();
 };
