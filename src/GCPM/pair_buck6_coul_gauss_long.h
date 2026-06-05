@@ -61,7 +61,8 @@ class PairBuck6CoulGaussLong : public Pair {
   double **buck1, **buck2, **buck3, **offset;
 
   double **alpha_pol;   // molecular polarizability for each type pair
-  double **sigmaM;      // charge spreading width for each type pair (M site)
+  double **sigmaM;      // Gaussian charge width of M site (individual, per type pair)
+  double **alpha_ij;    // per-pair Ewald Gaussian parameter: 1/sqrt(2*(si^2+sj^2)) [1/A]
   double *cut_respa;
   double g_ewald;
   double qdist;

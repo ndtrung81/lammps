@@ -92,6 +92,7 @@ PairBuck6CoulGaussLong::~PairBuck6CoulGaussLong()
     memory->destroy(offset);
     memory->destroy(alpha_pol);
     memory->destroy(sigmaM);
+    memory->destroy(alpha_ij);
   }
   memory->destroy(efield);
   memory->destroy(efield_pol);
@@ -277,7 +278,7 @@ void PairBuck6CoulGaussLong::charge_charge(int eflag, int /*vflag*/)
           expm2 = MathSpecial::expmsq(grij);
           erf = 1 - (MathSpecial::my_erfcx(grij) * expm2);
 
-          arg = alpha * r;
+          arg = alpha_ij[itype][jtype] * r;
           expa = MathSpecial::expmsq(arg);
           erfa = 1 - (MathSpecial::my_erfcx(arg) * expa);
 
@@ -377,9 +378,9 @@ void PairBuck6CoulGaussLong::polar(int eflag, int vflag)
     i = ilist[ii];
     itype = type[i];
     if (mu[i][3] != 0.0) {
-      mu[i][0] = alpha_pol[itype][itype] * efield[i][0] / MY_4PI;
-      mu[i][1] = alpha_pol[itype][itype] * efield[i][1] / MY_4PI;
-      mu[i][2] = alpha_pol[itype][itype] * efield[i][2] / MY_4PI;
+      mu[i][0] = alpha_pol[itype][itype] * efield[i][0] / qqrd2e;
+      mu[i][1] = alpha_pol[itype][itype] * efield[i][1] / qqrd2e;
+      mu[i][2] = alpha_pol[itype][itype] * efield[i][2] / qqrd2e;
       mu_old[i][0] = mu[i][0];
       mu_old[i][1] = mu[i][1];
       mu_old[i][2] = mu[i][2];
@@ -394,9 +395,9 @@ void PairBuck6CoulGaussLong::polar(int eflag, int vflag)
       i = ilist[ii];
       itype = type[i];
       if (mu[i][3] != 0.0) {
-        mu[i][0] = alpha_pol[itype][itype] * (efield[i][0] + efield_pol[i][0]) / MY_4PI;
-        mu[i][1] = alpha_pol[itype][itype] * (efield[i][1] + efield_pol[i][1]) / MY_4PI;
-        mu[i][2] = alpha_pol[itype][itype] * (efield[i][2] + efield_pol[i][2]) / MY_4PI;
+        mu[i][0] = alpha_pol[itype][itype] * (efield[i][0] + efield_pol[i][0]) / qqrd2e;
+        mu[i][1] = alpha_pol[itype][itype] * (efield[i][1] + efield_pol[i][1]) / qqrd2e;
+        mu[i][2] = alpha_pol[itype][itype] * (efield[i][2] + efield_pol[i][2]) / qqrd2e;
       }
     }
 
@@ -467,15 +468,28 @@ void PairBuck6CoulGaussLong::polar(int eflag, int vflag)
       rsq = delx*delx + dely*dely + delz*delz;
       jtype = type[j];
 
-      if (rsq < cutsq[itype][jtype]) {
+      if (rsq < cutsq[itype][jtype] && rsq < cut_coulsq) {
         r2inv = 1.0/rsq;
         rinv = sqrt(r2inv);
+        double r = 1.0/rinv;
         double r3inv = r2inv*rinv;
         double r5inv = r3inv*r2inv;
+
+        double aij = alpha_ij[itype][jtype];
+        double grij = g_ewald * r;
+        double expm2 = MathSpecial::expmsq(grij);
+        double erf_g = 1.0 - MathSpecial::my_erfcx(grij) * expm2;
+        double aijr = aij * r;
+        double expa = MathSpecial::expmsq(aijr);
+        double erfa = 1.0 - MathSpecial::my_erfcx(aijr) * expa;
+        double falpha = erfa - EWALD_F*aijr*expa;
+        double Phi = falpha - erf_g + EWALD_F*grij*expm2;
+        double dPhi_dr = 2.0*EWALD_F*rsq*(aij*aij*aij*expa - g_ewald*g_ewald*g_ewald*expm2);
+
         double pidotr = mu[i][0]*delx + mu[i][1]*dely + mu[i][2]*delz;
         double fqj = factor_coul * qqrd2e * q[j];
-        double pre1 = 3.0*fqj*r5inv * pidotr;
-        double pre2 = fqj*r3inv;
+        double pre1 = fqj*r5inv * (3.0*Phi - dPhi_dr) * pidotr;
+        double pre2 = fqj*r3inv * Phi;
 
         double fcx = pre2*mu[i][0] - pre1*delx;
         double fcy = pre2*mu[i][1] - pre1*dely;
@@ -548,7 +562,7 @@ void PairBuck6CoulGaussLong::compute_induced_efield()
   double **x = atom->x;
   double **mu = atom->mu;
   int *type = atom->type;
-  int nlocal = atom->nlocal;
+  double qqrd2e = force->qqrd2e;
 
   inum = list->inum;
   ilist = list->ilist;
@@ -591,9 +605,9 @@ void PairBuck6CoulGaussLong::compute_induced_efield()
         sigmaM_ij2 = sigmaM_ij * sigmaM_ij;
         sigmaM_ij3 = sigmaM_ij2 * sigmaM_ij;
 
-        _erf = erf(r / sigmaM_ij);
-        expmsq = exp(-r * r / 4.0 / sigmaM_ij2);
-        rdivsigmaM = r / MY_PIS / sigmaM_ij;
+        _erf = erf(r / (2.0 * sigmaM_ij));          // Eq. (7): erf(r/(2*sigma_M))
+        expmsq = exp(-r * r / 4.0 / sigmaM_ij2);    // exp(-r^2/(4*sigma_M^2))
+        rdivsigmaM = r / MY_PIS / sigmaM_ij;         // r/(sqrt(pi)*sigma_M)
         f = _erf - (rdivsigmaM + rdivsigmaM * rsq / sigmaM_ij2 / 6.0) * expmsq;
         g = _erf - rdivsigmaM * expmsq;
 
@@ -616,9 +630,9 @@ void PairBuck6CoulGaussLong::compute_induced_efield()
       }
     }
 
-    efield_pol[i][0] = ex;
-    efield_pol[i][1] = ey;
-    efield_pol[i][2] = ez;
+    efield_pol[i][0] = ex * qqrd2e;
+    efield_pol[i][1] = ey * qqrd2e;
+    efield_pol[i][2] = ez * qqrd2e;
   }
 }
 
@@ -646,6 +660,7 @@ void PairBuck6CoulGaussLong::allocate()
   memory->create(offset,n+1,n+1,"pair:offset");
   memory->create(alpha_pol,n+1,n+1,"pair:alpha_pol");
   memory->create(sigmaM,n+1,n+1,"pair:sigmaM");
+  memory->create(alpha_ij,n+1,n+1,"pair:alpha_ij");
 }
 
 /* ---------------------------------------------------------------------- */
@@ -777,6 +792,11 @@ double PairBuck6CoulGaussLong::init_one(int i, int j)
   } else offset[i][j] = 0.0;
 
   double cut = MAX(cut_lj[i][j], cut_coul+2.0*qdist);
+
+  // per-pair Gaussian width for charge-charge interactions: 1/sqrt(2*(si^2+sj^2))
+  double si = sigmaM[i][i], sj = sigmaM[j][j];
+  alpha_ij[i][j] = MY_ISQRT2 / sqrt(si*si + sj*sj);
+  alpha_ij[j][i] = alpha_ij[i][j];
 
   cut_ljsq[j][i]    = cut_ljsq[i][j];
   epsilon[j][i]     = epsilon[i][j];
