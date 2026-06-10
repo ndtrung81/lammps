@@ -14,7 +14,7 @@ mass 1 15.9994   # O
 mass 2 1.008     # H
 mass 3 1.0e-100  # site M
 
-# pair style parameters:  coul_smooth alpha  enable_polar cutlj [cutcoul]
+# pair style parameters:  coul_smooth alpha  enable_polar  cut_buck [cutcoul]
 pair_style gcpm           0.95         0.608  1            12.0
 
 # coeffs       epsilon sigma  gamma  alpha_pol sigmaM
