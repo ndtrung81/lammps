@@ -214,6 +214,25 @@ By design, your PairFooGPU class depends on PairFoo, so if PairFoo is
 part of the MISC package, for example, PairFooGPU will be built with
 both -D PKG_MISC=ON and -D PKG_GPU=ON.
 
+4. Debug and test the new gpu pair style
+
+The gpu pair style is expected to give deterministic and consistent results
+with the CPU version.  The first check is to see if thermo output including
+pressure and potential energy (epair and ecoul) match at the first time step.
+If pressure is incorrect, atom forces are incorrect.  This is the most common issue
+with any new implementation.
+
+For pair styles that are composed of numerous terms, it is recommended to
+first isolate the terms in separate kernels and ensure that individual terms
+are correctly implemented on the GPU.  This may involve commenting out the terms
+on the CPU version.  To compare the atom forces from GPU and CPU versions,
+select a subset of atoms (e.g. the first 20 atoms) to write a dump file
+with fx, fy and fz and with their IDs sorted.
+
+Unless otherwise stated, the pair styles in the GPU package either build
+full neighbor lists on the device (neigh yes), or request full neighbor lists
+on the host (neigh no).  
+
 Note: It is possible to support fix and compute styles within the GPU package
 using the Geryon library.  You need to perform host-device data transfers and
 computation on the device for each MPI process. The PPPMGPU class is an example
