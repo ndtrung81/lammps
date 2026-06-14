@@ -52,10 +52,7 @@ int GCPMT::init(const int ntypes, double **host_cutsq,
                 const int maxspecial, const double cell_size,
                 const double gpu_split, FILE *_screen,
                 const double host_cut_coulsq, double *host_special_coul,
-                const double qqrd2e, const double g_ewald,
-                const double rsmooth_sq,
-                const double c0, const double c1, const double c2,
-                const double c3, const double c4, const double c5) {
+                const double qqrd2e, const double g_ewald) {
   int success;
   success=this->init_atomic(nlocal,nall,max_nbors,maxspecial,cell_size,gpu_split,
                             _screen,gcpm,"k_gcpm");
@@ -126,8 +123,6 @@ int GCPMT::init(const int ntypes, double **host_cutsq,
   _cut_coulsq=host_cut_coulsq;
   _qqrd2e=qqrd2e;
   _g_ewald=g_ewald;
-  _rsmooth_sq=rsmooth_sq;
-  _c0=c0; _c1=c1; _c2=c2; _c3=c3; _c4=c4; _c5=c5;
 
   _allocated=true;
   this->_max_bytes=coeff1.row_bytes()+coeff2.row_bytes()+
@@ -173,8 +168,7 @@ int GCPMT::loop(const int eflag, const int vflag) {
                           &this->nbor->dev_nbor, &this->_nbor_data->begin(),
                           &this->ans->force, &this->ans->engv, &eflag, &vflag,
                           &ainum, &nbor_pitch, &this->atom->q, &cutsq,
-                          &_cut_coulsq, &_qqrd2e, &_g_ewald, &_rsmooth_sq,
-                          &_c0, &_c1, &_c2, &_c3, &_c4, &_c5,
+                          &_cut_coulsq, &_qqrd2e, &_g_ewald,
                           &this->_threads_per_atom);
   } else {
     this->k_pair.set_size(GX,BX);
@@ -182,8 +176,7 @@ int GCPMT::loop(const int eflag, const int vflag) {
                      &this->nbor->dev_nbor, &this->_nbor_data->begin(),
                      &this->ans->force, &this->ans->engv, &eflag, &vflag,
                      &ainum, &nbor_pitch, &this->atom->q, &cutsq,
-                     &_cut_coulsq, &_qqrd2e, &_g_ewald, &_rsmooth_sq,
-                     &_c0, &_c1, &_c2, &_c3, &_c4, &_c5,
+                     &_cut_coulsq, &_qqrd2e, &_g_ewald,
                      &this->_threads_per_atom);
   }
   this->time_pair.stop();
@@ -207,8 +200,7 @@ void GCPMT::loop_efield() {
                &this->nbor->dev_nbor, &this->_nbor_data->begin(),
                &dev_efield,
                &ainum, &nbor_pitch, &this->atom->q,
-               &_cut_coulsq, &_qqrd2e, &_g_ewald, &_rsmooth_sq,
-               &_c0, &_c1, &_c2, &_c3, &_c4, &_c5,
+               &_cut_coulsq, &_qqrd2e, &_g_ewald,
                &this->_threads_per_atom);
   this->time_pair.stop();
 }

@@ -81,10 +81,7 @@ __kernel void k_gcpm(const __global numtyp4 *restrict x_,
                      const __global numtyp *restrict q_,
                      const __global numtyp *restrict cutsq,
                      const numtyp cut_coulsq, const numtyp qqrd2e,
-                     const numtyp g_ewald, const numtyp rsmooth_sq,
-                     const acctyp c0, const acctyp c1, const acctyp c2,
-                     const acctyp c3, const acctyp c4, const acctyp c5,
-                     const int t_per_atom) {
+                     const numtyp g_ewald, const int t_per_atom) {
   int tid, ii, offset;
   atom_info(t_per_atom,ii,tid,offset);
 
@@ -180,19 +177,6 @@ __kernel void k_gcpm(const __global numtyp4 *restrict x_,
           // factor_coul = 1 - special_coul; inline avoids inverted-conditional bug
           forcecoul = prefactor * (falpha - erf_g + EWALD_F*grij*expm2 - factor_coul*falpha);
 
-          // Smoothing: polynomial taper in [rsmooth, cut_coul].
-          // Computed in acctyp (double) to avoid catastrophic cancellation:
-          // coefficients c4~4512, c5~-77 lead to terms ~1e8 that cancel to [0,1].
-          if (rsq > rsmooth_sq) {
-            acctyp r_a = (acctyp)r, rsq_a = (acctyp)rsq;
-            acctyp rcu_a = r_a * rsq_a;
-            acctyp rqu_a = rsq_a * rsq_a;
-            acctyp sme = c5*rqu_a*r_a + c4*rqu_a + c3*rcu_a + c2*rsq_a + c1*r_a + c0;
-            acctyp smf = (acctyp)5.0*c5*rqu_a + (acctyp)4.0*c4*rcu_a
-                       + (acctyp)3.0*c3*rsq_a + (acctyp)2.0*c2*r_a + c1;
-            forcecoul = (numtyp)((acctyp)forcecoul*sme - (acctyp)ealpha*smf*r_a);
-            ealpha = (numtyp)((acctyp)ealpha * sme);
-          }
         }
 
         numtyp force = (force_lj + forcecoul) * r2inv;
@@ -244,10 +228,7 @@ __kernel void k_gcpm_fast(const __global numtyp4 *restrict x_,
                           const __global numtyp *restrict q_,
                           const __global numtyp *restrict cutsq,
                           const numtyp cut_coulsq, const numtyp qqrd2e,
-                          const numtyp g_ewald, const numtyp rsmooth_sq,
-                          const acctyp c0, const acctyp c1, const acctyp c2,
-                          const acctyp c3, const acctyp c4, const acctyp c5,
-                          const int t_per_atom) {
+                          const numtyp g_ewald,  const int t_per_atom) {
   int tid, ii, offset;
   atom_info(t_per_atom,ii,tid,offset);
 
@@ -329,11 +310,12 @@ __kernel void k_gcpm_fast(const __global numtyp4 *restrict x_,
           numtyp erf_g = (numtyp)1.0 - ucl_erfc(grij);
 
           numtyp aij = coeff2[mtype].w;
-          numtyp aijr = aij * r;
-          numtyp expa = ucl_exp(-aijr*aijr);
-          numtyp erfa = (numtyp)1.0 - ucl_erfc(aijr);
+          numtyp arg = aij * r;
+          numtyp expa = ucl_exp(-arg*arg);
+          numtyp erfa = (numtyp)1.0 - ucl_erfc(arg);
 
-          numtyp falpha = erfa - EWALD_F*aijr*expa;
+          numtyp falpha = erfa - EWALD_F*arg*expa;
+
           numtyp prefactor = qqrd2e * qtmp * qj / r;
           ealpha = prefactor * (erfa - erf_g);
           prefactor_erfa = prefactor * erfa;
@@ -341,16 +323,8 @@ __kernel void k_gcpm_fast(const __global numtyp4 *restrict x_,
           // factor_coul = 1 - special_coul; inline avoids inverted-conditional bug
           forcecoul = prefactor * (falpha - erf_g + EWALD_F*grij*expm2 - factor_coul*falpha);
 
-          if (rsq > rsmooth_sq) {
-            acctyp r_a = (acctyp)r, rsq_a = (acctyp)rsq;
-            acctyp rcu_a = r_a * rsq_a;
-            acctyp rqu_a = rsq_a * rsq_a;
-            acctyp sme = c5*rqu_a*r_a + c4*rqu_a + c3*rcu_a + c2*rsq_a + c1*r_a + c0;
-            acctyp smf = (acctyp)5.0*c5*rqu_a + (acctyp)4.0*c4*rcu_a
-                       + (acctyp)3.0*c3*rsq_a + (acctyp)2.0*c2*r_a + c1;
-            forcecoul = (numtyp)((acctyp)forcecoul*sme - (acctyp)ealpha*smf*r_a);
-            ealpha = (numtyp)((acctyp)ealpha * sme);
-          }
+        } else {
+          forcecoul = (numtyp)0.0;
         }
 
         numtyp force = (force_lj + forcecoul) * r2inv;
@@ -366,8 +340,7 @@ __kernel void k_gcpm_fast(const __global numtyp4 *restrict x_,
           }
           if (rsq < cut_coulsq) {
             e_coul += ealpha;
-            if (factor_coul > (numtyp)0.0)
-              e_coul -= factor_coul*prefactor_erfa;
+            e_coul -= factor_coul*prefactor_erfa;
           }
         }
         if (EVFLAG && vflag) {
@@ -402,10 +375,7 @@ __kernel void k_gcpm_efield(
                 const int inum, const int nbor_pitch,
                 const __global numtyp *restrict q_,
                 const numtyp cut_coulsq, const numtyp qqrd2e,
-                const numtyp g_ewald, const numtyp rsmooth_sq,
-                const acctyp c0, const acctyp c1, const acctyp c2,
-                const acctyp c3, const acctyp c4, const acctyp c5,
-                const int t_per_atom) {
+                const numtyp g_ewald, const int t_per_atom) {
   int tid, ii, offset;
   atom_info(t_per_atom, ii, tid, offset);
 
@@ -464,17 +434,6 @@ __kernel void k_gcpm_efield(
           numtyp scale = qqrd2e / r;
           // factor_coul = 1 - special_coul; inline avoids inverted-conditional bug
           numtyp es = scale * (falpha - erf_g + EWALD_F*grij*expm2_g - factor_coul*falpha);
-          numtyp eas = scale * (erfa - erf_g);
-
-          if (rsq > rsmooth_sq) {
-            acctyp r_a = (acctyp)r, rsq_a = (acctyp)rsq;
-            acctyp rcu_a = r_a * rsq_a;
-            acctyp rqu_a = rsq_a * rsq_a;
-            acctyp sme = c5*rqu_a*r_a + c4*rqu_a + c3*rcu_a + c2*rsq_a + c1*r_a + c0;
-            acctyp smf = (acctyp)5.0*c5*rqu_a + (acctyp)4.0*c4*rcu_a
-                       + (acctyp)3.0*c3*rsq_a + (acctyp)2.0*c2*r_a + c1;
-            es = (numtyp)((acctyp)es * sme - (acctyp)eas * smf * r_a);
-          }
           es *= r2inv;
 
           efx += delx * qj * es;

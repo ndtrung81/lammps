@@ -45,10 +45,7 @@ class GCPM : public BaseCharge<numtyp, acctyp> {
            const int maxspecial, const double cell_size,
            const double gpu_split, FILE *screen,
            const double host_cut_coulsq, double *host_special_coul,
-           const double qqrd2e, const double g_ewald,
-           const double rsmooth_sq,
-           const double c0, const double c1, const double c2,
-           const double c3, const double c4, const double c5);
+           const double qqrd2e, const double g_ewald);
 
   /// Clear all host and device data
   /** \note This is called at the beginning of the init() routine **/
@@ -79,8 +76,7 @@ class GCPM : public BaseCharge<numtyp, acctyp> {
   /// Number of atom types
   int _lj_types;
 
-  numtyp _cut_coulsq, _qqrd2e, _g_ewald, _rsmooth_sq;
-  acctyp _c0, _c1, _c2, _c3, _c4, _c5;
+  numtyp _cut_coulsq, _qqrd2e, _g_ewald;
 
   /// Compute per-atom efield from charge-charge interactions.
   /// Returns a pinned host pointer via *efield_ptr.

@@ -34,10 +34,7 @@ int gcpm_gpu_init(const int ntypes, double **cutsq,
                   const int max_nbors, const int maxspecial,
                   const double cell_size, int &gpu_mode, FILE *screen,
                   double host_cut_coulsq, double *host_special_coul,
-                  const double qqrd2e, const double g_ewald,
-                  const double rsmooth_sq,
-                  const double c0, const double c1, const double c2,
-                  const double c3, const double c4, const double c5) {
+                  const double qqrd2e, const double g_ewald) {
   GCPMF.clear();
   gpu_mode=GCPMF.device->gpu_mode();
   double gpu_split=GCPMF.device->particle_split();
@@ -64,8 +61,7 @@ int gcpm_gpu_init(const int ntypes, double **cutsq,
                        host_cut_ljsq, offset, host_alpha_ij,
                        special_lj, inum, nall, max_nbors, maxspecial,
                        cell_size, gpu_split, screen,
-                       host_cut_coulsq, host_special_coul, qqrd2e, g_ewald,
-                       rsmooth_sq, c0, c1, c2, c3, c4, c5);
+                       host_cut_coulsq, host_special_coul, qqrd2e, g_ewald);
 
   GCPMF.device->world_barrier();
   if (message)
@@ -85,8 +81,7 @@ int gcpm_gpu_init(const int ntypes, double **cutsq,
                          host_cut_ljsq, offset, host_alpha_ij,
                          special_lj, inum, nall, max_nbors, maxspecial,
                          cell_size, gpu_split, screen,
-                         host_cut_coulsq, host_special_coul, qqrd2e, g_ewald,
-                         rsmooth_sq, c0, c1, c2, c3, c4, c5);
+                         host_cut_coulsq, host_special_coul, qqrd2e, g_ewald);
 
     GCPMF.device->serialize_init();
     if (message)

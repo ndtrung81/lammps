@@ -63,10 +63,7 @@ int gcpm_gpu_init(const int ntypes, double **cutsq,
                   const int max_nbors, const int maxspecial,
                   const double cell_size, int &gpu_mode, FILE *screen,
                   double host_cut_coulsq, double *host_special_coul,
-                  const double qqrd2e, const double g_ewald,
-                  const double rsmooth_sq,
-                  const double c0, const double c1, const double c2,
-                  const double c3, const double c4, const double c5);
+                  const double qqrd2e, const double g_ewald);
 void gcpm_gpu_clear();
 int **gcpm_gpu_compute_n(const int ago, const int inum_full, const int nall,
                          double **host_x, int *host_type, double *sublo,
@@ -437,22 +434,6 @@ void PairGCPMGPU::init_style()
   g_ewald = force->kspace->g_ewald;
   cut_coulsq = cut_coul * cut_coul;
 
-  // Smoothing coefficients
-  c0_c = c1_c = c2_c = c3_c = c4_c = c5_c = 0.0;
-  rsmooth_sq_c = cut_coulsq;
-  if (coul_smooth < 1.0) {
-    double rsm = coul_smooth * cut_coul;
-    double rsm_sq = rsm * rsm;
-    double denom = pow((cut_coul - rsm), 5.0);
-    c0_c = cut_coul*cut_coulsq*(cut_coulsq - 5.0*cut_coul*rsm + 10.0*rsm_sq) / denom;
-    c1_c = -30.0*(cut_coulsq*rsm_sq) / denom;
-    c2_c =  30.0*(cut_coulsq*rsm + cut_coul*rsm_sq) / denom;
-    c3_c = -10.0*(cut_coulsq + 4.0*cut_coul*rsm + rsm_sq) / denom;
-    c4_c =  15.0*(cut_coul + rsm) / denom;
-    c5_c =  -6.0 / denom;
-    rsmooth_sq_c = rsm_sq;
-  }
-
   int maxspecial = 0;
   if (atom->molecular != Atom::ATOMIC) maxspecial = atom->maxspecial;
   int mnf = 5e-2 * neighbor->oneatom;
@@ -463,8 +444,7 @@ void PairGCPMGPU::init_style()
       force->special_lj,
       atom->nlocal, atom->nlocal + atom->nghost, mnf, maxspecial,
       cell_size, gpu_mode, screen,
-      cut_coulsq, force->special_coul, force->qqrd2e, g_ewald,
-      rsmooth_sq_c, c0_c, c1_c, c2_c, c3_c, c4_c, c5_c);
+      cut_coulsq, force->special_coul, force->qqrd2e, g_ewald);
   GPU_EXTRA::check_flag(success, error, world);
 
   if (gpu_mode == GPU_FORCE) {

@@ -65,10 +65,8 @@ class PairGCPM : public Pair {
   double **alpha_pol;   // molecular polarizability for each type pair
   double **sigmaM;      // Gaussian charge width of M site (individual, per type pair)
   double **alpha_ij;    // per-pair Ewald Gaussian parameter: 1/sqrt(2*(si^2+sj^2)) [1/A]
-  double *cut_respa;
   double g_ewald;       // g_ewald = 5.6/sigma for Coulomb interactions with Gaussian charge smearing
-  double coul_smooth, alpha;
-  double c0_c, c1_c, c2_c, c3_c, c4_c, c5_c, rsmooth_sq_c;
+  double *cut_respa;
 
   double **efield;      // per-atom electric field due to charges
   double **efield_pol;  // per-atom electric field due to induced dipoles

@@ -270,14 +270,12 @@ void PairGCPM::charge_charge(int eflag, int /*vflag*/)
     jlist = firstneigh[i];
     jnum = numneigh[i];
 
-    if (qtmp == 0.0) continue;
-
     for (jj = 0; jj < jnum; jj++) {
       j = jlist[jj];
       factor_coul = special_coul[sbmask(j)];
       j &= NEIGHMASK;
 
-      if (q[j] == 0.0) continue;
+      if (qtmp == 0.0 && q[j] == 0.0) continue;
 
       delx = xtmp - x[j][0];
       dely = ytmp - x[j][1];
@@ -289,6 +287,8 @@ void PairGCPM::charge_charge(int eflag, int /*vflag*/)
         r2inv = 1.0/rsq;
         r = sqrt(rsq);
 
+        bool has_force = (qtmp != 0.0 && q[j] != 0.0);
+
         if (rsq < cut_coulsq) {
           grij = g_ewald * r;
           expm2 = MathSpecial::expmsq(grij);
@@ -298,10 +298,7 @@ void PairGCPM::charge_charge(int eflag, int /*vflag*/)
           expa = MathSpecial::expmsq(arg);
           erfa = 1 - (MathSpecial::my_erfcx(arg) * expa);
 
-          prefactor = qqrd2e*qtmp*q[j]/r;
           falpha = erfa - EWALD_F*arg*expa;
-          forcecoul = prefactor * (falpha - erf + EWALD_F*grij*expm2);
-          if (factor_coul < 1.0) forcecoul -= (1.0-factor_coul)*prefactor*falpha;
 
           // charge-independent field scalar (q[j] factored out so the Newton
           // partner can reuse the same value with q[i] in the reverse direction)
@@ -310,17 +307,11 @@ void PairGCPM::charge_charge(int eflag, int /*vflag*/)
           if (factor_coul < 1.0) efield_scalar -= (1.0-factor_coul) * scale * falpha;
           erfalpha_scalar = scale * (erfa - erf);
 
-          ealpha = prefactor * (erfa-erf);
-
-          if (rsq > rsmooth_sq_c) {
-            rcu = r*rsq;
-            rqu = rsq*rsq;
-            sme = c5_c*rqu*r + c4_c*rqu + c3_c*rcu + c2_c*rsq + c1_c*r + c0_c;
-            smf = 5.0*c5_c*rqu + 4.0*c4_c*rcu + 3.0*c3_c*rsq + 2.0*c2_c*r + c1_c;
-            forcecoul = forcecoul*sme - ealpha*smf*r;
-            ealpha *= sme;
-
-            efield_scalar = efield_scalar*sme - erfalpha_scalar*smf*r;
+          if (has_force) {
+            prefactor = qqrd2e*qtmp*q[j]/r;
+            forcecoul = prefactor * (falpha - erf + EWALD_F*grij*expm2);
+            if (factor_coul < 1.0) forcecoul -= (1.0-factor_coul)*prefactor*falpha;
+            ealpha = prefactor * (erfa-erf);
           }
 
           efield_scalar *= r2inv;
@@ -330,35 +321,45 @@ void PairGCPM::charge_charge(int eflag, int /*vflag*/)
           efield_scalar = 0.0;
         }
 
-        fpair = forcecoul * r2inv;
+        if (has_force) {
+          fpair = forcecoul * r2inv;
 
-        f[i][0] += delx*fpair;
-        f[i][1] += dely*fpair;
-        f[i][2] += delz*fpair;
+          f[i][0] += delx*fpair;
+          f[i][1] += dely*fpair;
+          f[i][2] += delz*fpair;
 
-        efield[i][0] += delx * q[j] * efield_scalar;
-        efield[i][1] += dely * q[j] * efield_scalar;
-        efield[i][2] += delz * q[j] * efield_scalar;
+          if (newton_pair || j < nlocal) {
+            f[j][0] -= delx*fpair;
+            f[j][1] -= dely*fpair;
+            f[j][2] -= delz*fpair;
+          }
 
+          if (eflag) {
+            if (rsq < cut_coulsq) {
+              ecoul = ealpha;
+              if (factor_coul < 1.0) ecoul -= (1.0-factor_coul)*prefactor*erfa;
+            } else ecoul = 0.0;
+          }
+
+          if (evflag) ev_tally(i,j,nlocal,newton_pair,
+                               0.0,ecoul,fpair,delx,dely,delz);
+        }
+
+        // efield at i from q[j]: non-zero only when q[j] != 0
+        if (q[j] != 0.0) {
+          efield[i][0] += delx * q[j] * efield_scalar;
+          efield[i][1] += dely * q[j] * efield_scalar;
+          efield[i][2] += delz * q[j] * efield_scalar;
+        }
+
+        // efield at j from q[i]: non-zero only when qtmp != 0
         if (newton_pair || j < nlocal) {
-          f[j][0] -= delx*fpair;
-          f[j][1] -= dely*fpair;
-          f[j][2] -= delz*fpair;
-
-          efield[j][0] -= delx * qtmp * efield_scalar;
-          efield[j][1] -= dely * qtmp * efield_scalar;
-          efield[j][2] -= delz * qtmp * efield_scalar;
+          if (qtmp != 0.0) {
+            efield[j][0] -= delx * qtmp * efield_scalar;
+            efield[j][1] -= dely * qtmp * efield_scalar;
+            efield[j][2] -= delz * qtmp * efield_scalar;
+          }
         }
-
-        if (eflag) {
-          if (rsq < cut_coulsq) {
-            ecoul = ealpha;
-            if (factor_coul < 1.0) ecoul -= (1.0-factor_coul)*prefactor*erfa;
-          } else ecoul = 0.0;
-        }
-
-        if (evflag) ev_tally(i,j,nlocal,newton_pair,
-                             0.0,ecoul,fpair,delx,dely,delz);
       }
     }
   }
@@ -532,10 +533,13 @@ void PairGCPM::polar(int eflag, int vflag)
         double Phi = falpha - erf_g + EWALD_F*grij*expm2;
         double dPhi_dr = 2.0*EWALD_F*rsq*(aij*aij*aij*expa - g_ewald*g_ewald*g_ewald*expm2);
 
+        double Phi_eff = Phi;
+        double dcoeff = 3.0*Phi - r*dPhi_dr;
+
         double pidotr = mu[i][0]*delx + mu[i][1]*dely + mu[i][2]*delz;
         double fqj = factor_coul * qqrd2e * q[j];
-        double pre1 = fqj*r5inv * (3.0*Phi - dPhi_dr) * pidotr;
-        double pre2 = fqj*r3inv * Phi;
+        double pre1 = fqj*r5inv * dcoeff * pidotr;
+        double pre2 = fqj*r3inv * Phi_eff;
 
         double fcx = pre2*mu[i][0] - pre1*delx;
         double fcy = pre2*mu[i][1] - pre1*dely;
@@ -759,14 +763,12 @@ void PairGCPM::allocate()
 
 void PairGCPM::settings(int narg, char **arg)
 {
-  if (narg < 4 || narg > 5) error->all(FLERR,"Illegal pair_style command");
+  if (narg < 2 || narg > 3) error->all(FLERR,"Illegal pair_style command");
 
-  coul_smooth = utils::numeric(FLERR,arg[0],false,lmp);
-  alpha = utils::numeric(FLERR,arg[1],false,lmp);
-  enable_polar = utils::numeric(FLERR,arg[2],false,lmp);
-  cut_lj_global = utils::numeric(FLERR,arg[3],false,lmp);
-  if (narg == 4) cut_coul = cut_lj_global;
-  else cut_coul = utils::numeric(FLERR,arg[4],false,lmp);
+  enable_polar = utils::numeric(FLERR,arg[0],false,lmp);
+  cut_lj_global = utils::numeric(FLERR,arg[1],false,lmp);
+  if (narg == 2) cut_coul = cut_lj_global;
+  else cut_coul = utils::numeric(FLERR,arg[2],false,lmp);
 
   if (allocated) {
     int i,j;
@@ -831,22 +833,6 @@ void PairGCPM::init_style()
   neighbor->add_request(this);
 
   cut_coulsq = cut_coul * cut_coul;
-
-  c0_c = c1_c = c2_c = c3_c = c4_c = c5_c = 0.0;
-  rsmooth_sq_c = cut_coulsq;
-  if (coul_smooth < 1.0) {
-    double rsm = coul_smooth * cut_coul;
-    double rsm_sq = rsm * rsm;
-    double denom = pow((cut_coul-rsm),5.0);
-    c0_c = cut_coul*cut_coulsq*(cut_coulsq-
-           5.0*cut_coul*rsm+10.0*rsm_sq)/denom;
-    c1_c = -30.0*(cut_coulsq*rsm_sq)/denom;
-    c2_c = 30.0*(cut_coulsq*rsm + cut_coul*rsm_sq)/denom;
-    c3_c = -10.0*(cut_coulsq + 4.0*cut_coul*rsm + rsm_sq)/denom;
-    c4_c = 15.0*(cut_coul+rsm)/denom;
-    c5_c = -6.0/denom;
-    rsmooth_sq_c = rsm_sq;
-  }
 
   if (force->kspace == nullptr)
     error->all(FLERR,"Pair style requires a KSpace style");
@@ -961,8 +947,6 @@ void PairGCPM::write_restart_settings(FILE *fp)
 {
   fwrite(&cut_lj_global,sizeof(double),1,fp);
   fwrite(&cut_coul,sizeof(double),1,fp);
-  fwrite(&coul_smooth,sizeof(double),1,fp);
-  fwrite(&alpha,sizeof(double),1,fp);
   fwrite(&offset_flag,sizeof(int),1,fp);
   fwrite(&mix_flag,sizeof(int),1,fp);
   fwrite(&tail_flag,sizeof(int),1,fp);
@@ -975,16 +959,12 @@ void PairGCPM::read_restart_settings(FILE *fp)
   if (comm->me == 0) {
     utils::sfread(FLERR,&cut_lj_global,sizeof(double),1,fp,nullptr,error);
     utils::sfread(FLERR,&cut_coul,sizeof(double),1,fp,nullptr,error);
-    utils::sfread(FLERR,&coul_smooth,sizeof(double),1,fp,nullptr,error);
-    utils::sfread(FLERR,&alpha,sizeof(double),1,fp,nullptr,error);
     utils::sfread(FLERR,&offset_flag,sizeof(int),1,fp,nullptr,error);
     utils::sfread(FLERR,&mix_flag,sizeof(int),1,fp,nullptr,error);
     utils::sfread(FLERR,&tail_flag,sizeof(int),1,fp,nullptr,error);
   }
   MPI_Bcast(&cut_lj_global,1,MPI_DOUBLE,0,world);
   MPI_Bcast(&cut_coul,1,MPI_DOUBLE,0,world);
-  MPI_Bcast(&coul_smooth,1,MPI_DOUBLE,0,world);
-  MPI_Bcast(&alpha,1,MPI_DOUBLE,0,world);
   MPI_Bcast(&offset_flag,1,MPI_INT,0,world);
   MPI_Bcast(&mix_flag,1,MPI_INT,0,world);
   MPI_Bcast(&tail_flag,1,MPI_INT,0,world);
