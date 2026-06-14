@@ -52,7 +52,7 @@ using namespace EwaldConst;
 #define EPSILON 1.0e-5
 
 enum {EFIELD, EFIELD_POL};
-#define GCPM_DEBUG
+//#define GCPM_DEBUG
 
 /* ---------------------------------------------------------------------- */
 
@@ -461,11 +461,12 @@ void PairGCPM::polar(int eflag, int vflag, int neigh_half)
     }
 
     MPI_Allreduce(&converged, &all_converged, 1, MPI_INT, MPI_MIN, world);
-    if (all_converged) break;
-
-    #ifdef GCPM_DEBUG
-    if (comm->me == 0) printf("iter = %d: not converged\n", iter+1);
-    #endif
+    if (all_converged) {
+      #ifdef GCPM_DEBUG
+      if (comm->me == 0) printf("iter = %d: converged\n", iter+1);
+      #endif
+      break;
+    }
 
     for (i = 0; i < nlocal; i++) {
       if (mu[i][3] != 0.0) {
