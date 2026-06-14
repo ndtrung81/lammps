@@ -52,7 +52,7 @@ using namespace EwaldConst;
 #define EPSILON 1.0e-5
 
 enum {EFIELD, EFIELD_POL};
-//#define GCPM_DEBUG
+#define GCPM_DEBUG
 
 /* ---------------------------------------------------------------------- */
 
@@ -369,7 +369,7 @@ void PairGCPM::charge_charge(int eflag, int /*vflag*/)
    polar interactions: iterative solver for induced dipoles (Eqs. 3 and 5)
 ------------------------------------------------------------------------- */
 
-void PairGCPM::polar(int eflag, int vflag)
+void PairGCPM::polar(int eflag, int vflag, int neigh_half)
 {
   int i,ii,j,jj,inum,jnum,itype,jtype;
   double qtmp,xtmp,ytmp,ztmp,delx,dely,delz,ecoul;
@@ -398,8 +398,7 @@ void PairGCPM::polar(int eflag, int vflag)
   // on subsequent time step: start from the previous timestep's converged dipoles
 
   if (first_polar) {
-    for (ii = 0; ii < inum; ii++) {
-      i = ilist[ii];
+    for (i = 0; i < nlocal; i++) {
       itype = type[i];
       if (mu[i][3] != 0.0) {
         mu[i][0] = alpha_pol[itype][itype] * efield[i][0] / qqrd2e;
@@ -411,8 +410,7 @@ void PairGCPM::polar(int eflag, int vflag)
   }
 
   // seed mu_old from the starting guess so the convergence check is correct on iter 1
-  for (ii = 0; ii < inum; ii++) {
-    i = ilist[ii];
+  for (i = 0; i < nlocal; i++) {
     if (mu[i][3] != 0.0) {
       mu_old[i][0] = mu[i][0];
       mu_old[i][1] = mu[i][1];
@@ -424,19 +422,18 @@ void PairGCPM::polar(int eflag, int vflag)
 
     // Eq. (5): compute E_p from current dipole estimates, then update dipoles from total field
 
-    compute_induced_efield();
+    compute_induced_efield(neigh_half);
 
     // communicate and sum per-atom induced efield
 
-    if (newton_pair) {
+    if (newton_pair && neigh_half == 1) {
       comm_mode = EFIELD_POL;
       comm->reverse_comm(this);
     }
 
     // Eq. (3): p_i = alpha_i * (E_q_i + E_p_i)
 
-    for (ii = 0; ii < inum; ii++) {
-      i = ilist[ii];
+    for (i = 0; i < nlocal; i++) {
       itype = type[i];
       if (mu[i][3] != 0.0) {
         mu[i][0] = alpha_pol[itype][itype] * (efield[i][0] + efield_pol[i][0]) / qqrd2e;
@@ -452,8 +449,7 @@ void PairGCPM::polar(int eflag, int vflag)
     // check for convergence of dipoles: max change in any component of any dipole < tol
 
     int converged = 1, all_converged = 0;
-    for (ii = 0; ii < inum; ii++) {
-      i = ilist[ii];
+    for (i = 0; i < nlocal; i++) {
       if (mu[i][3] != 0.0) {
         if (fabs(mu_old[i][0] - mu[i][0]) > tol ||
             fabs(mu_old[i][1] - mu[i][1]) > tol ||
@@ -471,13 +467,11 @@ void PairGCPM::polar(int eflag, int vflag)
     if (comm->me == 0) printf("iter = %d: not converged\n", iter+1);
     #endif
 
-    for (ii = 0; ii < inum; ii++) {
-      i = ilist[ii];
+    for (i = 0; i < nlocal; i++) {
       if (mu[i][3] != 0.0) {
         mu_old[i][0] = mu[i][0];
         mu_old[i][1] = mu[i][1];
         mu_old[i][2] = mu[i][2];
-        mu_old[i][3] = mu[i][3];
       }
     }
   }
@@ -487,10 +481,7 @@ void PairGCPM::polar(int eflag, int vflag)
 
   for (ii = 0; ii < inum; ii++) {
     i = ilist[ii];
-    itype = type[i];
-
     if (mu[i][3] == 0.0) continue;
-
     if (eflag) {
       ecoul = -0.5 * (mu[i][0]*efield[i][0] + mu[i][1]*efield[i][1] + mu[i][2]*efield[i][2]);
       if (evflag) ev_tally_full(i, 0.0, ecoul, 0.0, 0.0, 0.0, 0.0);
@@ -499,6 +490,7 @@ void PairGCPM::polar(int eflag, int vflag)
     xtmp = x[i][0];
     ytmp = x[i][1];
     ztmp = x[i][2];
+    itype = type[i];
     jlist = firstneigh[i];
     jnum = numneigh[i];
 
@@ -549,7 +541,7 @@ void PairGCPM::polar(int eflag, int vflag)
         f[i][1] += fcy;
         f[i][2] += fcz;
 
-        if (newton_pair || j < nlocal) {
+        if ((newton_pair || j < nlocal) && neigh_half == 1) {
           f[j][0] -= fcx;
           f[j][1] -= fcy;
           f[j][2] -= fcz;
@@ -635,7 +627,7 @@ void PairGCPM::unpack_reverse_comm(int n, int *list, double *buf)
      using Eqs. (6) and (7)
 ------------------------------------------------------------------------- */
 
-void PairGCPM::compute_induced_efield()
+void PairGCPM::compute_induced_efield(int half)
 {
   int i,ii,j,jj,inum,jnum,itype,jtype;
   double xtmp,ytmp,ztmp,delx,dely,delz;
@@ -722,7 +714,7 @@ void PairGCPM::compute_induced_efield()
 
         // Newton partner: E_p_j += T_ji . mu_i = T_ij . mu_i (T symmetric)
 
-        if (newton_pair || j < nlocal) {
+        if ((newton_pair || j < nlocal) && half) {
           efield_pol[j][0] += qqrd2e * (Tij[0][0]*mu[i][0] + Tij[0][1]*mu[i][1] + Tij[0][2]*mu[i][2]);
           efield_pol[j][1] += qqrd2e * (Tij[0][1]*mu[i][0] + Tij[1][1]*mu[i][1] + Tij[1][2]*mu[i][2]);
           efield_pol[j][2] += qqrd2e * (Tij[0][2]*mu[i][0] + Tij[1][2]*mu[i][1] + Tij[2][2]*mu[i][2]);

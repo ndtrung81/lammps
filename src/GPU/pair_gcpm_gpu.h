@@ -43,8 +43,6 @@ class PairGCPMGPU : public PairGCPM {
   double cpu_time;
   void *efield_pinned;
   bool acc_float;
-
-  void polar_full(int eflag, int vflag);
 };
 
 }    // namespace LAMMPS_NS

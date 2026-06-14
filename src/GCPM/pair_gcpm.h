@@ -49,9 +49,9 @@ class PairGCPM : public Pair {
  protected:
   void dispersion(int, int);
   void charge_charge(int, int);
-  void polar(int, int);
+  void polar(int, int, int neigh_half=1);
 
-  void compute_induced_efield();
+  void compute_induced_efield(int neigh_half=1);
 
   double cut_lj_global;
   double **cut_lj, **cut_ljsq;
