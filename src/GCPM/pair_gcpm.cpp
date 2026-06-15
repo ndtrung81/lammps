@@ -70,8 +70,8 @@ PairGCPM::PairGCPM(LAMMPS *lmp) : Pair(lmp)
   efield_pol = nullptr;
   mu_old = nullptr;
   nmax = 0;
-  maxiter = 20;
-  tol = EPSILON;
+  maxiter = 200;
+  tol = 1.0e-9;
 
   // set comm size needed by this Pair
 
@@ -551,6 +551,104 @@ void PairGCPM::polar(int eflag, int vflag, int neigh_half)
         torque[i][0] += pre2 * (mu[i][1]*delz - mu[i][2]*dely);
         torque[i][1] += pre2 * (mu[i][2]*delx - mu[i][0]*delz);
         torque[i][2] += pre2 * (mu[i][0]*dely - mu[i][1]*delx);
+      }
+    }
+  }
+
+  // dipole-dipole polarization force and torque: gradient (at fixed converged
+  // dipoles) of the dipole-dipole term of the full polarization energy, Eq. (8):
+  //   U_dd = -1/2 sum_i p_i . E_p_i = -sum_{i<j} p_i . T_ij . p_j
+  // The polarization energy is already accounted for by the reduced Eq. (9)
+  // above (it equals Eq. (8) at self-consistency), so NO energy is tallied here.
+  // Uses the same cutoff cutsq[itype][jtype] as compute_induced_efield() so that
+  // force and induced field stay consistent.
+
+  for (ii = 0; ii < inum; ii++) {
+    i = ilist[ii];
+    if (mu[i][3] == 0.0) continue;
+
+    xtmp = x[i][0];
+    ytmp = x[i][1];
+    ztmp = x[i][2];
+    itype = type[i];
+    jlist = firstneigh[i];
+    jnum = numneigh[i];
+
+    for (jj = 0; jj < jnum; jj++) {
+      j = jlist[jj];
+      j &= NEIGHMASK;
+
+      if (mu[j][3] == 0.0) continue;
+
+      delx = xtmp - x[j][0];
+      dely = ytmp - x[j][1];
+      delz = ztmp - x[j][2];
+      rsq = delx*delx + dely*dely + delz*delz;
+      jtype = type[j];
+
+      if (rsq < cutsq[itype][jtype]) {
+        r2inv = 1.0/rsq;
+        double r = sqrt(rsq);
+        double r3inv = r2inv/r;
+        double r5inv = r3inv*r2inv;
+
+        double s  = sigmaM[itype][jtype];
+        double s2 = s*s, s3 = s2*s, s5 = s3*s2;
+        double expmsq = exp(-rsq/(4.0*s2));
+        double _erf = erf(r/(2.0*s));
+        double rds = r/(MY_PIS*s);                       // r/(sqrt(pi)*s)
+
+        // Eq. (7) scalars f, g and their radial derivatives f'(r), g'(r)
+        double f_s = _erf - (rds + rds*rsq/(6.0*s2))*expmsq;
+        double g_s = _erf - rds*expmsq;
+        double df  = rsq*rsq/(12.0*MY_PIS*s5)*expmsq;     // f'(r)
+        double dg  = rsq/(2.0*MY_PIS*s3)*expmsq;          // g'(r)
+
+        double pir = mu[i][0]*delx + mu[i][1]*dely + mu[i][2]*delz;
+        double pjr = mu[j][0]*delx + mu[j][1]*dely + mu[j][2]*delz;
+        double pij = mu[i][0]*mu[j][0] + mu[i][1]*mu[j][1] + mu[i][2]*mu[j][2];
+
+        // radial coefficients: d(3f/r^5)/dr / r  and  d(g/r^3)/dr / r
+        double dA_over_r = 3.0*df*r2inv*r2inv*r2inv - 15.0*f_s*r5inv*r2inv;
+        double dB_over_r = dg*r2inv*r2inv - 3.0*g_s*r5inv;
+        double rad = qqrd2e*(pir*pjr*dA_over_r - pij*dB_over_r);
+        double Aq  = qqrd2e*3.0*f_s*r5inv;
+
+        double fdx = rad*delx + Aq*(pjr*mu[i][0] + pir*mu[j][0]);
+        double fdy = rad*dely + Aq*(pjr*mu[i][1] + pir*mu[j][1]);
+        double fdz = rad*delz + Aq*(pjr*mu[i][2] + pir*mu[j][2]);
+
+        f[i][0] += fdx;
+        f[i][1] += fdy;
+        f[i][2] += fdz;
+
+        // torque tau = p x E_p, with E_p = qqrd2e * T_ij . p (Eqs. 5-6, T symmetric)
+        double Txx = (3.0*f_s*delx*delx*r2inv - g_s)*r3inv;
+        double Tyy = (3.0*f_s*dely*dely*r2inv - g_s)*r3inv;
+        double Tzz = (3.0*f_s*delz*delz*r2inv - g_s)*r3inv;
+        double Txy = 3.0*f_s*delx*dely*r2inv*r3inv;
+        double Txz = 3.0*f_s*delx*delz*r2inv*r3inv;
+        double Tyz = 3.0*f_s*dely*delz*r2inv*r3inv;
+
+        double Eix = qqrd2e*(Txx*mu[j][0] + Txy*mu[j][1] + Txz*mu[j][2]);
+        double Eiy = qqrd2e*(Txy*mu[j][0] + Tyy*mu[j][1] + Tyz*mu[j][2]);
+        double Eiz = qqrd2e*(Txz*mu[j][0] + Tyz*mu[j][1] + Tzz*mu[j][2]);
+        torque[i][0] += mu[i][1]*Eiz - mu[i][2]*Eiy;
+        torque[i][1] += mu[i][2]*Eix - mu[i][0]*Eiz;
+        torque[i][2] += mu[i][0]*Eiy - mu[i][1]*Eix;
+
+        if ((newton_pair || j < nlocal) && neigh_half == 1) {
+          f[j][0] -= fdx;
+          f[j][1] -= fdy;
+          f[j][2] -= fdz;
+
+          double Ejx = qqrd2e*(Txx*mu[i][0] + Txy*mu[i][1] + Txz*mu[i][2]);
+          double Ejy = qqrd2e*(Txy*mu[i][0] + Tyy*mu[i][1] + Tyz*mu[i][2]);
+          double Ejz = qqrd2e*(Txz*mu[i][0] + Tyz*mu[i][1] + Tzz*mu[i][2]);
+          torque[j][0] += mu[j][1]*Ejz - mu[j][2]*Ejy;
+          torque[j][1] += mu[j][2]*Ejx - mu[j][0]*Ejz;
+          torque[j][2] += mu[j][0]*Ejy - mu[j][1]*Ejx;
+        }
       }
     }
   }
