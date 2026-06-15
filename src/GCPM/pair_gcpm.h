@@ -54,9 +54,21 @@ class PairGCPM : public Pair {
   void compute_induced_efield(int neigh_half=1);
 
   // reaction-field correction (Eqs. 11-12 of Paricaud et al.)
+  void setup_reaction_field();          // size tables, c_rf; call from init_style()
+  void reaction_field_pre();            // R_q -> efield; call before polar()
+  void reaction_field_post(int eflag);  // U_qq^RF energy + RF site forces; after polar()
   void compute_molecular_dipoles();
   void reaction_field(double **mol_d, double **mol_R);
   void grow_mol_arrays(int n);
+
+  // Tally the virial of a force (fx,fy,fz) on atom i from neighbor j, used
+  // instead of virial_fdotr_compute() (which is wrong for the non-central
+  // polar force under newton on, and is bypassed by the GPU async path).
+  // Half list (neigh_half==1): standard pairwise tally. Full list
+  // (neigh_half==0): half the pairwise virial, since each pair is visited twice.
+  void vtally_force(int i, int j, int neigh_half,
+                    double fx, double fy, double fz,
+                    double delx, double dely, double delz);
 
   double cut_lj_global;
   double **cut_lj, **cut_ljsq;

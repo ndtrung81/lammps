@@ -15,9 +15,9 @@ Syntax
 
 .. parsed-literal::
 
-     *gcpm* args = smooth smooth2 cutoff (cutoff2)
-       smooth   = smoothing onset within Buckingham cutoff (ratio)
-       smooth2  = smoothing onset within Coulombic cutoff (ratio)
+     *gcpm* args = enable_polar eps_rf cutoff (cutoff2)
+       enable_polar = 1 to solve for induced dipoles (polarizable), 0 for charges only
+       eps_rf   = dielectric constant of the reaction-field continuum (<= 0 disables the reaction field)
        cutoff   = global cutoff for Buckingham (and Coulombic if only 1 arg) (distance units)
        cutoff2  = global cutoff for Coulombic (optional) (distance units)
 
@@ -26,8 +26,9 @@ Examples
 
 .. code-block:: LAMMPS
 
-   pair_style gcpm   0.9000  1.0000  12.0000
-   pair_coeff 1  1   1030.  3.061  457.179  4.521  0.608
+   pair_style gcpm   1   78.0  12.0
+   pair_coeff 1  1   0.1550  3.1536  12.75  0.0    0.000
+   pair_coeff 3  3   0.0     1.0     12.75  1.444  0.610
 
 Description
 """""""""""

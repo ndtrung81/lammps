@@ -177,8 +177,15 @@ void PairGCPMGPU::compute(int eflag, int vflag)
     for (int i = atom->nlocal; i < ntotal; i++)
       efield_pol[i][0] = efield_pol[i][1] = efield_pol[i][2] = 0.0;
 
+    // reaction field: fold R_q into efield before the solver (R_p is folded
+    // into efield_pol each iteration inside polar()); RF energy and site
+    // forces are applied afterward. Same CPU code path as PairGCPM::compute().
+    reaction_field_pre();
+
     // Polar iterative solver: uses full neigh list (REQ_FULL).
     polar(eflag, vflag, 0);
+
+    reaction_field_post(eflag);
   }
 
   if (vflag_fdotr) virial_fdotr_compute();
@@ -216,6 +223,8 @@ void PairGCPMGPU::init_style()
     error->all(FLERR, "Pair style gcpm/gpu requires a KSpace style");
   g_ewald = force->kspace->g_ewald;
   cut_coulsq = cut_coul * cut_coul;
+
+  setup_reaction_field();
 
   int maxspecial = 0;
   if (atom->molecular != Atom::ATOMIC) maxspecial = atom->maxspecial;
