@@ -14,7 +14,7 @@
 
 /* ----------------------------------------------------------------------
    Contributing author: Trung Nguyen (ndactrung@gmail.com)
-                        with Claude Code Sonnet 4.6
+                        with Claude Code Sonnet 4.6 and Opus 4.8
    Reference: Paricaud et al., J. Chem. Phys. 122, 244511 (2005)
    Buckingham exp-6 dispersion: Eq. (10) of the reference
      phi = eps/(1-6/gamma) * [6/gamma * exp(gamma*(1-r/sigma)) - (sigma/r)^6]
@@ -30,6 +30,7 @@
 
 #include "atom.h"
 #include "comm.h"
+#include "domain.h"
 #include "error.h"
 #include "ewald_const.h"
 #include "force.h"
@@ -70,8 +71,8 @@ PairGCPM::PairGCPM(LAMMPS *lmp) : Pair(lmp)
   efield_pol = nullptr;
   mu_old = nullptr;
   nmax = 0;
-  maxiter = 200;
-  tol = 1.0e-9;
+  maxiter = 50;
+  tol = 1.0e-5;
 
   // set comm size needed by this Pair
 
@@ -79,6 +80,15 @@ PairGCPM::PairGCPM(LAMMPS *lmp) : Pair(lmp)
   comm_reverse = 3;
   comm_mode = EFIELD_POL;
   first_polar = 1;
+
+  // reaction-field correction (disabled unless eps_rf > 0 is given)
+
+  enable_rf = 0;
+  eps_rf = 0.0;
+  c_rf = 0.0;
+  nmol = 0;
+  nmol_max = 0;
+  mol_mu = mol_p = mol_x = mol_Rq = mol_Rp = nullptr;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -106,6 +116,12 @@ PairGCPM::~PairGCPM()
   memory->destroy(efield);
   memory->destroy(efield_pol);
   memory->destroy(mu_old);
+
+  memory->destroy(mol_mu);
+  memory->destroy(mol_p);
+  memory->destroy(mol_x);
+  memory->destroy(mol_Rq);
+  memory->destroy(mol_Rp);
 
   if (ftable) free_tables();
 }
@@ -140,7 +156,80 @@ void PairGCPM::compute(int eflag, int vflag)
       comm_mode = EFIELD;
       comm->reverse_comm(this);
     }
+
+    // reaction field from the permanent molecular dipoles (Eq. 11, R_i^q).
+    // It is constant during the dipole iterations, so compute it once here and
+    // fold it into efield at the M sites. The polarization energy tally
+    // -1/2 p_i.efield_i then automatically includes the -1/2 p_i.R_i^q term.
+
+    if (enable_rf) {
+      compute_molecular_dipoles();
+      reaction_field(mol_mu, mol_Rq);
+
+      double **mu = atom->mu;
+      tagint *molecule = atom->molecule;
+      int nlocal = atom->nlocal;
+      for (int i = 0; i < nlocal; i++) {
+        if (mu[i][3] == 0.0) continue;
+        int m = (int) molecule[i];
+        efield[i][0] += mol_Rq[m][0];
+        efield[i][1] += mol_Rq[m][1];
+        efield[i][2] += mol_Rq[m][2];
+      }
+    }
+
     polar(eflag, vflag);
+
+    // permanent-charge reaction-field energy (Eq. 12) and the reaction-field
+    // site forces F_k = q_k*(R_m^q + 1/2 R_m^p). mol_Rp is built from the
+    // converged induced dipoles. The -1/2 p_i.R_i^q part of the energy was
+    // already tallied inside polar() via the folded efield, so here we add
+    // only the permanent-permanent term -1/2 sum_i mu_i.R_i^q.
+
+    if (enable_rf) {
+      double **mu = atom->mu;
+      double **f = atom->f;
+      double *q = atom->q;
+      tagint *molecule = atom->molecule;
+      int nlocal = atom->nlocal;
+
+      // induced molecular dipoles (on the M sites) -> R_i^p (Eq. 11)
+      for (int m = 0; m <= nmol; m++)
+        mol_p[m][0] = mol_p[m][1] = mol_p[m][2] = 0.0;
+      for (int i = 0; i < nlocal; i++) {
+        if (mu[i][3] == 0.0) continue;
+        int m = (int) molecule[i];
+        mol_p[m][0] = mu[i][0];
+        mol_p[m][1] = mu[i][1];
+        mol_p[m][2] = mu[i][2];
+      }
+      MPI_Allreduce(MPI_IN_PLACE, &mol_p[0][0], 3*(nmol+1), MPI_DOUBLE, MPI_SUM, world);
+      reaction_field(mol_p, mol_Rp);
+
+      // U_qq^RF = -1/2 sum_i mu_i.R_i^q, attributed to the M site of molecule i
+      if (eflag) {
+        double e_rf = 0.0;
+        for (int i = 0; i < nlocal; i++) {
+          if (mu[i][3] == 0.0) continue;
+          int m = (int) molecule[i];
+          double e = -0.5 * (mol_mu[m][0]*mol_Rq[m][0] +
+                             mol_mu[m][1]*mol_Rq[m][1] +
+                             mol_mu[m][2]*mol_Rq[m][2]);
+          e_rf += e;
+          if (eflag_atom) eatom[i] += e;
+        }
+        if (eflag_global) eng_coul += e_rf;
+      }
+
+      // reaction-field forces on every charged site of each molecule
+      for (int i = 0; i < nlocal; i++) {
+        if (q[i] == 0.0) continue;
+        int m = (int) molecule[i];
+        f[i][0] += q[i]*(mol_Rq[m][0] + 0.5*mol_Rp[m][0]);
+        f[i][1] += q[i]*(mol_Rq[m][1] + 0.5*mol_Rp[m][1]);
+        f[i][2] += q[i]*(mol_Rq[m][2] + 0.5*mol_Rp[m][2]);
+      }
+    }
   }
 
   if (vflag_fdotr) virial_fdotr_compute();
@@ -431,6 +520,32 @@ void PairGCPM::polar(int eflag, int vflag, int neigh_half)
       comm->reverse_comm(this);
     }
 
+    // reaction field from the current induced dipoles (Eq. 11, R_i^p), folded
+    // into efield_pol at the M sites. Recomputed every iteration because it
+    // depends on the evolving induced dipoles.
+
+    if (enable_rf) {
+      tagint *molecule = atom->molecule;
+      for (int m = 0; m <= nmol; m++)
+        mol_p[m][0] = mol_p[m][1] = mol_p[m][2] = 0.0;
+      for (i = 0; i < nlocal; i++) {
+        if (mu[i][3] == 0.0) continue;
+        int m = (int) molecule[i];
+        mol_p[m][0] = mu[i][0];
+        mol_p[m][1] = mu[i][1];
+        mol_p[m][2] = mu[i][2];
+      }
+      MPI_Allreduce(MPI_IN_PLACE, &mol_p[0][0], 3*(nmol+1), MPI_DOUBLE, MPI_SUM, world);
+      reaction_field(mol_p, mol_Rp);
+      for (i = 0; i < nlocal; i++) {
+        if (mu[i][3] == 0.0) continue;
+        int m = (int) molecule[i];
+        efield_pol[i][0] += mol_Rp[m][0];
+        efield_pol[i][1] += mol_Rp[m][1];
+        efield_pol[i][2] += mol_Rp[m][2];
+      }
+    }
+
     // Eq. (3): p_i = alpha_i * (E_q_i + E_p_i)
 
     for (i = 0; i < nlocal; i++) {
@@ -446,14 +561,16 @@ void PairGCPM::polar(int eflag, int vflag, int neigh_half)
 
     comm->forward_comm(this);
 
-    // check for convergence of dipoles: max change in any component of any dipole < tol
+    // check for convergence of dipoles: max change in any dipole magnitude < tol
+    //  Paricaud et al. before Eq. (8)
 
     int converged = 1, all_converged = 0;
     for (i = 0; i < nlocal; i++) {
       if (mu[i][3] != 0.0) {
-        if (fabs(mu_old[i][0] - mu[i][0]) > tol ||
-            fabs(mu_old[i][1] - mu[i][1]) > tol ||
-            fabs(mu_old[i][2] - mu[i][2]) > tol) {
+        double diff = (mu_old[i][0]-mu[i][0])*(mu_old[i][0]-mu[i][0]) +
+                 (mu_old[i][1]-mu[i][1])*(mu_old[i][1]-mu[i][1]) +
+                 (mu_old[i][2]-mu[i][2])*(mu_old[i][2]-mu[i][2]);
+        if (diff > tol*tol) {
           converged = 0;
           break;
         }
@@ -823,6 +940,113 @@ void PairGCPM::compute_induced_efield(int half)
   }
 }
 
+/* ----------------------------------------------------------------------
+   grow the per-molecule reaction-field tables to hold molecule ids 0..n
+------------------------------------------------------------------------- */
+
+void PairGCPM::grow_mol_arrays(int n)
+{
+  if (n <= nmol_max) return;
+  nmol_max = n;
+  memory->destroy(mol_mu);
+  memory->destroy(mol_p);
+  memory->destroy(mol_x);
+  memory->destroy(mol_Rq);
+  memory->destroy(mol_Rp);
+  memory->create(mol_mu, nmol_max+1, 3, "pair:mol_mu");
+  memory->create(mol_p,  nmol_max+1, 3, "pair:mol_p");
+  memory->create(mol_x,  nmol_max+1, 3, "pair:mol_x");
+  memory->create(mol_Rq, nmol_max+1, 3, "pair:mol_Rq");
+  memory->create(mol_Rp, nmol_max+1, 3, "pair:mol_Rp");
+}
+
+/* ----------------------------------------------------------------------
+   permanent molecular dipoles mu_i = sum_{a in i} q_a r_a (Eq. 11) and the
+   cavity center (the M site, unwrapped) for every molecule. Atoms are
+   unwrapped with their image flags so the neutral-molecule dipole is
+   periodic-image independent, and the result is reduced across ranks so
+   every rank holds the full per-molecule tables.
+------------------------------------------------------------------------- */
+
+void PairGCPM::compute_molecular_dipoles()
+{
+  double **x = atom->x;
+  double *q = atom->q;
+  double **mu = atom->mu;
+  tagint *molecule = atom->molecule;
+  imageint *image = atom->image;
+  int nlocal = atom->nlocal;
+
+  // number of molecules = largest molecule id over all ranks
+
+  tagint maxmol_local = 0;
+  for (int i = 0; i < nlocal; i++)
+    if (molecule[i] > maxmol_local) maxmol_local = molecule[i];
+  tagint maxmol = 0;
+  MPI_Allreduce(&maxmol_local, &maxmol, 1, MPI_LMP_TAGINT, MPI_MAX, world);
+  nmol = (int) maxmol;
+
+  grow_mol_arrays(nmol);
+
+  for (int m = 0; m <= nmol; m++) {
+    mol_mu[m][0] = mol_mu[m][1] = mol_mu[m][2] = 0.0;
+    mol_x[m][0]  = mol_x[m][1]  = mol_x[m][2]  = 0.0;
+  }
+
+  double ux[3];
+  for (int i = 0; i < nlocal; i++) {
+    int m = (int) molecule[i];
+    if (m <= 0) continue;
+    domain->unmap(x[i], image[i], ux);
+    mol_mu[m][0] += q[i]*ux[0];
+    mol_mu[m][1] += q[i]*ux[1];
+    mol_mu[m][2] += q[i]*ux[2];
+    // the M site (only atom carrying an induced dipole) is the cavity center;
+    // it is local on exactly one rank, so summing gives the correct value
+    if (mu[i][3] != 0.0) {
+      mol_x[m][0] = ux[0];
+      mol_x[m][1] = ux[1];
+      mol_x[m][2] = ux[2];
+    }
+  }
+
+  MPI_Allreduce(MPI_IN_PLACE, &mol_mu[0][0], 3*(nmol+1), MPI_DOUBLE, MPI_SUM, world);
+  MPI_Allreduce(MPI_IN_PLACE, &mol_x[0][0],  3*(nmol+1), MPI_DOUBLE, MPI_SUM, world);
+}
+
+/* ----------------------------------------------------------------------
+   reaction field per molecule (Eq. 11): R_i = c_rf * sum_j d_j over molecules
+   j (including i itself) whose cavity centers lie within cut_coul of i.
+   c_rf already carries the qqrd2e factor so R has the same field units as
+   efield. O(nmol^2); each rank computes the full table redundantly.
+------------------------------------------------------------------------- */
+
+void PairGCPM::reaction_field(double **mol_d, double **mol_R)
+{
+  for (int i = 1; i <= nmol; i++) {
+    double sx = mol_d[i][0];
+    double sy = mol_d[i][1];
+    double sz = mol_d[i][2];
+    for (int j = 1; j <= nmol; j++) {
+      if (j == i) continue;
+      double delta[3];
+      delta[0] = mol_x[i][0] - mol_x[j][0];
+      delta[1] = mol_x[i][1] - mol_x[j][1];
+      delta[2] = mol_x[i][2] - mol_x[j][2];
+      domain->minimum_image(FLERR, delta);
+      double rsq = delta[0]*delta[0] + delta[1]*delta[1] + delta[2]*delta[2];
+      if (rsq < cut_coulsq) {
+        sx += mol_d[j][0];
+        sy += mol_d[j][1];
+        sz += mol_d[j][2];
+      }
+    }
+    mol_R[i][0] = c_rf * sx;
+    mol_R[i][1] = c_rf * sy;
+    mol_R[i][2] = c_rf * sz;
+  }
+}
+
 /* ---------------------------------------------------------------------- */
 
 void PairGCPM::allocate()
@@ -854,12 +1078,22 @@ void PairGCPM::allocate()
 
 void PairGCPM::settings(int narg, char **arg)
 {
-  if (narg < 2 || narg > 3) error->all(FLERR,"Illegal pair_style command");
+  if (narg < 2 || narg > 4) error->all(FLERR,"Illegal pair_style command");
 
   enable_polar = utils::numeric(FLERR,arg[0],false,lmp);
   cut_lj_global = utils::numeric(FLERR,arg[1],false,lmp);
-  if (narg == 2) cut_coul = cut_lj_global;
+  if (narg < 3) cut_coul = cut_lj_global;
   else cut_coul = utils::numeric(FLERR,arg[2],false,lmp);
+
+  // optional reaction-field correction: 4th arg is the continuum dielectric
+  // eps_rf. eps_rf <= 0 (or absent) disables the correction.
+
+  enable_rf = 0;
+  eps_rf = 0.0;
+  if (narg == 4) {
+    eps_rf = utils::numeric(FLERR,arg[3],false,lmp);
+    if (eps_rf > 0.0) enable_rf = 1;
+  }
 
   if (allocated) {
     int i,j;
@@ -928,6 +1162,21 @@ void PairGCPM::init_style()
   if (force->kspace == nullptr)
     error->all(FLERR,"Pair style requires a KSpace style");
   g_ewald = force->kspace->g_ewald;
+
+  if (enable_rf) {
+    if (!enable_polar)
+      error->all(FLERR,"Pair gcpm reaction field requires enable_polar = 1");
+    if (!atom->molecule_flag)
+      error->all(FLERR,"Pair gcpm reaction field requires atom molecule IDs");
+
+    // C_RF = (eps_rf-1)/(2*pi*eps0*(2*eps_rf+1)*rc^3)
+    //      = 2*qqrd2e*(eps_rf-1)/((2*eps_rf+1)*rc^3)   since qqrd2e = 1/(4*pi*eps0)
+    // qqrd2e is baked in so R shares the field units of efield.
+
+    double qqrd2e = force->qqrd2e;
+    double rc3 = cut_coul*cut_coul*cut_coul;
+    c_rf = 2.0*qqrd2e*(eps_rf - 1.0) / ((2.0*eps_rf + 1.0)*rc3);
+  }
 }
 
 /* ---------------------------------------------------------------------- */

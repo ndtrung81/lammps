@@ -53,6 +53,11 @@ class PairGCPM : public Pair {
 
   void compute_induced_efield(int neigh_half=1);
 
+  // reaction-field correction (Eqs. 11-12 of Paricaud et al.)
+  void compute_molecular_dipoles();
+  void reaction_field(double **mol_d, double **mol_R);
+  void grow_mol_arrays(int n);
+
   double cut_lj_global;
   double **cut_lj, **cut_ljsq;
   double cut_coul, cut_coulsq;
@@ -77,6 +82,18 @@ class PairGCPM : public Pair {
   int enable_polar;     // 1 if polar interactions enabled, 0 if not
   int comm_mode;        // 0 = reverse-comm efield, 1 = reverse-comm efield_pol
   int first_polar;      // 1 on first call to polar(), 0 thereafter (warm-start flag)
+
+  // reaction-field correction (Onsager continuum, Eqs. 11-12 of Paricaud et al.)
+  int enable_rf;        // 1 if reaction-field correction enabled, 0 if not
+  double eps_rf;        // dielectric constant of the continuum surrounding the cavity
+  double c_rf;          // RF prefactor 2*qqrd2e*(eps_rf-1)/((2*eps_rf+1)*rc^3), field units
+  int nmol;             // largest molecule id (number of molecules - 1-indexed)
+  int nmol_max;         // allocated size of the per-molecule reaction-field tables
+  double **mol_mu;      // per-molecule permanent dipole sum_a q_a r_a [e*A]
+  double **mol_p;       // per-molecule induced dipole (on the M site) [e*A]
+  double **mol_x;       // per-molecule cavity center (the M site, unwrapped) [A]
+  double **mol_Rq;      // per-molecule reaction field from permanent dipoles
+  double **mol_Rp;      // per-molecule reaction field from induced dipoles
 
   virtual void allocate();
 };
