@@ -86,6 +86,7 @@ class GCPM : public BaseCharge<numtyp, acctyp> {
   UCL_D_Vec<acctyp> dev_efield;
   UCL_H_Vec<acctyp> host_efield;
   UCL_Kernel k_efield;
+  int _efield_max;   // allocated atom capacity of the efield buffers
 
  private:
   bool _allocated;

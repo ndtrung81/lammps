@@ -96,9 +96,12 @@ int GCPMT::init(const int ntypes, double **host_cutsq,
   // Register efield kernel from the same compiled GPU program
   k_efield.set_function(*this->pair_program, "k_gcpm_efield");
 
-  // Allocate per-atom efield buffers (3 acctyp values per atom)
-  dev_efield.alloc(3*nall, *(this->ucl_device), UCL_WRITE_ONLY);
-  host_efield.alloc(3*nall, *(this->ucl_device), UCL_READ_WRITE);
+  // Allocate per-atom efield buffers (3 acctyp values per atom). These must be
+  // resized when the device atom buffers grow (atoms migrate under MPI), see
+  // compute_efield().
+  _efield_max = nall;
+  dev_efield.alloc(3*_efield_max, *(this->ucl_device), UCL_WRITE_ONLY);
+  host_efield.alloc(3*_efield_max, *(this->ucl_device), UCL_READ_WRITE);
 
   coeff1.alloc(lj_types*lj_types,*(this->ucl_device),UCL_READ_ONLY);
   this->atom->type_pack4(ntypes,lj_types,coeff1,host_write,
@@ -207,6 +210,20 @@ void GCPMT::loop_efield() {
 
 template <class numtyp, class acctyp>
 void GCPMT::compute_efield(void **efield_ptr) {
+  // The efield buffers are allocated in init() at the initial nall. Atoms
+  // migrate between subdomains at reneighboring, so a rank's atom count can
+  // grow under MPI. Resize the buffers to match the (already-resized) device
+  // atom buffers before the kernel writes into them, otherwise the kernel and
+  // the host copy run out of bounds (crash under >1 MPI rank).
+  int nmax = this->atom->max_atoms();
+  if (nmax > _efield_max) {
+    _efield_max = nmax;
+    dev_efield.clear();
+    host_efield.clear();
+    dev_efield.alloc(3*_efield_max, *(this->ucl_device), UCL_WRITE_ONLY);
+    host_efield.alloc(3*_efield_max, *(this->ucl_device), UCL_READ_WRITE);
+  }
+
   loop_efield();
   int ainum = this->ans->inum();
   ucl_copy(host_efield, dev_efield, 3*ainum, false);
