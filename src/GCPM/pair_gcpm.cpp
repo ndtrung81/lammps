@@ -16,14 +16,43 @@
    Contributing author: Trung Nguyen (ndactrung@gmail.com)
                         with Claude Code Sonnet 4.6 and Opus 4.8
    Reference: Paricaud et al., J. Chem. Phys. 122, 244511 (2005)
+
+   Gaussian charge polarizable model (GCPM), consistent with the original
+   Fortran code (folder MD_water/). This base class is the reaction-field form:
+   the Gaussian-smeared charge-charge and charge-dipole interactions are summed
+   in real space to cut_coul, with NO Ewald/PPPM long-range summation, and the
+   long-range tail is supplied by a per-pair Onsager/Tironi reaction field (the
+   Fortran "ferf" terms), enabled when eps_rf > 0.
+
    Buckingham exp-6 dispersion: Eq. (10) of the reference
      phi = eps/(1-6/gamma) * [6/gamma * exp(gamma*(1-r/sigma)) - (sigma/r)^6]
    stored as the equivalent standard Buckingham A*exp(-r/rho) - C6/r^6 with:
      A   = 6*eps*exp(gamma)/(gamma-6)
      rho = sigma/gamma  (i.e. buck2 = 1/rho = gamma/sigma)
      C6  = gamma*eps*sigma^6/(gamma-6)
-   Coulomb interactions are computed with Gaussian charge smearing and
-    long-range k-space summation.
+
+   Reaction-field bookkeeping (matching force.f), with
+     c_rf = 2*qqrd2e*(eps_rf-1)/((2*eps_rf+1)*rc^3) = qqrd2e * ferf:
+     (A) charge-charge   : force -qi*qj*c_rf*r_vec, energy 0.5*qi*qj*c_rf*r^2
+     (B) charge->dipole  : efield_i += -c_rf*qj*r_vec  (folded into efield, so
+                           the Eq.(9) polarization energy -1/2 p.E_q carries the
+                           charge-dipole RF energy)
+     (C) dipole->dipole  : efield_pol_i += c_rf*mu_j  (+ self c_rf*mu_i)
+     (D) charge-dipole   : a charge in the uniform reaction field c_rf*mu of a
+                           dipole feels force q*c_rf*mu
+   The reaction field is a continuum-cavity property and is applied to every
+   pair within cut_coul (it does NOT use special_coul scaling). For rigid
+   molecules the intramolecular RF forces are internal and are projected out by
+   the rigid-body integrator; the intramolecular pairs supply the self terms of
+   (B)/(D) automatically, so no separate molecular self term is needed (only the
+   dipole self term of (C), which has no intramolecular M-M pair, is added
+   explicitly).
+
+   The long-range (Ewald/PPPM) form is the derived class PairGCPMLong, which
+   overrides only charge_charge()/compute_induced_efield()/polar() and the
+   compute()/init_style() flow; the per-molecule reaction-field helpers below
+   (setup_reaction_field, reaction_field_pre/post, reaction_field,
+   compute_molecular_dipoles, grow_mol_arrays) are used by that derived class.
 ------------------------------------------------------------------------- */
 
 #include "pair_gcpm.h"
@@ -34,14 +63,11 @@
 #include "error.h"
 #include "ewald_const.h"
 #include "force.h"
-#include "kspace.h"
 #include "math_const.h"
 #include "math_special.h"
 #include "memory.h"
-#include "modify.h"
 #include "neigh_list.h"
 #include "neighbor.h"
-#include "update.h"
 
 #include <cmath>
 #include <cstring>
@@ -50,16 +76,16 @@ using namespace LAMMPS_NS;
 using namespace MathConst;
 using namespace EwaldConst;
 
-#define EPSILON 1.0e-5
-
+// reverse-comm selector for comm_mode (EFIELD = 0 -> efield, EFIELD_POL = 1 -> efield_pol)
 enum {EFIELD, EFIELD_POL};
-//#define GCPM_DEBUG
 
 /* ---------------------------------------------------------------------- */
 
 PairGCPM::PairGCPM(LAMMPS *lmp) : Pair(lmp)
 {
-  ewaldflag = pppmflag = 1;
+  // reaction-field Coulomb: no long-range k-space (the derived PairGCPMLong sets
+  // these to 1). The reaction field replaces Ewald in this base class.
+  ewaldflag = pppmflag = 0;
   respa_enable = 0;
   single_enable = 0;
   writedata = 1;
@@ -133,7 +159,11 @@ PairGCPM::~PairGCPM()
   if (ftable) free_tables();
 }
 
-/* ---------------------------------------------------------------------- */
+/* ----------------------------------------------------------------------
+   compute(): dispersion + smeared real-space Coulomb + the iterative polar
+   solver. The reaction field is handled entirely per pair inside
+   charge_charge()/polar() (no per-molecule reaction_field_pre/post passes).
+------------------------------------------------------------------------- */
 
 void PairGCPM::compute(int eflag, int vflag)
 {
@@ -163,9 +193,7 @@ void PairGCPM::compute(int eflag, int vflag)
       comm_mode = EFIELD;
       comm->reverse_comm(this);
     }
-    reaction_field_pre();
-    polar(eflag, vflag);
-    reaction_field_post(eflag);
+    polar(eflag, vflag, 1);
   }
 
   if (vflag_fdotr) virial_fdotr_compute();
@@ -252,7 +280,13 @@ void PairGCPM::dispersion(int eflag, int /*vflag*/)
 
 /* ----------------------------------------------------------------------
    charge-charge interactions between 2 Gaussian charge distributions
-   (Eq. 4 in Paricaud et al.)
+   (Eq. 4 in Paricaud et al.), summed in real space with NO Ewald subtraction.
+   Adds the per-pair charge-charge reaction field (term A) and the charge->dipole
+   reaction-field contribution to efield (term B).
+   special_coul scales the smeared Coulomb (factor_coul = 0 fully excludes
+   intramolecular pairs; with no k-space there is nothing to subtract back). The
+   reaction-field terms are continuum-cavity contributions and are NOT scaled by
+   special_coul -- they apply to every pair within cut_coul.
 ------------------------------------------------------------------------- */
 
 void PairGCPM::charge_charge(int eflag, int /*vflag*/)
@@ -260,16 +294,13 @@ void PairGCPM::charge_charge(int eflag, int /*vflag*/)
   int i,ii,j,jj,inum,jnum,itype,jtype;
   double qtmp,xtmp,ytmp,ztmp,delx,dely,delz,ecoul,fpair;
   double r,r2inv,forcecoul,factor_coul;
-  double grij,expm2,prefactor;
-  double efield_i;
+  double arg,expa,erfa,falpha;
+  double efield_scalar;
+  double rsq;
   int *ilist,*jlist,*numneigh,**firstneigh;
 
-  double rcu,rqu,sme,smf;
-  double erfa,expa,arg,falpha,ealpha;
-  double erf,efield_scalar,erfalpha_scalar;
-  double rsq;
-
   ecoul = 0.0;
+  forcecoul = 0.0;
 
   double **x = atom->x;
   double **f = atom->f;
@@ -314,40 +345,41 @@ void PairGCPM::charge_charge(int eflag, int /*vflag*/)
 
         bool has_force = (qtmp != 0.0 && q[j] != 0.0);
 
+        double prefactor = 0.0;
         if (rsq < cut_coulsq) {
-          grij = g_ewald * r;
-          expm2 = MathSpecial::expmsq(grij);
-          erf = 1 - (MathSpecial::my_erfcx(grij) * expm2);
-
           arg = alpha_ij[itype][jtype] * r;
           expa = MathSpecial::expmsq(arg);
-          erfa = 1 - (MathSpecial::my_erfcx(arg) * expa);
+          erfa = 1.0 - (MathSpecial::my_erfcx(arg) * expa);
 
+          // smeared Coulomb scalar (no Ewald real-space subtraction)
           falpha = erfa - EWALD_F*arg*expa;
 
           // charge-independent field scalar (q[j] factored out so the Newton
           // partner can reuse the same value with q[i] in the reverse direction)
           double scale = qqrd2e / r;
-          efield_scalar = scale * (falpha - erf + EWALD_F*grij*expm2);
-          if (factor_coul < 1.0) efield_scalar -= (1.0-factor_coul) * scale * falpha;
-          erfalpha_scalar = scale * (erfa - erf);
+          efield_scalar = factor_coul * scale * falpha * r2inv;
 
           if (has_force) {
             prefactor = qqrd2e*qtmp*q[j]/r;
-            forcecoul = prefactor * (falpha - erf + EWALD_F*grij*expm2);
-            if (factor_coul < 1.0) forcecoul -= (1.0-factor_coul)*prefactor*falpha;
-            ealpha = prefactor * (erfa-erf);
+            forcecoul = factor_coul * prefactor * falpha;
           }
 
-          efield_scalar *= r2inv;
+          // (B) charge->dipole reaction field: efield_i += -c_rf*q[j]*r_vec.
+          // Folded into efield_scalar (which multiplies r_vec*q[j]); not scaled
+          // by factor_coul (the intramolecular pairs supply the self term).
+          if (enable_rf) efield_scalar -= c_rf;
 
         } else {
           forcecoul = 0.0;
           efield_scalar = 0.0;
+          erfa = 0.0;
         }
 
         if (has_force) {
           fpair = forcecoul * r2inv;
+
+          // (A) charge-charge reaction-field force: -qi*qj*c_rf*r_vec
+          if (enable_rf && rsq < cut_coulsq) fpair -= qtmp*q[j]*c_rf;
 
           f[i][0] += delx*fpair;
           f[i][1] += dely*fpair;
@@ -361,8 +393,9 @@ void PairGCPM::charge_charge(int eflag, int /*vflag*/)
 
           if (eflag) {
             if (rsq < cut_coulsq) {
-              ecoul = ealpha;
-              if (factor_coul < 1.0) ecoul -= (1.0-factor_coul)*prefactor*erfa;
+              ecoul = factor_coul * prefactor * erfa;
+              // (A) charge-charge reaction-field energy: 0.5*qi*qj*c_rf*r^2
+              if (enable_rf) ecoul += 0.5*qtmp*q[j]*c_rf*rsq;
             } else ecoul = 0.0;
           }
 
@@ -391,7 +424,130 @@ void PairGCPM::charge_charge(int eflag, int /*vflag*/)
 }
 
 /* ----------------------------------------------------------------------
-   polar interactions: iterative solver for induced dipoles (Eqs. 3 and 5)
+   induced electric field (Eq. 5) from the current dipole estimates, plus the
+   per-pair dipole->dipole reaction field (term C): efield_pol_i += c_rf*mu_j
+   for every M-M pair within cut_coul, and the self term efield_pol_i += c_rf*mu_i
+   (no intramolecular M-M pair exists, so it is added explicitly here).
+------------------------------------------------------------------------- */
+
+void PairGCPM::compute_induced_efield(int half)
+{
+  int i,ii,j,jj,inum,jnum,itype,jtype;
+  double xtmp,ytmp,ztmp,delx,dely,delz;
+  double rsq,r,r2inv,r3inv;
+  int *ilist,*jlist,*numneigh,**firstneigh;
+  double sigmaM_ij,sigmaM_ij2;
+  double _erf,expmsq,rdivsigmaM,f,g;
+  double Tij[3][3];
+
+  double **x = atom->x;
+  double **mu = atom->mu;
+  int *type = atom->type;
+  double qqrd2e = force->qqrd2e;
+  int nlocal = atom->nlocal;
+  int newton_pair = force->newton_pair;
+
+  // zero efield_pol for all atoms (local + ghost) before accumulation
+
+  int ntotal = atom->nlocal + atom->nghost;
+  for (i = 0; i < ntotal; i++)
+    efield_pol[i][0] = efield_pol[i][1] = efield_pol[i][2] = 0.0;
+
+  inum = list->inum;
+  ilist = list->ilist;
+  numneigh = list->numneigh;
+  firstneigh = list->firstneigh;
+
+  for (ii = 0; ii < inum; ii++) {
+    i = ilist[ii];
+
+    if (mu[i][3] == 0.0) continue;
+
+    xtmp = x[i][0];
+    ytmp = x[i][1];
+    ztmp = x[i][2];
+    itype = type[i];
+    jlist = firstneigh[i];
+    jnum = numneigh[i];
+
+    for (jj = 0; jj < jnum; jj++) {
+      j = jlist[jj];
+      j &= NEIGHMASK;
+
+      if (mu[j][3] == 0.0) continue;
+
+      delx = xtmp - x[j][0];
+      dely = ytmp - x[j][1];
+      delz = ztmp - x[j][2];
+      rsq = delx*delx + dely*dely + delz*delz;
+      jtype = type[j];
+
+      if (rsq < cutsq[itype][jtype]) {
+        r2inv = 1.0/rsq;
+        r = sqrt(rsq);
+        r3inv = 1.0/rsq/r;
+
+        sigmaM_ij = sigmaM[itype][jtype];
+        sigmaM_ij2 = sigmaM_ij * sigmaM_ij;
+
+        // Eq. (7): scalars f and g for the T_ij tensor
+
+        _erf = erf(r / (2.0 * sigmaM_ij));
+        expmsq = exp(-r * r / 4.0 / sigmaM_ij2);
+        rdivsigmaM = r / MY_PIS / sigmaM_ij;
+        f = _erf - (rdivsigmaM + rdivsigmaM * rsq / sigmaM_ij2 / 6.0) * expmsq;
+        g = _erf - rdivsigmaM * expmsq;
+
+        // Eq. (6): T_ij = 3f*r^-5*r_ij*r_ij - g*r^-3*I (symmetric, T_ij = T_ji)
+
+        f *= 3.0 * r2inv;
+        Tij[0][0] = r3inv * (f * delx * delx - g);
+        Tij[0][1] = r3inv * f * delx * dely;
+        Tij[0][2] = r3inv * f * delx * delz;
+        Tij[1][1] = r3inv * (f * dely * dely - g);
+        Tij[1][2] = r3inv * f * dely * delz;
+        Tij[2][2] = r3inv * (f * delz * delz - g);
+
+        // E_p_i += T_ij . mu_j  (+ the dipole->dipole RF field c_rf*mu_j, term C)
+
+        double rf = (enable_rf && rsq < cut_coulsq) ? c_rf : 0.0;
+        efield_pol[i][0] += qqrd2e * (Tij[0][0]*mu[j][0] + Tij[0][1]*mu[j][1] + Tij[0][2]*mu[j][2]) + rf*mu[j][0];
+        efield_pol[i][1] += qqrd2e * (Tij[0][1]*mu[j][0] + Tij[1][1]*mu[j][1] + Tij[1][2]*mu[j][2]) + rf*mu[j][1];
+        efield_pol[i][2] += qqrd2e * (Tij[0][2]*mu[j][0] + Tij[1][2]*mu[j][1] + Tij[2][2]*mu[j][2]) + rf*mu[j][2];
+
+        // Newton partner: E_p_j += T_ji . mu_i = T_ij . mu_i (T symmetric)
+
+        if ((newton_pair || j < nlocal) && half) {
+          efield_pol[j][0] += qqrd2e * (Tij[0][0]*mu[i][0] + Tij[0][1]*mu[i][1] + Tij[0][2]*mu[i][2]) + rf*mu[i][0];
+          efield_pol[j][1] += qqrd2e * (Tij[0][1]*mu[i][0] + Tij[1][1]*mu[i][1] + Tij[1][2]*mu[i][2]) + rf*mu[i][1];
+          efield_pol[j][2] += qqrd2e * (Tij[0][2]*mu[i][0] + Tij[1][2]*mu[i][1] + Tij[2][2]*mu[i][2]) + rf*mu[i][2];
+        }
+      }
+    }
+  }
+
+  // (C) self term: a molecule's own induced dipole reacts on its own M site.
+  // There is no intramolecular M-M pair, so add it explicitly (local atoms).
+
+  if (enable_rf) {
+    for (i = 0; i < nlocal; i++) {
+      if (mu[i][3] == 0.0) continue;
+      efield_pol[i][0] += c_rf*mu[i][0];
+      efield_pol[i][1] += c_rf*mu[i][1];
+      efield_pol[i][2] += c_rf*mu[i][2];
+    }
+  }
+}
+
+/* ----------------------------------------------------------------------
+   polar interactions: iterative solver for induced dipoles (Eqs. 3 and 5).
+   The charge-dipole force kernel uses the pure smeared scalar Phi = falpha (no
+   Ewald subtraction); the induced-dipole initial guess is the previous step's
+   dipoles (Fortran warm-start, no separate E_p = 0 seeding pass); the per-pair
+   charge-dipole reaction-field force (term D) is added in the doA/doB loop. The
+   dipole->dipole RF field (term C) is in compute_induced_efield(), and the
+   charge->dipole RF field (term B) is folded into efield in charge_charge(), so
+   the Eq.(9) energy -1/2 p.E_q already carries all the RF polarization energy.
 ------------------------------------------------------------------------- */
 
 void PairGCPM::polar(int eflag, int vflag, int neigh_half)
@@ -419,22 +575,11 @@ void PairGCPM::polar(int eflag, int vflag, int neigh_half)
   numneigh = list->numneigh;
   firstneigh = list->firstneigh;
 
-  // on the very first call: estimate mu from efield only (E_p assumed to be 0)
-  // on subsequent time step: start from the previous timestep's converged dipoles
+  // Initial guess for the induced dipoles (as in the Fortran GCPM code):
+  // start from the dipoles carried over from the previous timestep (warm
+  // start). On a cold start mu = 0, so the first iteration below reduces to
+  // mu = alpha*E_q automatically. No separate E_p = 0 seeding pass is used.
 
-  if (first_polar) {
-    for (i = 0; i < nlocal; i++) {
-      itype = type[i];
-      if (mu[i][3] != 0.0) {
-        mu[i][0] = alpha_pol[itype][itype] * efield[i][0] / qqrd2e;
-        mu[i][1] = alpha_pol[itype][itype] * efield[i][1] / qqrd2e;
-        mu[i][2] = alpha_pol[itype][itype] * efield[i][2] / qqrd2e;
-      }
-    }
-    first_polar = 0;
-  }
-
-  // seed mu_old from the starting guess so the convergence check is correct on iter 1
   for (i = 0; i < nlocal; i++) {
     if (mu[i][3] != 0.0) {
       mu_old[i][0] = mu[i][0];
@@ -445,7 +590,8 @@ void PairGCPM::polar(int eflag, int vflag, int neigh_half)
 
   for (int iter = 0; iter < maxiter; iter++) {
 
-    // Eq. (5): compute E_p from current dipole estimates, then update dipoles from total field
+    // Eq. (5): compute E_p (incl. the dipole->dipole RF field, term C) from the
+    // current dipole estimates, then update dipoles from the total field
 
     compute_induced_efield(neigh_half);
 
@@ -454,32 +600,6 @@ void PairGCPM::polar(int eflag, int vflag, int neigh_half)
     if (newton_pair && neigh_half == 1) {
       comm_mode = EFIELD_POL;
       comm->reverse_comm(this);
-    }
-
-    // reaction field from the current induced dipoles (Eq. 11, R_i^p), folded
-    // into efield_pol at the M sites. Recomputed every iteration because it
-    // depends on the evolving induced dipoles.
-
-    if (enable_rf) {
-      tagint *molecule = atom->molecule;
-      for (int m = 0; m <= nmol; m++)
-        mol_p[m][0] = mol_p[m][1] = mol_p[m][2] = 0.0;
-      for (i = 0; i < nlocal; i++) {
-        if (mu[i][3] == 0.0) continue;
-        int m = (int) molecule[i];
-        mol_p[m][0] = mu[i][0];
-        mol_p[m][1] = mu[i][1];
-        mol_p[m][2] = mu[i][2];
-      }
-      MPI_Allreduce(MPI_IN_PLACE, &mol_p[0][0], 3*(nmol+1), MPI_DOUBLE, MPI_SUM, world);
-      reaction_field(mol_p, mol_Rp);
-      for (i = 0; i < nlocal; i++) {
-        if (mu[i][3] == 0.0) continue;
-        int m = (int) molecule[i];
-        efield_pol[i][0] += mol_Rp[m][0];
-        efield_pol[i][1] += mol_Rp[m][1];
-        efield_pol[i][2] += mol_Rp[m][2];
-      }
     }
 
     // Eq. (3): p_i = alpha_i * (E_q_i + E_p_i)
@@ -514,12 +634,7 @@ void PairGCPM::polar(int eflag, int vflag, int neigh_half)
     }
 
     MPI_Allreduce(&converged, &all_converged, 1, MPI_INT, MPI_MIN, world);
-    if (all_converged) {
-      #ifdef GCPM_DEBUG
-      if (comm->me == 0) printf("iter = %d: converged\n", iter+1);
-      #endif
-      break;
-    }
+    if (all_converged) break;
 
     for (i = 0; i < nlocal; i++) {
       if (mu[i][3] != 0.0) {
@@ -531,15 +646,14 @@ void PairGCPM::polar(int eflag, int vflag, int neigh_half)
   }
 
   // After convergence: forces and energy from charge-induced-dipole interaction.
-  // U_pol = -1/2 * sum_i p_i . E_q_i  (Eq. 9 in Paricaud et al.)
+  // U_pol = -1/2 * sum_i p_i . E_q_i  (Eq. 9 in Paricaud et al.). Because the
+  // charge->dipole RF field (term B) is already folded into efield, this energy
+  // includes the charge-dipole reaction-field energy.
 
   for (ii = 0; ii < inum; ii++) {
     i = ilist[ii];
 
     // polarization energy -1/2 p_i.E_q_i (Eq. 9), tallied once per dipole atom.
-    // This is a per-atom self-energy (not a pairwise term), so it is added in
-    // full -- do NOT use ev_tally_full(), which halves the contribution (that
-    // halving is only correct for full-neighbor-list pairwise double counting).
     if (mu[i][3] != 0.0 && eflag) {
       ecoul = -0.5 * (mu[i][0]*efield[i][0] + mu[i][1]*efield[i][1] + mu[i][2]*efield[i][2]);
       if (eflag_global) eng_coul += ecoul;
@@ -560,15 +674,7 @@ void PairGCPM::polar(int eflag, int vflag, int neigh_half)
       j &= NEIGHMASK;
 
       // a charge-induced-dipole pair contributes a force to BOTH partners.
-      // Two independent interactions can exist for a pair (each M site carries
-      // both a charge and an induced dipole):
       //   A: dipole on i with charge on j      B: dipole on j with charge on i
-      // Both partners must receive their force exactly once, otherwise the net
-      // force is non-zero (Newton's 3rd law) and the half-list (CPU) and
-      // full-list (GPU) paths disagree. With a half list (neigh_half==1) the
-      // partner force is applied via f[j]; with a full list (neigh_half==0)
-      // each center accumulates only its own force (the partner is handled when
-      // it is the center).
 
       int doA = (mu[i][3] != 0.0 && q[j] != 0.0);
       int doB = (qtmp != 0.0 && mu[j][3] != 0.0);
@@ -587,16 +693,15 @@ void PairGCPM::polar(int eflag, int vflag, int neigh_half)
         double r3inv = r2inv*rinv;
         double r5inv = r3inv*r2inv;
 
+        // pure smeared charge-dipole kernel (no Ewald subtraction):
+        //   Phi      = erf(a r) - (2/sqrt(pi)) a r exp(-(a r)^2)   [= falpha]
+        //   dPhi/dr  = 2 (2/sqrt(pi)) a^3 r^2 exp(-(a r)^2)
         double aij = alpha_ij[itype][jtype];
-        double grij = g_ewald * r;
-        double expm2 = MathSpecial::expmsq(grij);
-        double erf_g = 1.0 - MathSpecial::my_erfcx(grij) * expm2;
         double aijr = aij * r;
         double expa = MathSpecial::expmsq(aijr);
         double erfa = 1.0 - MathSpecial::my_erfcx(aijr) * expa;
-        double falpha = erfa - EWALD_F*aijr*expa;
-        double Phi = falpha - erf_g + EWALD_F*grij*expm2;
-        double dPhi_dr = 2.0*EWALD_F*rsq*(aij*aij*aij*expa - g_ewald*g_ewald*g_ewald*expm2);
+        double Phi = erfa - EWALD_F*aijr*expa;
+        double dPhi_dr = 2.0*EWALD_F*rsq*aij*aij*aij*expa;
         double dcoeff = 3.0*Phi - r*dPhi_dr;
 
         // Interaction A: dipole i with charge j; del = x_i - x_j (charge->dipole)
@@ -610,18 +715,37 @@ void PairGCPM::polar(int eflag, int vflag, int neigh_half)
           double fcy = pre2*mu[i][1] - pre1*dely;
           double fcz = pre2*mu[i][2] - pre1*delz;
 
-          f[i][0] += fcx;
-          f[i][1] += fcy;
-          f[i][2] += fcz;
+          // (D) reaction field: charge j sits in the uniform reaction field
+          // c_rf*mu_i of dipole i -> force q[j]*c_rf*mu_i on charge j, reaction
+          // -q[j]*c_rf*mu_i on dipole i. Not scaled by factor_coul.
+          double rfx = 0.0, rfy = 0.0, rfz = 0.0;
+          if (enable_rf) {
+            double qc = q[j]*c_rf;
+            rfx = qc*mu[i][0]; rfy = qc*mu[i][1]; rfz = qc*mu[i][2];
+          }
+
+          f[i][0] += fcx - rfx;
+          f[i][1] += fcy - rfy;
+          f[i][2] += fcz - rfz;
 
           torque[i][0] += pre2 * (mu[i][1]*delz - mu[i][2]*dely);
           torque[i][1] += pre2 * (mu[i][2]*delx - mu[i][0]*delz);
           torque[i][2] += pre2 * (mu[i][0]*dely - mu[i][1]*delx);
 
+          // torque from the charge->dipole RF field (term B) at dipole i:
+          // E_rf = -c_rf*q[j]*del, so torque += mu_i x E_rf. Required so the net
+          // torque mu x (E_q + E_p) stays ~0 (the induced dipole has no torque).
+          if (enable_rf) {
+            double bc = -c_rf*q[j];
+            torque[i][0] += bc * (mu[i][1]*delz - mu[i][2]*dely);
+            torque[i][1] += bc * (mu[i][2]*delx - mu[i][0]*delz);
+            torque[i][2] += bc * (mu[i][0]*dely - mu[i][1]*delx);
+          }
+
           if ((newton_pair || j < nlocal) && neigh_half == 1) {
-            f[j][0] -= fcx;   // reaction on charge j
-            f[j][1] -= fcy;
-            f[j][2] -= fcz;
+            f[j][0] -= fcx - rfx;   // reaction on charge j (incl. RF force)
+            f[j][1] -= fcy - rfy;
+            f[j][2] -= fcz - rfz;
           }
 
           vtally_force(i, j, neigh_half, fcx, fcy, fcz, delx, dely, delz);
@@ -640,18 +764,35 @@ void PairGCPM::polar(int eflag, int vflag, int neigh_half)
           double fdy = pre2*mu[j][1] + pre1*dely;
           double fdz = pre2*mu[j][2] + pre1*delz;
 
-          f[i][0] -= fdx;   // reaction on charge i = -(force on dipole j)
-          f[i][1] -= fdy;
-          f[i][2] -= fdz;
+          // (D) reaction field: charge i sits in the uniform reaction field
+          // c_rf*mu_j of dipole j -> force q[i]*c_rf*mu_j on charge i.
+          double rfx = 0.0, rfy = 0.0, rfz = 0.0;
+          if (enable_rf) {
+            double qc = qtmp*c_rf;
+            rfx = qc*mu[j][0]; rfy = qc*mu[j][1]; rfz = qc*mu[j][2];
+          }
+
+          f[i][0] += -fdx + rfx;   // reaction on charge i (incl. RF force)
+          f[i][1] += -fdy + rfy;
+          f[i][2] += -fdz + rfz;
 
           if ((newton_pair || j < nlocal) && neigh_half == 1) {
-            f[j][0] += fdx;   // force on dipole j (partner)
-            f[j][1] += fdy;
-            f[j][2] += fdz;
+            f[j][0] += fdx - rfx;   // force on dipole j (incl. RF reaction)
+            f[j][1] += fdy - rfy;
+            f[j][2] += fdz - rfz;
             // torque on dipole j: tau = mu[j] x E, with E along (x_j-x_i) = -del
             torque[j][0] -= pre2 * (mu[j][1]*delz - mu[j][2]*dely);
             torque[j][1] -= pre2 * (mu[j][2]*delx - mu[j][0]*delz);
             torque[j][2] -= pre2 * (mu[j][0]*dely - mu[j][1]*delx);
+
+            // torque from the charge->dipole RF field (term B) at dipole j:
+            // E_rf at j from charge i = -c_rf*q[i]*(x_j-x_i) = +c_rf*qtmp*del
+            if (enable_rf) {
+              double bc = c_rf*qtmp;
+              torque[j][0] += bc * (mu[j][1]*delz - mu[j][2]*dely);
+              torque[j][1] += bc * (mu[j][2]*delx - mu[j][0]*delz);
+              torque[j][2] += bc * (mu[j][0]*dely - mu[j][1]*delx);
+            }
           }
 
           vtally_force(i, j, neigh_half, -fdx, -fdy, -fdz, delx, dely, delz);
@@ -660,13 +801,10 @@ void PairGCPM::polar(int eflag, int vflag, int neigh_half)
     }
   }
 
-  // dipole-dipole polarization force and torque: gradient (at fixed converged
-  // dipoles) of the dipole-dipole term of the full polarization energy, Eq. (8):
-  //   U_dd = -1/2 sum_i p_i . E_p_i = -sum_{i<j} p_i . T_ij . p_j
-  // The polarization energy is already accounted for by the reduced Eq. (9)
-  // above (it equals Eq. (8) at self-consistency), so NO energy is tallied here.
-  // Uses the same cutoff cutsq[itype][jtype] as compute_induced_efield() so that
-  // force and induced field stay consistent.
+  // dipole-dipole polarization force and torque (gradient at fixed converged
+  // dipoles of the Eq. (8) dipole-dipole term). The dipole->dipole reaction
+  // field is a uniform field (zero spatial gradient in the cavity bulk), so it
+  // contributes no force here; only the smeared T_ij term does.
 
   for (ii = 0; ii < inum; ii++) {
     i = ilist[ii];
@@ -738,6 +876,12 @@ void PairGCPM::polar(int eflag, int vflag, int neigh_half)
         double Eix = qqrd2e*(Txx*mu[j][0] + Txy*mu[j][1] + Txz*mu[j][2]);
         double Eiy = qqrd2e*(Txy*mu[j][0] + Tyy*mu[j][1] + Tyz*mu[j][2]);
         double Eiz = qqrd2e*(Txz*mu[j][0] + Tyz*mu[j][1] + Tzz*mu[j][2]);
+        // dipole->dipole RF field (term C) at i: E_rf = c_rf*mu_j -> torque
+        // mu_i x (c_rf*mu_j). Keeps the net dipole torque mu x (E_q+E_p) ~ 0.
+        if (enable_rf && rsq < cut_coulsq) {
+          Eix += c_rf*mu[j][0]; Eiy += c_rf*mu[j][1]; Eiz += c_rf*mu[j][2];
+        }
+
         torque[i][0] += mu[i][1]*Eiz - mu[i][2]*Eiy;
         torque[i][1] += mu[i][2]*Eix - mu[i][0]*Eiz;
         torque[i][2] += mu[i][0]*Eiy - mu[i][1]*Eix;
@@ -750,6 +894,9 @@ void PairGCPM::polar(int eflag, int vflag, int neigh_half)
           double Ejx = qqrd2e*(Txx*mu[i][0] + Txy*mu[i][1] + Txz*mu[i][2]);
           double Ejy = qqrd2e*(Txy*mu[i][0] + Tyy*mu[i][1] + Tyz*mu[i][2]);
           double Ejz = qqrd2e*(Txz*mu[i][0] + Tyz*mu[i][1] + Tzz*mu[i][2]);
+          if (enable_rf && rsq < cut_coulsq) {
+            Ejx += c_rf*mu[i][0]; Ejy += c_rf*mu[i][1]; Ejz += c_rf*mu[i][2];
+          }
           torque[j][0] += mu[j][1]*Ejz - mu[j][2]*Ejy;
           torque[j][1] += mu[j][2]*Ejx - mu[j][0]*Ejz;
           torque[j][2] += mu[j][0]*Ejy - mu[j][1]*Ejx;
@@ -829,111 +976,8 @@ void PairGCPM::unpack_reverse_comm(int n, int *list, double *buf)
 }
 
 /* ----------------------------------------------------------------------
-   compute induced electric field (Eq. 5) using current dipole estimates
-     using Eqs. (6) and (7)
-------------------------------------------------------------------------- */
-
-void PairGCPM::compute_induced_efield(int half)
-{
-  int i,ii,j,jj,inum,jnum,itype,jtype;
-  double xtmp,ytmp,ztmp,delx,dely,delz;
-  double rsq,r,r2inv,r3inv;
-  int *ilist,*jlist,*numneigh,**firstneigh;
-  double sigmaM_ij,sigmaM_ij2;
-  double _erf,expmsq,rdivsigmaM,f,g;
-  double Tij[3][3];
-
-  double **x = atom->x;
-  double **mu = atom->mu;
-  int *type = atom->type;
-  double qqrd2e = force->qqrd2e;
-  int nlocal = atom->nlocal;
-  int newton_pair = force->newton_pair;
-
-  // zero efield_pol for all atoms (local + ghost) before accumulation
-
-  int ntotal = atom->nlocal + atom->nghost;
-  for (i = 0; i < ntotal; i++)
-    efield_pol[i][0] = efield_pol[i][1] = efield_pol[i][2] = 0.0;
-
-  inum = list->inum;
-  ilist = list->ilist;
-  numneigh = list->numneigh;
-  firstneigh = list->firstneigh;
-
-  for (ii = 0; ii < inum; ii++) {
-    i = ilist[ii];
-
-    if (mu[i][3] == 0.0) continue;
-
-    xtmp = x[i][0];
-    ytmp = x[i][1];
-    ztmp = x[i][2];
-    itype = type[i];
-    jlist = firstneigh[i];
-    jnum = numneigh[i];
-
-    for (jj = 0; jj < jnum; jj++) {
-      j = jlist[jj];
-      j &= NEIGHMASK;
-
-      if (mu[j][3] == 0.0) continue;
-
-      delx = xtmp - x[j][0];
-      dely = ytmp - x[j][1];
-      delz = ztmp - x[j][2];
-      rsq = delx*delx + dely*dely + delz*delz;
-      jtype = type[j];
-
-      if (rsq < cutsq[itype][jtype]) {
-        r2inv = 1.0/rsq;
-        r = sqrt(rsq);
-        r3inv = 1.0/rsq/r;
-
-        sigmaM_ij = sigmaM[itype][jtype];
-        sigmaM_ij2 = sigmaM_ij * sigmaM_ij;
-
-        // Eq. (7): scalars f and g for the T_ij tensor
-
-        _erf = erf(r / (2.0 * sigmaM_ij));
-        expmsq = exp(-r * r / 4.0 / sigmaM_ij2);
-        rdivsigmaM = r / MY_PIS / sigmaM_ij;
-        f = _erf - (rdivsigmaM + rdivsigmaM * rsq / sigmaM_ij2 / 6.0) * expmsq;
-        g = _erf - rdivsigmaM * expmsq;
-
-        // Eq. (6): T_ij = 3f*r^-5*r_ij*r_ij - g*r^-3*I
-        // T_ij is symmetric (T_ij[a][b] = T_ij[b][a]) and T_ij = T_ji
-
-        f *= 3.0 * r2inv;
-        Tij[0][0] = r3inv * (f * delx * delx - g);
-        Tij[0][1] = r3inv * f * delx * dely;
-        Tij[0][2] = r3inv * f * delx * delz;
-        Tij[1][1] = r3inv * (f * dely * dely - g);
-        Tij[1][2] = r3inv * f * dely * delz;
-        Tij[2][2] = r3inv * (f * delz * delz - g);
-
-        // E_p_i += T_ij . mu_j
-
-        efield_pol[i][0] += qqrd2e * (Tij[0][0]*mu[j][0] + Tij[0][1]*mu[j][1] + Tij[0][2]*mu[j][2]);
-        efield_pol[i][1] += qqrd2e * (Tij[0][1]*mu[j][0] + Tij[1][1]*mu[j][1] + Tij[1][2]*mu[j][2]);
-        efield_pol[i][2] += qqrd2e * (Tij[0][2]*mu[j][0] + Tij[1][2]*mu[j][1] + Tij[2][2]*mu[j][2]);
-
-        // Newton partner: E_p_j += T_ji . mu_i = T_ij . mu_i (T symmetric)
-
-        if ((newton_pair || j < nlocal) && half) {
-          efield_pol[j][0] += qqrd2e * (Tij[0][0]*mu[i][0] + Tij[0][1]*mu[i][1] + Tij[0][2]*mu[i][2]);
-          efield_pol[j][1] += qqrd2e * (Tij[0][1]*mu[i][0] + Tij[1][1]*mu[i][1] + Tij[1][2]*mu[i][2]);
-          efield_pol[j][2] += qqrd2e * (Tij[0][2]*mu[i][0] + Tij[1][2]*mu[i][1] + Tij[2][2]*mu[i][2]);
-        }
-      }
-    }
-  }
-}
-
-/* ----------------------------------------------------------------------
    reaction-field setup: validate, compute the constant prefactor c_rf, and
    size the per-molecule tables once (molecule count is fixed for a run).
-   Shared by PairGCPM::init_style() and PairGCPMGPU::init_style().
 ------------------------------------------------------------------------- */
 
 void PairGCPM::setup_reaction_field()
@@ -967,10 +1011,8 @@ void PairGCPM::setup_reaction_field()
 
 /* ----------------------------------------------------------------------
    reaction field from the permanent molecular dipoles (Eq. 11, R_i^q),
-   folded into efield at the M sites. It is constant during the dipole
-   iterations, so it is computed once per step here, before polar(). The
-   polarization energy tally -1/2 p_i.efield_i inside polar() then
-   automatically includes the -1/2 p_i.R_i^q term.
+   folded into efield at the M sites. Used by the per-molecule reaction-field
+   path of the derived PairGCPMLong (called before polar()).
 ------------------------------------------------------------------------- */
 
 void PairGCPM::reaction_field_pre()
@@ -994,7 +1036,8 @@ void PairGCPM::reaction_field_pre()
 
 /* ----------------------------------------------------------------------
    permanent-charge reaction-field energy (Eq. 12) and the reaction-field
-   site forces F_k = q_k*(R_m^q + 1/2 R_m^p), applied after polar(). mol_Rp
+   site forces F_k = q_k*(R_m^q + 1/2 R_m^p), applied after polar(). Used by
+   the per-molecule reaction-field path of the derived PairGCPMLong. mol_Rp
    is built from the converged induced dipoles. The -1/2 p_i.R_i^q part of
    the energy was already tallied inside polar() via the folded efield, so
    here we add only the permanent-permanent term -1/2 sum_i mu_i.R_i^q.
@@ -1290,7 +1333,11 @@ void PairGCPM::coeff(int narg, char **arg)
   if (count == 0) error->all(FLERR,"Incorrect args for pair coefficients" + utils::errorurl(21));
 }
 
-/* ---------------------------------------------------------------------- */
+/* ----------------------------------------------------------------------
+   init_style for the reaction-field (no k-space) form: the smeared Coulomb is
+   summed in real space to cut_coul and the long-range tail comes from the
+   reaction-field correction. No KSpace style is required.
+------------------------------------------------------------------------- */
 
 void PairGCPM::init_style()
 {
@@ -1304,9 +1351,7 @@ void PairGCPM::init_style()
 
   cut_coulsq = cut_coul * cut_coul;
 
-  if (force->kspace == nullptr)
-    error->all(FLERR,"Pair style requires a KSpace style");
-  g_ewald = force->kspace->g_ewald;
+  g_ewald = 0.0;
 
   setup_reaction_field();
 }

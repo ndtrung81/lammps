@@ -16,14 +16,16 @@ mass 2 1.008     # H
 mass 3 1.0e-100  # site M
 
 # pair style parameters:  enable_polar eps_rf cut_buck [cutcoul]
-pair_style gcpm           1            78.0   12.0
+pair_style gcpm/rf           1            78.0   12.0
 
 # coeffs       epsilon sigma  gamma  alpha_pol sigmaM
 pair_coeff 1 1 0.1550  3.1536 12.75  0.0       0.000
 pair_coeff 2 2 0.0     1.0    12.75  0.0       0.455
 pair_coeff 3 3 0.0     1.0    12.75  1.444     0.610
 
-neigh_modify exclude molecule/intra all
+#kspace_style pppm 0.0001
+
+#neigh_modify exclude molecule/intra all
 
 velocity all create 300.0 187421 mom yes rot yes
 

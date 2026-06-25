@@ -1,4 +1,5 @@
 .. index:: pair_style gcpm
+.. index:: pair_style gcpm/long
 
 pair_style gcpm command
 ========================================
@@ -33,15 +34,18 @@ Examples
 Description
 """""""""""
 
-The *gcpm* style implements the Gaussian charge polarizable model
-described by :ref:`(Paricaud) <Paricaud>`.  The intermolecular (non-bonded
+The *gcpm* style implements the Gaussian charge polarizable model (GCPM)
+described by :ref:`(Paricaud) <Paricaud>`.  The *gcpm/long* style replaces
+the reaction field (RF) approximation with the PPPM for the charge-charge interaction.
+
+The intermolecular (non-bonded
 of the GCPM contains three terms:
 
 .. math::
 
    U_{gcpm} = U_{dispersion}  + U_{Coulomb}  + U_{polar}
    
-The dispersion and Coulomb terms are similar to
+The dispersion term are similar to
 the :doc:`pair buck6d/coul/gauss/long <pair_buck6d_coul_gauss>`
 style in the MOF-FF force field :ref:`(Schmid) <Schmid>`. 
 
@@ -60,6 +64,12 @@ a damping correction analog to the Grimme correction used in DFT.
 The latter corrects for artifacts occurring at short distances which
 become an issue for soft vdW potentials.
 
+The *gcpm* style uses the reaction field approximation
+for the long range contribution as described in :ref:`(Paricaud) <Paricaud>`.
+The *gcpm* style uses the real-space term as in
+the :doc:`pair buck6d/coul/gauss/long <pair_buck6d_coul_gauss>`
+style and requires a kspace style.
+
 This pair style include a smoothing function which is invoked
 according to the global smoothing parameter within the specified
 cutoff.  Hereby a parameter of i.e. 0.9 invokes the smoothing
@@ -70,7 +80,7 @@ styles the smoothing function can also be invoked for the real
 space coulomb interactions which enforce continuous energies and
 forces at the cutoff.
 
-The *gcpm* style evaluate a Coulomb potential using spherical Gaussian type charge
+The *gcpm/long* style evaluate a Coulomb potential using spherical Gaussian type charge
 distributions which effectively dampen electrostatic interactions
 for high charges at close distances.  The electrostatic potential
 is thus evaluated as:

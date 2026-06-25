@@ -24,6 +24,19 @@ PairStyle(gcpm,PairGCPM);
 
 namespace LAMMPS_NS {
 
+// Gaussian charge polarizable model (Paricaud et al., J. Chem. Phys. 122,
+// 244511 (2005)), consistent with the original Fortran GCPM code (MD_water/).
+//
+// This base class is the reaction-field form: the Gaussian-smeared charge-charge
+// and charge-dipole interactions are summed in real space to cut_coul, with NO
+// Ewald/PPPM, and the long-range tail is supplied by a per-pair Onsager/Tironi
+// reaction field (enabled when eps_rf > 0). The exp-6 Buckingham dispersion and
+// the self-consistent induced-dipole solver are the shared GCPM machinery.
+//
+// The long-range (Ewald/PPPM) form is the derived class PairGCPMLong, which
+// overrides only the Coulomb method (charge_charge/compute_induced_efield/polar)
+// and the compute/init_style flow; everything else is inherited from here.
+
 class PairGCPM : public Pair {
 
  public:
@@ -48,12 +61,15 @@ class PairGCPM : public Pair {
 
  protected:
   void dispersion(int, int);
-  void charge_charge(int, int);
-  void polar(int, int, int neigh_half=1);
+  virtual void charge_charge(int, int);
+  virtual void polar(int, int, int neigh_half=1);
 
-  void compute_induced_efield(int neigh_half=1);
+  virtual void compute_induced_efield(int neigh_half=1);
 
-  // reaction-field correction (Eqs. 11-12 of Paricaud et al.)
+  // per-molecule reaction-field machinery (Eqs. 11-12 of Paricaud et al.), used
+  // by the long-range (Ewald) derived class PairGCPMLong. The reaction-field
+  // base class (this class) instead folds the reaction field into the pairwise
+  // Coulomb loops and does not call reaction_field_pre/post().
   void setup_reaction_field();          // size tables, c_rf; call from init_style()
   void reaction_field_pre();            // R_q -> efield; call before polar()
   void reaction_field_post(int eflag);  // U_qq^RF energy + RF site forces; after polar()
@@ -81,8 +97,8 @@ class PairGCPM : public Pair {
 
   double **alpha_pol;   // molecular polarizability for each type pair
   double **sigmaM;      // Gaussian charge width of M site (individual, per type pair)
-  double **alpha_ij;    // per-pair Ewald Gaussian parameter: 1/sqrt(2*(si^2+sj^2)) [1/A]
-  double g_ewald;       // g_ewald = 5.6/sigma for Coulomb interactions with Gaussian charge smearing
+  double **alpha_ij;    // per-pair Gaussian parameter: 1/sqrt(2*(si^2+sj^2)) [1/A]
+  double g_ewald;       // Ewald splitting parameter (0 for the reaction-field base)
   double *cut_respa;
 
   double **efield;      // per-atom electric field due to charges
