@@ -17,21 +17,21 @@
 
 #ifdef PAIR_CLASS
 // clang-format off
-PairStyle(gcpm/gpu,PairGCPMGPU);
+PairStyle(gcpm/long/gpu,PairGCPMLongGPU);
 // clang-format on
 #else
 
-#ifndef LMP_PAIR_GCPM_GPU_H
-#define LMP_PAIR_GCPM_GPU_H
+#ifndef LMP_PAIR_GCPM_LONG_GPU_H
+#define LMP_PAIR_GCPM_LONG_GPU_H
 
-#include "pair_gcpm.h"
+#include "pair_gcpm_long.h"
 
 namespace LAMMPS_NS {
 
-class PairGCPMGPU : public PairGCPM {
+class PairGCPMLongGPU : public PairGCPMLong {
  public:
-  PairGCPMGPU(LAMMPS *lmp);
-  ~PairGCPMGPU() override;
+  PairGCPMLongGPU(LAMMPS *lmp);
+  ~PairGCPMLongGPU() override;
   void compute(int, int) override;
   void init_style() override;
   double memory_usage() override;

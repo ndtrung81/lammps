@@ -15,7 +15,7 @@
 /* ----------------------------------------------------------------------
    Contributing author: Trung Nguyen (ndactrung@gmail.com)
 
-   GPU version of pair_gcpm following the pair_amoeba/gpu pattern:
+   GPU version of pair_gcpm_long following the pair_amoeba/gpu pattern:
    - dispersion + Gaussian-Coulomb forces computed on GPU (k_gcpm kernel)
    - per-atom efield[] computed on GPU (k_gcpm_efield kernel) and read
      back to CPU before the iterative polar solver
@@ -26,7 +26,7 @@
      for the CPU-side polar solver
 ------------------------------------------------------------------------- */
 
-#include "pair_gcpm_gpu.h"
+#include "pair_gcpm_long_gpu.h"
 
 #include "atom.h"
 #include "comm.h"
@@ -54,9 +54,9 @@ using namespace MathConst;
 // same reverse-comm modes as pair_gcpm.cpp
 enum {EFIELD, EFIELD_POL};
 
-// External functions from GPU library (lal_gcpm_ext.cpp)
+// External functions from GPU library (lal_gcpm_long_ext.cpp)
 
-int gcpm_gpu_init(const int ntypes, double **cutsq,
+int gcpm_long_gpu_init(const int ntypes, double **cutsq,
                   double **host_buck1, double **host_buck2, double **host_buck3,
                   double **host_cut_ljsq, double **offset, double **host_alpha_ij,
                   double *special_lj, const int inum, const int nall,
@@ -64,8 +64,8 @@ int gcpm_gpu_init(const int ntypes, double **cutsq,
                   const double cell_size, int &gpu_mode, FILE *screen,
                   double host_cut_coulsq, double *host_special_coul,
                   const double qqrd2e, const double g_ewald);
-void gcpm_gpu_clear();
-int **gcpm_gpu_compute_n(const int ago, const int inum_full, const int nall,
+void gcpm_long_gpu_clear();
+int **gcpm_long_gpu_compute_n(const int ago, const int inum_full, const int nall,
                          double **host_x, int *host_type, double *sublo,
                          double *subhi, tagint *tag, int **nspecial,
                          tagint **special, const bool eflag, const bool vflag,
@@ -73,18 +73,18 @@ int **gcpm_gpu_compute_n(const int ago, const int inum_full, const int nall,
                          int **ilist, int **jnum, const double cpu_time,
                          bool &success, double *host_q, double *boxlo,
                          double *prd, int *periodicity);
-void gcpm_gpu_compute(const int ago, const int inum_full, const int nall,
+void gcpm_long_gpu_compute(const int ago, const int inum_full, const int nall,
                       double **host_x, int *host_type, int *ilist, int *numj,
                       int **firstneigh, const bool eflag, const bool vflag,
                       const bool eatom, const bool vatom, int &host_start,
                       const double cpu_time, bool &success, double *host_q,
                       const int nlocal, double *boxlo, double *prd);
-void gcpm_gpu_compute_efield(void **efield_ptr);
-double gcpm_gpu_bytes();
+void gcpm_long_gpu_compute_efield(void **efield_ptr);
+double gcpm_long_gpu_bytes();
 
 /* ---------------------------------------------------------------------- */
 
-PairGCPMGPU::PairGCPMGPU(LAMMPS *lmp) : PairGCPM(lmp), gpu_mode(GPU_FORCE)
+PairGCPMLongGPU::PairGCPMLongGPU(LAMMPS *lmp) : PairGCPMLong(lmp), gpu_mode(GPU_FORCE)
 {
   respa_enable = 0;
   reinitflag = 0;
@@ -97,14 +97,14 @@ PairGCPMGPU::PairGCPMGPU(LAMMPS *lmp) : PairGCPM(lmp), gpu_mode(GPU_FORCE)
 
 /* ---------------------------------------------------------------------- */
 
-PairGCPMGPU::~PairGCPMGPU()
+PairGCPMLongGPU::~PairGCPMLongGPU()
 {
-  gcpm_gpu_clear();
+  gcpm_long_gpu_clear();
 }
 
 /* ---------------------------------------------------------------------- */
 
-void PairGCPMGPU::compute(int eflag, int vflag)
+void PairGCPMLongGPU::compute(int eflag, int vflag)
 {
   ev_init(eflag, vflag);
 
@@ -129,14 +129,14 @@ void PairGCPMGPU::compute(int eflag, int vflag)
 
   // GPU: dispersion + Gaussian-Coulomb forces via k_gcpm kernel
   if (gpu_mode == GPU_FORCE) {
-    gcpm_gpu_compute(neighbor->ago, inum, nall, atom->x, atom->type,
+    gcpm_long_gpu_compute(neighbor->ago, inum, nall, atom->x, atom->type,
                      ilist, numneigh, firstneigh,
                      eflag, vflag, eflag_atom, vflag_atom,
                      host_start, cpu_time, success, atom->q,
                      atom->nlocal, domain->boxlo, domain->prd);
   } else {
     // GPU_NEIGH: GPU builds its own neighbor list
-    int **tmp = gcpm_gpu_compute_n(neighbor->ago, atom->nlocal, nall,
+    int **tmp = gcpm_long_gpu_compute_n(neighbor->ago, atom->nlocal, nall,
                                    atom->x, atom->type,
                                    domain->sublo, domain->subhi, atom->tag,
                                    atom->nspecial, atom->special,
@@ -150,7 +150,7 @@ void PairGCPMGPU::compute(int eflag, int vflag)
 
   // GPU: per-atom efield from charge-charge interactions via k_gcpm_efield
   if (enable_polar) {
-    gcpm_gpu_compute_efield(&efield_pinned);
+    gcpm_long_gpu_compute_efield(&efield_pinned);
 
     // Read efield back from GPU pinned buffer to CPU efield[] array.
     // efield_pinned layout: [Ex0, Ey0, Ez0, Ex1, Ey1, Ez1, ...]
@@ -193,14 +193,14 @@ void PairGCPMGPU::compute(int eflag, int vflag)
 
 /* ---------------------------------------------------------------------- */
 
-void PairGCPMGPU::init_style()
+void PairGCPMLongGPU::init_style()
 {
   if (!atom->q_flag)
-    error->all(FLERR, "Pair style gcpm/gpu requires atom attribute q");
+    error->all(FLERR, "Pair style gcpm/long/gpu requires atom attribute q");
 
   if (enable_polar && (!atom->mu_flag || !atom->torque_flag))
     error->all(FLERR,
-               "Pair gcpm/gpu requires atom attributes mu and torque for polar");
+               "Pair gcpm/long/gpu requires atom attributes mu and torque for polar");
 
   // Replicate parameter setup from PairGCPM::init_style() without adding
   // its own neighbor request (we add REQ_FULL below).
@@ -220,7 +220,7 @@ void PairGCPMGPU::init_style()
   double cell_size = sqrt(maxcut) + neighbor->skin;
 
   if (force->kspace == nullptr)
-    error->all(FLERR, "Pair style gcpm/gpu requires a KSpace style");
+    error->all(FLERR, "Pair style gcpm/long/gpu requires a KSpace style");
   g_ewald = force->kspace->g_ewald;
   cut_coulsq = cut_coul * cut_coul;
 
@@ -230,7 +230,7 @@ void PairGCPMGPU::init_style()
   if (atom->molecular != Atom::ATOMIC) maxspecial = atom->maxspecial;
   int mnf = 5e-2 * neighbor->oneatom;
 
-  int success = gcpm_gpu_init(
+  int success = gcpm_long_gpu_init(
       atom->ntypes + 1, cutsq,
       buck1, buck2, buck3, cut_ljsq, offset, alpha_ij,
       force->special_lj,
@@ -250,8 +250,8 @@ void PairGCPMGPU::init_style()
 
 /* ---------------------------------------------------------------------- */
 
-double PairGCPMGPU::memory_usage()
+double PairGCPMLongGPU::memory_usage()
 {
   double bytes = Pair::memory_usage();
-  return bytes + gcpm_gpu_bytes();
+  return bytes + gcpm_long_gpu_bytes();
 }

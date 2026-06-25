@@ -1,5 +1,5 @@
 /***************************************************************************
-                                   gcpm.h
+                                gcpm_long.h
                              -------------------
                               Trung Dac Nguyen
 
@@ -13,18 +13,18 @@
     email                : ndactrung@gmail.com
  ***************************************************************************/
 
-#ifndef LAL_GCPM_H
-#define LAL_GCPM_H
+#ifndef LAL_GCPM_LONG_H
+#define LAL_GCPM_LONG_H
 
 #include "lal_base_charge.h"
 
 namespace LAMMPS_AL {
 
 template <class numtyp, class acctyp>
-class GCPM : public BaseCharge<numtyp, acctyp> {
+class GCPMLong : public BaseCharge<numtyp, acctyp> {
  public:
-  GCPM();
-  ~GCPM();
+  GCPMLong();
+  ~GCPMLong();
 
   /// Clear any previous data and set up for a new LAMMPS run
   /** \param max_nbors initial number of rows in the neighbor matrix

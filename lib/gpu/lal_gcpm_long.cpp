@@ -1,5 +1,5 @@
 /***************************************************************************
-                                  gcpm.cpp
+                                gcpm_long.cpp
                              -------------------
                               Trung Dac Nguyen
 
@@ -14,37 +14,37 @@
  ***************************************************************************/
 
 #ifdef USE_OPENCL
-#include "gcpm_cl.h"
+#include "gcpm_long_cl.h"
 #elif defined(USE_CUDART)
-const char *gcpm=0;
+const char *gcpm_long=0;
 #else
-#include "gcpm_cubin.h"
+#include "gcpm_long_cubin.h"
 #endif
 
-#include "lal_gcpm.h"
+#include "lal_gcpm_long.h"
 #include <cassert>
 #include <vector>
 namespace LAMMPS_AL {
-#define GCPMT GCPM<numtyp, acctyp>
+#define GCPMLongT GCPMLong<numtyp, acctyp>
 
 extern Device<PRECISION,ACC_PRECISION> device;
 
 template <class numtyp, class acctyp>
-GCPMT::GCPM() : BaseCharge<numtyp,acctyp>(), _allocated(false) {
+GCPMLongT::GCPMLong() : BaseCharge<numtyp,acctyp>(), _allocated(false) {
 }
 
 template <class numtyp, class acctyp>
-GCPMT::~GCPM() {
+GCPMLongT::~GCPMLong() {
   clear();
 }
 
 template <class numtyp, class acctyp>
-int GCPMT::bytes_per_atom(const int max_nbors) const {
+int GCPMLongT::bytes_per_atom(const int max_nbors) const {
   return this->bytes_per_atom_atomic(max_nbors);
 }
 
 template <class numtyp, class acctyp>
-int GCPMT::init(const int ntypes, double **host_cutsq,
+int GCPMLongT::init(const int ntypes, double **host_cutsq,
                 double **host_buck1, double **host_buck2, double **host_buck3,
                 double **host_cut_ljsq, double **host_offset, double **host_alpha_ij,
                 double *host_special_lj, const int nlocal,
@@ -55,7 +55,7 @@ int GCPMT::init(const int ntypes, double **host_cutsq,
                 const double qqrd2e, const double g_ewald) {
   int success;
   success=this->init_atomic(nlocal,nall,max_nbors,maxspecial,cell_size,gpu_split,
-                            _screen,gcpm,"k_gcpm");
+                            _screen,gcpm_long,"k_gcpm_long");
   if (success!=0)
     return success;
 
@@ -134,7 +134,7 @@ int GCPMT::init(const int ntypes, double **host_cutsq,
 }
 
 template <class numtyp, class acctyp>
-void GCPMT::clear() {
+void GCPMLongT::clear() {
   if (!_allocated)
     return;
   _allocated=false;
@@ -149,15 +149,15 @@ void GCPMT::clear() {
 }
 
 template <class numtyp, class acctyp>
-double GCPMT::host_memory_usage() const {
-  return this->host_memory_usage_atomic()+sizeof(GCPM<numtyp,acctyp>);
+double GCPMLongT::host_memory_usage() const {
+  return this->host_memory_usage_atomic()+sizeof(GCPMLong<numtyp,acctyp>);
 }
 
 // ---------------------------------------------------------------------------
 // Calculate energies, forces, and torques
 // ---------------------------------------------------------------------------
 template <class numtyp, class acctyp>
-int GCPMT::loop(const int eflag, const int vflag) {
+int GCPMLongT::loop(const int eflag, const int vflag) {
   const int BX=this->block_size();
   int GX=static_cast<int>(ceil(static_cast<double>(this->ans->inum())/
                                (BX/this->_threads_per_atom)));
@@ -190,7 +190,7 @@ int GCPMT::loop(const int eflag, const int vflag) {
 // Compute per-atom electric field (one thread per atom)
 // ---------------------------------------------------------------------------
 template <class numtyp, class acctyp>
-void GCPMT::loop_efield() {
+void GCPMLongT::loop_efield() {
   const int BX = this->block_size();
   int ainum = this->ans->inum();
   int GX = static_cast<int>(ceil(static_cast<double>(ainum) /
@@ -209,7 +209,7 @@ void GCPMT::loop_efield() {
 }
 
 template <class numtyp, class acctyp>
-void GCPMT::compute_efield(void **efield_ptr) {
+void GCPMLongT::compute_efield(void **efield_ptr) {
   // The efield buffers are allocated in init() at the initial nall. Atoms
   // migrate between subdomains at reneighboring, so a rank's atom count can
   // grow under MPI. Resize the buffers to match the (already-resized) device
@@ -230,5 +230,5 @@ void GCPMT::compute_efield(void **efield_ptr) {
   *efield_ptr = (void *)host_efield.begin();
 }
 
-template class GCPM<PRECISION,ACC_PRECISION>;
+template class GCPMLong<PRECISION,ACC_PRECISION>;
 }
