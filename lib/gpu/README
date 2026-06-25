@@ -231,7 +231,7 @@ with fx, fy and fz and with their IDs sorted.
 
 Unless otherwise stated, the pair styles in the GPU package either build
 full neighbor lists on the device (neigh yes), or request full neighbor lists
-on the host (neigh no).  
+on the host (neigh no).
 
 Note: It is possible to support fix and compute styles within the GPU package
 using the Geryon library.  You need to perform host-device data transfers and

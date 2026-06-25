@@ -1,11 +1,12 @@
 .. index:: pair_style gcpm
+.. index:: pair_style gcpm/gpu
 .. index:: pair_style gcpm/long
 .. index:: pair_style gcpm/long/gpu
 
 pair_style gcpm command
 ========================================
 
-Accelerator Variants: *gcpm/long/gpu*
+Accelerator Variants: *gcpm/gpu*, *gcpm/long/gpu*
 
 Syntax
 """"""
@@ -47,10 +48,10 @@ of the GCPM contains three terms:
 .. math::
 
    U_{gcpm} = U_{dispersion}  + U_{Coulomb}  + U_{polar}
-   
+
 The dispersion term are similar to
 the :doc:`pair buck6d/coul/gauss/long <pair_buck6d_coul_gauss>`
-style in the MOF-FF force field :ref:`(Schmid) <Schmid>`. 
+style in the MOF-FF force field :ref:`(Schmid) <Schmid>`.
 
 The dispersion term computes a dispersion damped Buckingham potential:
 
@@ -107,7 +108,7 @@ The polar term is given by
 .. math::
 
    U_{polar} =  \frac{1}{2}\vec{p}_i^{ind} \vec{E}_i^{perm}
-   
+
 where the molecular induced dipoles are iteratively solved for until convergence:
 
 .. math::

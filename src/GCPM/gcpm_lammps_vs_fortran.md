@@ -26,8 +26,8 @@ further tests are needed:
   claiming full equivalence.
   2. Reaction-field dielectric is a user input (eps_rf); the Fortran hard-codes
   78.4 (calcul_dielectric → DIELW = 78.4). You match it by passing eps_rf 78.4.
-  3. Dispersion tail: the Fortran sets ercut = 0 and adds analytic exp-6 tail 
-  corrections (eset/pset); PairGCPM instead relies on LAMMPS pair_modify 
+  3. Dispersion tail: the Fortran sets ercut = 0 and adds analytic exp-6 tail
+  corrections (eset/pset); PairGCPM instead relies on LAMMPS pair_modify
   shift/tail. The short-range force is identical; the long-range dispersion
   correction is handled differently.
   4. Intramolecular exclusion / data model: the Fortran is hard-coded 4-site
