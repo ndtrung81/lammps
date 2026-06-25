@@ -63,11 +63,11 @@ _texture( q_tex,int2);
   }
 #endif
 
-// k_gcpm: non-fast kernel (global memory for per-type arrays)
+// k_gcpm_long: non-fast kernel (global memory for per-type arrays)
 // Computes: Buckingham exp-6 dispersion + Gaussian-smeared Coulomb forces
 // No efield accumulation (handled on CPU for polar interactions).
 
-__kernel void k_gcpm(const __global numtyp4 *restrict x_,
+__kernel void k_gcpm_long(const __global numtyp4 *restrict x_,
                      const __global numtyp4 *restrict coeff1,
                      const __global numtyp4 *restrict coeff2,
                      const int lj_types,
@@ -213,9 +213,9 @@ __kernel void k_gcpm(const __global numtyp4 *restrict x_,
                   vflag,ans,engv);
 }
 
-// k_gcpm_fast: fast kernel (shared memory for per-type arrays when ntypes < MAX_SHARED_TYPES)
+// k_gcpm_long_fast: fast kernel (shared memory for per-type arrays when ntypes < MAX_SHARED_TYPES)
 
-__kernel void k_gcpm_fast(const __global numtyp4 *restrict x_,
+__kernel void k_gcpm_long_fast(const __global numtyp4 *restrict x_,
                           const __global numtyp4 *restrict coeff1_in,
                           const __global numtyp4 *restrict coeff2_in,
                           const __global numtyp *restrict sp_lj_in,

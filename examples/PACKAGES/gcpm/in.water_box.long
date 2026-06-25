@@ -25,7 +25,7 @@ pair_coeff 3 3 0.0     1.0    12.75  1.444     0.610
 
 kspace_style pppm 0.0001
 
-neigh_modify exclude molecule/intra all
+#neigh_modify exclude molecule/intra all
 
 velocity all create 300.0 187421 mom yes rot yes
 
