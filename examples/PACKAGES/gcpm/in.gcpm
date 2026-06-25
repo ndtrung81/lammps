@@ -1,0 +1,55 @@
+# Single-point comparison of LAMMPS pair gcpm against the GCPM Fortran code.
+#
+# Workflow:
+#   1) build the compare-instrumented Fortran (adds dump_compare.f):
+#        gfortran -O2 -fno-automatic -ffixed-line-length-132 -w \
+#          main.f init.f force.f Pos_alc.f pre_corrc_average.f \
+#          diel_cerf_hbond.f dump_compare.f -o md_water_cmp
+#   2) run it (needs param, pwat1.dat, pwatin) -> writes frame.dat + eforce.dat
+#        ./md_water_cmp
+#   3) convert the frame to a LAMMPS data file:
+#        python3 pwatin_to_lammps.py frame.dat data.gcpm
+#   4) run this input and compare the printed energies to eforce.dat.
+#
+# GCPM parameters are taken from MD_water/param:
+#   epsilon = 110 K = 0.218445 kcal/mol, sigma = 3.69 Ang, gamma(buck) = 12.75
+#   M-site Gaussian width 0.610, H width 0.455, polarizability 1.444 Ang^3
+#   reaction-field dielectric 78.4 (hard-coded in the Fortran), cutoff = rcut.
+# The exp-6 dispersion acts between O sites (type 1) only; H/M have epsilon = 0.
+
+units real
+atom_style hybrid full dipole sphere
+read_data data.gcpm
+
+# cutoff must equal the Fortran rcut printed at startup (e.g. 11.220684 Ang)
+variable rc equal 11.220684
+
+# --- full GCPM (polar + reaction field), matches the Fortran method ---
+pair_style gcpm 1 78.4 ${rc} ${rc}
+pair_coeff 1 1 0.218445 3.69 12.75 0.0   0.000
+pair_coeff 2 2 0.0      1.0  12.75 0.0   0.455
+pair_coeff 3 3 0.0      1.0  12.75 1.444 0.610
+
+thermo_style custom step pe evdwl ecoul
+run 0 post no
+
+# Compare:
+#   evdwl  <->  E_disp   (exp-6, no tail)        -- matches to ~5 digits
+#   pe     <->  E_total  (uconf, no tail)        -- offset by the cutoff
+#                                                   convention (molecular vs
+#                                                   atomic) + RF self/intra
+#                                                   bookkeeping; see below.
+#
+# Useful isolations:
+#  * dispersion only:        keep as is, compare evdwl to E_disp.
+#  * pure smeared Coulomb:   pair_style gcpm 0 0.0 ${rc} ${rc}
+#                            and add  'neigh_modify exclude molecule/intra all'
+#                            then compare ecoul to E_coul_smear.
+#
+# Known differences (not bugs, see src/GCPM/gcpm_vs_fortran.md):
+#  - Fortran truncates by molecule COM-COM distance; LAMMPS by atom-atom
+#    distance. This shifts charge-charge (offset H/M sites) at the cutoff shell;
+#    dispersion (O ~ at COM) is unaffected, hence its near-exact match.
+#  - Fortran sums intermolecular Coulomb + explicit RF self terms; the LAMMPS
+#    per-pair RF gets the self terms from intramolecular pairs instead.
+#  - Fortran adds an analytic exp-6 tail (eset); LAMMPS uses pair_modify shift/tail.
