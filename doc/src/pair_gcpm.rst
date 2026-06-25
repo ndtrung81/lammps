@@ -1,8 +1,11 @@
 .. index:: pair_style gcpm
 .. index:: pair_style gcpm/long
+.. index:: pair_style gcpm/long/gpu
 
 pair_style gcpm command
 ========================================
+
+Accelerator Variants: *gcpm/long/gpu*
 
 Syntax
 """"""
@@ -80,10 +83,10 @@ styles the smoothing function can also be invoked for the real
 space coulomb interactions which enforce continuous energies and
 forces at the cutoff.
 
-The *gcpm/long* style evaluate a Coulomb potential using spherical Gaussian type charge
-distributions which effectively dampen electrostatic interactions
-for high charges at close distances.  The electrostatic potential
-is thus evaluated as:
+The *gcpm* styles evaluates a Coulomb potential using spherical
+Gaussian type charge distributions which effectively dampen
+electrostatic interactions for high charges at close distances.
+The real-space electrostatic energy is thus evaluated as:
 
 .. math::
 
