@@ -29,13 +29,13 @@ pair_coeff 3 3 0.0     1.0    12.75  1.444     0.610
 # the GCPM model excludes the intramolecular Coulombic interaction
 neigh_modify exclude molecule/intra all
 
-velocity all create 300.0 187421 mom yes rot yes
+velocity all create 298.0 187421 mom yes rot yes
 
 timestep 0.5
 
-fix 1 all rigid/small molecule langevin 300.0 300.0 100.0 2345634
+fix 1 all rigid/small molecule langevin 298.0 298.0 10.0 234563
 
-thermo_style custom step ke temp pe evdwl ecoul etotal v_water_density press
+thermo_style custom step temp pe evdwl ecoul etotal v_water_density press
 thermo 10
 
 dump 1 all custom 100 dump.txt id mol type q x y z mux muy muz
