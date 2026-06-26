@@ -16,24 +16,8 @@
 #   M-site Gaussian width 0.610, H width 0.455, polarizability 1.444 Ang^3
 #   reaction-field dielectric 78.4 (hard-coded in the Fortran), cutoff = rcut.
 # The exp-6 dispersion acts between O sites (type 1) only; H/M have epsilon = 0.
-
-units real
-atom_style hybrid full dipole sphere
-read_data data.gcpm
-
-# cutoff must equal the Fortran rcut printed at startup (e.g. 11.220684 Ang)
-variable rc equal 11.220684
-
-# --- full GCPM (polar + reaction field), matches the Fortran method ---
-pair_style gcpm 1 78.4 ${rc} ${rc}
-pair_coeff 1 1 0.218445 3.69 12.75 0.0   0.000
-pair_coeff 2 2 0.0      1.0  12.75 0.0   0.455
-pair_coeff 3 3 0.0      1.0  12.75 1.444 0.610
-
-thermo_style custom step pe evdwl ecoul
-run 0 post no
-
-# Compare:
+#
+# Compare the output between LAMMPS and Fortran:
 #   evdwl  <->  E_disp   (exp-6, no tail)        -- matches to ~5 digits
 #   pe     <->  E_total  (uconf, no tail)        -- offset by the cutoff
 #                                                   convention (molecular vs
@@ -46,10 +30,72 @@ run 0 post no
 #                            and add  'neigh_modify exclude molecule/intra all'
 #                            then compare ecoul to E_coul_smear.
 #
-# Known differences (not bugs, see src/GCPM/gcpm_vs_fortran.md):
+# Known differences (not bugs, see src/GCPM/gcpm_lammps_vs_fortran.md):
 #  - Fortran truncates by molecule COM-COM distance; LAMMPS by atom-atom
 #    distance. This shifts charge-charge (offset H/M sites) at the cutoff shell;
 #    dispersion (O ~ at COM) is unaffected, hence its near-exact match.
 #  - Fortran sums intermolecular Coulomb + explicit RF self terms; the LAMMPS
 #    per-pair RF gets the self terms from intramolecular pairs instead.
 #  - Fortran adds an analytic exp-6 tail (eset); LAMMPS uses pair_modify shift/tail.
+
+variable steps     index 100
+variable datafile  index data.gcpm
+variable r         index 1
+
+variable T         index 298
+variable P         index 1.0         # 1 atm = 0.101 MPa
+
+variable velseed   index 817324
+variable seed      index 576211
+
+# cutoff must equal the Fortran rcut printed at startup (e.g. 11.220684 Ang)
+variable rc        index 11.220684
+
+units real
+atom_style hybrid full dipole sphere
+read_data ${datafile}
+
+replicate $r $r $r
+
+# --- full GCPM (polar + reaction field), matches the Fortran method ---
+pair_style gcpm 1 78.4 ${rc} ${rc}
+pair_coeff 1 1 0.218445 3.69 12.75 0.0   0.000
+pair_coeff 2 2 0.0      1.0  12.75 0.0   0.455
+pair_coeff 3 3 0.0      1.0  12.75 1.444 0.610
+
+pair_style lj/cut/coul/long 8.0 10.0
+pair_coeff 1 1 0.1852 3.1589 # Lennard-Jones params for O atoms (TIP4P/2005)
+pair_coeff 2 2 0.0 1.0 # No LJ interactions for H atoms
+pair_coeff 3 3 0.0 1.0 # No LJ interactions for M atoms
+kspace_style pppm 0.0001
+
+neigh_modify exclude molecule/intra all
+
+thermo_style custom step pe evdwl ecoul
+
+# initialize atom velocities
+velocity all create $T ${velseed} mom yes rot yes dist gaussian
+
+timestep 0.5
+
+fix 1 all rigid molecule langevin $T $T 100.0 ${seed}
+
+#fix 1 all rigid molecule
+#fix 2 all langevin $T $T 100.0 ${seed}
+#fix 1 all rigid/npt/small molecule temp $T $T 100.0 iso $P $P 100.0
+
+variable num_mols      equal atoms/4
+variable water_density equal v_num_mols/vol   # molecules per Angstrom^3, expected around 0.033 for 1 g/cm^3
+
+# With the M site as a *point* dipole (diameter 0 in the data file), fix rigid
+# counts 6 DOF/molecule and the default temp is correct -- no extra/dof needed.
+thermo_style custom step temp pe evdwl ecoul etotal v_water_density press
+thermo 100
+
+dump 1 all custom 10 dump.txt id mol type q x y z mux muy muz
+dump_modify 1 sort id
+
+run ${steps}
+
+
+
