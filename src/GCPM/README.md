@@ -54,3 +54,25 @@ To run with GPU acceleration:
     mpirun -np 8 lammps-gcpm/build/lmp -in examples/PACKAGES/gcpm/in.gcpm  -v steps 1000000 -sf gpu -pk gpu 1 neigh no
 ```
 
+Validation 1 (Section IV B, Fig. 5):
+
+The output RDFs of O-O, O-H and H-H from the run with in.gcpm are in `rdf.txt`
+is expected to match the reference RDFs of O-O, O-H and H-H from the Fortran run `gofr.dat`.
+
+Plotting column 2 (distance) versus column 3, 5, 7 and 9
+shows O-O, O-H, H-O and H-H pairs computed from LAMMPS.
+
+```
+   gnuplot> plot 'rdf.txt' u 2:3 w l, 'gofr.dat' u 1:2 w p
+   gnuplot> plot 'rdf.txt' u 2:5 w l, 'gofr.dat' u 1:3 w p
+   gnuplot> plot 'rdf.txt' u 2:9 w l, 'gofr.dat' u 1:4 w p
+```
+
+Validation 2 (Section IV C, Tables V and VI):
+
+Self diffusion coefficents from the LAMMPS code are expected to match the values in these 2 tables.
+
+
+
+
+
