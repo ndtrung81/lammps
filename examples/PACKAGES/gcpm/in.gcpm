@@ -60,8 +60,8 @@ replicate $r $r $r
 # --- full GCPM (polar + reaction field), matches the Fortran method ---
 pair_style gcpm 1 78.4 ${rc} ${rc}
 pair_coeff 1 1 0.218445 3.69 12.75 0.0   0.000
-pair_coeff 2 2 0.0      1.0  12.75 0.0   0.455
-pair_coeff 3 3 0.0      1.0  12.75 1.444 0.610
+pair_coeff 2 2 0.0      1.0  12.75 0.0   0.455  # No LJ interactions for H atoms
+pair_coeff 3 3 0.0      1.0  12.75 1.444 0.610  # No LJ interactions for M atoms
 
 neigh_modify exclude molecule/intra all
 
@@ -82,7 +82,13 @@ variable water_density equal v_num_mols/vol   # molecules per Angstrom^3, expect
 thermo_style custom step temp pe evdwl ecoul etotal v_water_density press
 thermo 100
 
-dump 1 all custom 100 dump.txt id mol type q x y z mux muy muz
+# compute RDF of pairs: 1-1 (O-O), 1-2 and 2-1 (O-H and H-O), and 2-2 (H-H)
+compute myRDF all rdf 100 1 1 1 2 2 1 2 2
+
+# write to file every 1000 steps, averaging over 10 samples at 100-step intervals
+fix 2 all ave/time 100 10 1000 c_myRDF[*] file rdf.txt mode vector
+
+dump 1 all custom 1000 dump.txt id mol type q x y z mux muy muz
 dump_modify 1 sort id
 
 run ${steps}

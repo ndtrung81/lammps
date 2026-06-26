@@ -1,0 +1,146 @@
+LAMMPS (30 Mar 2026 - Development - r14624-38261-gb1badc2ff8)
+OMP_NUM_THREADS environment is not set. Defaulting to 1 thread.
+  using 1 OpenMP thread(s) per MPI task
+# Water box with explicit TIP4P water model for use with fix rigid and  hybrid full and dipole atom styles
+
+variable steps     index 100
+variable r         index 1               # 4 for data.tip4p
+variable datafile  index data.water_box  # data.tip4p
+
+units real
+atom_style hybrid full dipole sphere
+WARNING: Atom style hybrid defines both, per-type and per-atom masses; both must be set, but only per-atom masses will be used (src/atom_vec_hybrid.cpp:132)
+
+read_data ${datafile}
+read_data data.water_box
+Reading data file ...
+  orthogonal box = (-1 -1 -1) to (23.94128 23.94128 23.94128)
+  1 by 2 by 2 MPI processor grid
+WARNING: Atom style in data file full + dipole + sphere differs from currently defined atom style hybrid (src/read_data.cpp:726)
+  reading atoms ...
+  2048 atoms
+  reading velocities ...
+  2048 velocities
+Finding 1-2 1-3 1-4 neighbors ...
+  special bond factors lj:    0        0        0       
+  special bond factors coul:  0        0        0       
+     0 = max # of 1-2 neighbors
+     0 = max # of 1-3 neighbors
+     0 = max # of 1-4 neighbors
+     1 = max # of special neighbors
+  special bonds CPU = 0.000 seconds
+  read_data CPU = 0.018 seconds
+
+replicate $r $r $r
+replicate 1 $r $r
+replicate 1 1 $r
+replicate 1 1 1
+Replication is creating a 1x1x1 = 1 times larger system...
+WARNING: Atom style hybrid defines both, per-type and per-atom masses; both must be set, but only per-atom masses will be used (src/atom_vec_hybrid.cpp:132)
+  orthogonal box = (-1 -1 -1) to (23.94128 23.94128 23.94128)
+  1 by 2 by 2 MPI processor grid
+  2048 atoms
+Finding 1-2 1-3 1-4 neighbors ...
+  special bond factors lj:    0        0        0       
+  special bond factors coul:  0        0        0       
+     0 = max # of 1-2 neighbors
+     0 = max # of 1-3 neighbors
+     0 = max # of 1-4 neighbors
+     1 = max # of special neighbors
+  special bonds CPU = 0.000 seconds
+  replicate CPU = 0.003 seconds
+
+variable num_mols      equal atoms/4
+variable water_density equal v_num_mols/vol   # molecules per Angstrom^3, expected around 0.033
+
+mass 1 15.9994   # O
+mass 2 1.008     # H
+mass 3 1.0e-100  # site M
+
+# pair style parameters:  enable_polar eps_rf cut_buck [cutcoul]
+pair_style gcpm           1            78.0   12.0
+
+# coeffs       epsilon sigma  gamma  alpha_pol sigmaM
+pair_coeff 1 1 0.1550  3.1536 12.75  0.0       0.000
+pair_coeff 2 2 0.0     1.0    12.75  0.0       0.455
+pair_coeff 3 3 0.0     1.0    12.75  1.444     0.610
+
+# the GCPM model excludes the intramolecular Coulombic interaction
+neigh_modify exclude molecule/intra all
+
+velocity all create 298.0 187421 mom yes rot yes
+
+timestep 0.5
+
+fix 1 all rigid/small molecule langevin 298.0 298.0 10.0 234563
+Fix rigid/small setup ...
+  create bodies CPU = 0.000 seconds
+  512 rigid bodies with 2048 atoms
+  0.87347849 = max distance from body owner to body atom
+
+thermo_style custom step temp pe evdwl ecoul etotal v_water_density press
+thermo 10
+
+dump 1 all custom 100 dump.txt id mol type q x y z mux muy muz
+dump_modify 1 sort id
+
+run ${steps}
+run 100
+Generated 3 of 3 mixed pair_coeff terms from geometric mixing rule
+Neighbor list info ...
+  update: every = 1 steps, delay = 0 steps, check = yes
+  max neighbors/atom: 2000, page size: 100000
+  master list distance cutoff = 14
+  ghost atom cutoff = 14
+  binsize = 7, bins = 4 4 4
+  1 neighbor lists, perpetual/occasional/extra = 1 0 0
+  (1) pair gcpm, perpetual
+      attributes: half, newton on
+      pair build: half/bin/newton
+      stencil: half/bin/3d
+      bin: standard
+Per MPI rank memory allocation (min/avg/max) = 17.33 | 17.43 | 17.72 Mbytes
+   Step          Temp          PotEng         E_vdwl         E_coul         TotEng     v_water_density     Press     
+         0   301.89244     -12309.722      768.21517     -13077.937     -11389.14       0.032999985   -14249.272    
+        10   353.05628     -7623.5613      812.97241     -8436.5337     -6546.9625      0.032999985   -33777.881    
+        20   358.3533      -8313.6226      922.93874     -9236.5613     -7220.8712      0.032999985   -8067.9947    
+        30   350.17047     -9630.4705      1022.6093     -10653.08      -8562.6717      0.032999985   -33120.259    
+        40   334.76913     -8149.3866      1098.3514     -9247.738      -7128.5521      0.032999985   -42963.11     
+        50   318.31669     -6564.9598      1171.8592     -7736.819      -5594.2949      0.032999985   -15822.425    
+        60   321.23597     -3802.7602      1230.493      -5033.2532     -2823.1933      0.032999985    42128.286    
+        70   324.99147     -1733.1888      1297.7099     -3030.8987     -742.17001      0.032999985   -19999.262    
+        80   306.5179      -2722.9476      1367.6937     -4090.6413     -1788.2615      0.032999985   -42093.068    
+        90   300.34443     -4614.8729      1397.776      -6012.6489     -3699.012       0.032999985   -12523.406    
+       100   313.84389     -5335.5719      1423.6972     -6759.2692     -4378.5462      0.032999985   -8799.5759    
+Loop time of 7.59184 on 4 procs for 100 steps with 2048 atoms
+
+Performance: 0.569 ns/day, 42.177 hours/ns, 13.172 timesteps/s, 26.976 katom-step/s
+97.4% CPU use with 4 MPI tasks x 1 OpenMP threads
+
+MPI task timing breakdown:
+Section |  min time  |  avg time  |  max time  |%varavg| %total
+---------------------------------------------------------------
+Pair    | 7.2679     | 7.3565     | 7.4522     |   2.5 | 96.90
+Bond    | 1.3939e-05 | 1.6923e-05 | 1.9952e-05 |   0.0 |  0.00
+Neigh   | 0.016002   | 0.017618   | 0.018704   |   0.8 |  0.23
+Comm    | 0.048937   | 0.14568    | 0.23583    |  17.9 |  1.92
+Output  | 0.0017266  | 0.0017889  | 0.0019068  |   0.2 |  0.02
+Modify  | 0.066118   | 0.066262   | 0.066464   |   0.0 |  0.87
+Other   |            | 0.003999   |            |       |  0.05
+
+Nlocal:            512 ave         549 max         483 min
+Histogram: 1 0 0 2 0 0 0 0 0 1
+Nghost:        10810.5 ave       10862 max       10771 min
+Histogram: 1 0 0 1 1 0 0 0 0 1
+Neighs:         386588 ave      418156 max      374317 min
+Histogram: 3 0 0 0 0 0 0 0 0 1
+
+Total # of neighbors = 1546354
+Ave neighs/atom = 755.05566
+Ave special neighs/atom = 0
+Neighbor list builds = 1
+Dangerous builds = 0
+
+write_dump all custom final.dump id mol type q x y z mux muy muz modify sort id
+#write_data final.data nocoeff
+Total wall time: 0:00:07
