@@ -114,6 +114,14 @@ PairGCPM::PairGCPM(LAMMPS *lmp) : Pair(lmp)
   comm_mode = EFIELD_POL;
   first_polar = 1;
 
+  // induced-dipole solver convergence statistics (reset each run in setup())
+
+  polar_ncalls = 0;
+  polar_niter_sum = 0;
+  polar_niter_min = 0;
+  polar_niter_max = 0;
+  polar_nonconv = 0;
+
   // reaction-field correction (disabled unless eps_rf > 0 is given)
 
   enable_rf = 0;
@@ -157,6 +165,55 @@ PairGCPM::~PairGCPM()
   memory->destroy(mol_Rp);
 
   if (ftable) free_tables();
+}
+
+/* ----------------------------------------------------------------------
+   accumulate per-step induced-dipole solver iteration counts (called once per
+   polar() invocation). The iteration count is identical on every rank because
+   convergence is decided by a global MPI_Allreduce, so no reduction is needed
+   here; finish() reports the rank-0 tallies.
+------------------------------------------------------------------------- */
+
+void PairGCPM::record_polar_iters(int niter, int converged)
+{
+  if (polar_ncalls == 0 || niter < polar_niter_min) polar_niter_min = niter;
+  if (niter > polar_niter_max) polar_niter_max = niter;
+  polar_niter_sum += niter;
+  polar_ncalls++;
+  if (!converged) polar_nonconv++;
+}
+
+/* ----------------------------------------------------------------------
+   reset solver statistics at the start of each run
+------------------------------------------------------------------------- */
+
+void PairGCPM::setup()
+{
+  polar_ncalls = 0;
+  polar_niter_sum = 0;
+  polar_niter_min = 0;
+  polar_niter_max = 0;
+  polar_nonconv = 0;
+}
+
+/* ----------------------------------------------------------------------
+   report induced-dipole solver convergence statistics at the end of the run
+------------------------------------------------------------------------- */
+
+void PairGCPM::finish()
+{
+  if (!enable_polar || polar_ncalls == 0) return;
+  if (comm->me != 0) return;
+
+  double avg = (double) polar_niter_sum / (double) polar_ncalls;
+  utils::logmesg(lmp, "\nGCPM induced-dipole solver stats:\n");
+  utils::logmesg(lmp, "  solver calls = {}\n", polar_ncalls);
+  utils::logmesg(lmp, "  iterations/call (min/avg/max) = {} {:.2f} {}\n",
+                 polar_niter_min, avg, polar_niter_max);
+  utils::logmesg(lmp, "  total iterations = {}\n", polar_niter_sum);
+  if (polar_nonconv > 0)
+    utils::logmesg(lmp, "  WARNING: {} call(s) did not converge to tol {:.3g} "
+                   "within maxiter = {}\n", polar_nonconv, tol, maxiter);
 }
 
 /* ----------------------------------------------------------------------
@@ -588,7 +645,8 @@ void PairGCPM::polar(int eflag, int vflag, int neigh_half)
     }
   }
 
-  for (int iter = 0; iter < maxiter; iter++) {
+  int iter, converged_run = 0;
+  for (iter = 0; iter < maxiter; iter++) {
 
     // Eq. (5): compute E_p (incl. the dipole->dipole RF field, term C) from the
     // current dipole estimates, then update dipoles from the total field
@@ -634,7 +692,7 @@ void PairGCPM::polar(int eflag, int vflag, int neigh_half)
     }
 
     MPI_Allreduce(&converged, &all_converged, 1, MPI_INT, MPI_MIN, world);
-    if (all_converged) break;
+    if (all_converged) { converged_run = 1; break; }
 
     for (i = 0; i < nlocal; i++) {
       if (mu[i][3] != 0.0) {
@@ -644,6 +702,10 @@ void PairGCPM::polar(int eflag, int vflag, int neigh_half)
       }
     }
   }
+
+  // record solver convergence statistics for finish(). iterations performed are
+  // iter+1 on convergence (loop broke after that pass) or maxiter otherwise.
+  record_polar_iters(converged_run ? iter + 1 : maxiter, converged_run);
 
   // After convergence: forces and energy from charge-induced-dipole interaction.
   // U_pol = -1/2 * sum_i p_i . E_q_i  (Eq. 9 in Paricaud et al.). Because the

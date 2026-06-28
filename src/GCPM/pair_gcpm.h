@@ -46,6 +46,8 @@ class PairGCPM : public Pair {
   void settings(int, char **) override;
   void coeff(int, char **) override;
   void init_style() override;
+  void setup() override;
+  void finish() override;
   double init_one(int, int) override;
   void write_restart(FILE *) override;
   void read_restart(FILE *) override;
@@ -110,6 +112,15 @@ class PairGCPM : public Pair {
   int enable_polar;     // 1 if polar interactions enabled, 0 if not
   int comm_mode;        // 0 = reverse-comm efield, 1 = reverse-comm efield_pol
   int first_polar;      // 1 on first call to polar(), 0 thereafter (warm-start flag)
+
+  // induced-dipole solver convergence statistics, reset in setup() at the start
+  // of each run and reported in finish() at the end of the run.
+  bigint polar_ncalls;    // number of solver invocations during the run
+  bigint polar_niter_sum; // total iterations summed over all invocations
+  int polar_niter_min;    // fewest iterations taken by any invocation
+  int polar_niter_max;    // most iterations taken by any invocation
+  int polar_nonconv;      // invocations that hit maxiter without converging
+  void record_polar_iters(int niter, int converged);  // accumulate the above
 
   // reaction-field correction (Onsager continuum, Eqs. 11-12 of Paricaud et al.)
   int enable_rf;        // 1 if reaction-field correction enabled, 0 if not
