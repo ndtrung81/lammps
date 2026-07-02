@@ -159,12 +159,15 @@ set(KOKKOS_PKG_SOURCES ${KOKKOS_PKG_SOURCES_DIR}/kokkos.cpp
                        ${KOKKOS_PKG_SOURCES_DIR}/neigh_list_kokkos.cpp
                        ${KOKKOS_PKG_SOURCES_DIR}/neigh_bond_kokkos.cpp
                        ${KOKKOS_PKG_SOURCES_DIR}/fix_nh_kokkos.cpp
+                       ${KOKKOS_PKG_SOURCES_DIR}/fix_nh_sphere_kokkos.cpp
                        ${KOKKOS_PKG_SOURCES_DIR}/nbin_kokkos.cpp
                        ${KOKKOS_PKG_SOURCES_DIR}/npair_kokkos.cpp
                        ${KOKKOS_PKG_SOURCES_DIR}/npair_halffull_kokkos.cpp
                        ${KOKKOS_PKG_SOURCES_DIR}/domain_kokkos.cpp
                        ${KOKKOS_PKG_SOURCES_DIR}/modify_kokkos.cpp
-                       ${KOKKOS_PKG_SOURCES_DIR}/rand_pool_wrap_kokkos.cpp)
+                       ${KOKKOS_PKG_SOURCES_DIR}/rand_pool_wrap_kokkos.cpp
+                       ${KOKKOS_PKG_SOURCES_DIR}/tune_kokkos.cpp)
+
 
 # fix wall/gran has been refactored in an incompatible way. Use old version of base class for now
 if(PKG_GRANULAR)
@@ -214,6 +217,11 @@ if(PKG_KSPACE)
       target_link_libraries(lammps PRIVATE nvpl::fftw)
   endif()
   target_compile_definitions(lammps PRIVATE -DFFT_KOKKOS_${FFT_KOKKOS})
+  if((FFT_KOKKOS STREQUAL "FFTW3") OR (FFT_KOKKOS STREQUAL "NVPL"))
+    if(FFT_FFTW_THREADS)
+      target_compile_definitions(lammps PRIVATE -DFFT_KOKKOS_FFTW_THREADS)
+    endif()
+  endif()
 endif()
 
 if(PKG_ML-IAP)

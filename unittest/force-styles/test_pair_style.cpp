@@ -33,6 +33,7 @@
 
 #include <cmath>
 
+#include <algorithm>
 #include <exception>
 #include <iostream>
 #include <set>
@@ -131,18 +132,26 @@ LAMMPS *init_lammps(LAMMPS::argv &args, const TestConfig &cfg, const bool newton
     return lmp;
 }
 
-void run_lammps(LAMMPS *lmp)
+void run_lammps(LAMMPS *lmp, const TestConfig &cfg)
 {
     // utility lambda to improve readability
     auto command = [&](const std::string &line) {
         lmp->input->one(line);
     };
 
-    command("fix 1 all nve");
     command("compute pe all pe/atom pair");
     command("compute sum all reduce sum c_pe");
     command("thermo_style custom step temp pe press c_sum");
     command("thermo 2");
+
+    // need to use a different integrator for different atom styles
+    if (std::find(cfg.tags.begin(), cfg.tags.end(), "ellipsoid") != cfg.tags.end()) {
+        command("fix 1 all nve/asphere");
+        command("compute etemp all temp/asphere");
+        command("thermo_modify temp etemp");
+    } else {
+        command("fix 1 all nve");
+    }
     command("run 4 post no");
 }
 
@@ -285,7 +294,7 @@ void generate_yaml_file(const char *outfile, const TestConfig &config)
     writer.emit_block("init_forces", block);
 
     // do a few steps of MD
-    run_lammps(lmp);
+    run_lammps(lmp, config);
 
     // run_vdwl
     writer.emit("run_vdwl", lmp->force->pair->eng_vdwl);
@@ -365,7 +374,7 @@ TEST(PairStyle, plain)
     if (print_stats) std::cerr << "init_energy stats, newton on: " << stats << std::endl;
 
     if (!verbose) ::testing::internal::CaptureStdout();
-    run_lammps(lmp);
+    run_lammps(lmp, test_config);
     if (!verbose) ::testing::internal::GetCapturedStdout();
 
     EXPECT_FORCES("run_forces (newton on)", lmp->atom, test_config.run_forces, 5 * epsilon);
@@ -407,7 +416,7 @@ TEST(PairStyle, plain)
         if (print_stats) std::cerr << "init_energy stats, newton off:" << stats << std::endl;
 
         if (!verbose) ::testing::internal::CaptureStdout();
-        run_lammps(lmp);
+        run_lammps(lmp, test_config);
         if (!verbose) ::testing::internal::GetCapturedStdout();
 
         EXPECT_FORCES("run_forces (newton off)", lmp->atom, test_config.run_forces, 5 * epsilon);
@@ -474,7 +483,7 @@ TEST(PairStyle, plain)
         try {
             lmp = init_lammps(args, test_config, false);
             lmp->input->one("run_style respa 2 1 inner 1 4.8 5.5 outer 2");
-            run_lammps(lmp);
+            run_lammps(lmp, test_config);
         } catch (std::exception &e) {
             if (!verbose) ::testing::internal::GetCapturedStdout();
             FAIL() << e.what();
@@ -511,8 +520,9 @@ TEST(PairStyle, omp)
     LAMMPS::argv args = {"PairStyle", "-log", "none", "-echo", "screen", "-nocite",
                          "-pk",       "omp",  "4",    "-sf",   "omp"};
 
-    // cannot run dpd styles with more than 1 thread due to using multiple pRNGs
-    if (utils::strmatch(test_config.pair_style, "^dpd")) args[8] = "1";
+    // styles tagged "single_thread" (e.g. dpd, which uses multiple pRNGs) cannot
+    // run with more than one thread in the test
+    if (test_config.has_tag("single_thread")) args[8] = "1";
 
     ::testing::internal::CaptureStdout();
     LAMMPS *lmp = nullptr;
@@ -561,7 +571,7 @@ TEST(PairStyle, omp)
     if (print_stats) std::cerr << "init_energy stats, newton on: " << stats << std::endl;
 
     if (!verbose) ::testing::internal::CaptureStdout();
-    run_lammps(lmp);
+    run_lammps(lmp, test_config);
     if (!verbose) ::testing::internal::GetCapturedStdout();
 
     EXPECT_FORCES("run_forces (newton on)", lmp->atom, test_config.run_forces, 5 * epsilon);
@@ -600,7 +610,7 @@ TEST(PairStyle, omp)
         if (print_stats) std::cerr << "init_energy stats, newton off:" << stats << std::endl;
 
         if (!verbose) ::testing::internal::CaptureStdout();
-        run_lammps(lmp);
+        run_lammps(lmp, test_config);
         if (!verbose) ::testing::internal::GetCapturedStdout();
 
         EXPECT_FORCES("run_forces (newton off)", lmp->atom, test_config.run_forces, 5 * epsilon);
@@ -635,39 +645,16 @@ TEST(PairStyle, omp)
     if (!verbose) ::testing::internal::GetCapturedStdout();
 };
 
-TEST(PairStyle, kokkos_omp)
+// precision of the KOKKOS package as selected with -D KOKKOS_PREC at compile time
+static std::string kokkos_precision()
 {
-    if (!Info::has_package("KOKKOS")) GTEST_SKIP();
-    if (test_config.skip_tests.count(test_info_->name())) GTEST_SKIP();
-    // test either OpenMP or Serial
-    if (!Info::has_accelerator_feature("KOKKOS", "api", "serial") &&
-        !Info::has_accelerator_feature("KOKKOS", "api", "openmp"))
-        GTEST_SKIP();
-    // if KOKKOS has GPU support enabled, it *must* be used. We cannot test OpenMP only.
-    if (Info::has_accelerator_feature("KOKKOS", "api", "cuda") ||
-        Info::has_accelerator_feature("KOKKOS", "api", "hip") ||
-        Info::has_accelerator_feature("KOKKOS", "api", "sycl")) {
-        GTEST_SKIP() << "Cannot test KOKKOS/OpenMP with GPU support enabled";
-    }
+    if (Info::has_accelerator_feature("KOKKOS", "precision", "mixed")) return "mixed";
+    if (Info::has_accelerator_feature("KOKKOS", "precision", "single")) return "single";
+    return "double";
+}
 
-    LAMMPS::argv args = {"PairStyle", "-log", "none", "-echo", "screen", "-nocite",
-                         "-k",        "on",   "t",    "4",     "-sf",    "kk"};
-    // fall back to serial if openmp is not available
-    if (!Info::has_accelerator_feature("KOKKOS", "api", "openmp")) args[9] = "1";
-
-    // cannot run dpd styles in plain or hybrid with more than 1 thread due to using multiple pRNGs
-    if (utils::strmatch(test_config.pair_style, "^dpd") ||
-        utils::strmatch(test_config.pair_style, " dpd"))
-        args[9] = "1";
-    // cannot run snap styles in plain or hybrid with more than 1 thread due to implementation
-    if (utils::strmatch(test_config.pair_style, "^snap") ||
-        utils::strmatch(test_config.pair_style, " snap"))
-        args[9] = "1";
-    // cannot run pace styles in plain or hybrid with more than 1 thread due to implementation
-    if (utils::strmatch(test_config.pair_style, "^pace") ||
-        utils::strmatch(test_config.pair_style, " pace"))
-        args[9] = "1";
-
+static void run_kokkos_test(LAMMPS::argv &args)
+{
     ::testing::internal::CaptureStdout();
     LAMMPS *lmp = nullptr;
     try {
@@ -698,6 +685,12 @@ TEST(PairStyle, kokkos_omp)
 
     // relax error a bit for KOKKOS package
     double epsilon = 5.0 * test_config.epsilon;
+    // relax error a lot for reduced precision KOKKOS builds
+    const std::string kk_precision = kokkos_precision();
+    if (kk_precision == "mixed")
+        epsilon *= 2.0e9;
+    else if (kk_precision == "single")
+        epsilon *= 1.0e10;
     // relax test precision when using pppm and single precision FFTs
 #if defined(FFT_SINGLE)
     if (lmp->force->kspace && lmp->force->kspace->compute_flag)
@@ -715,7 +708,7 @@ TEST(PairStyle, kokkos_omp)
     if (print_stats) std::cerr << "init_energy stats, newton on: " << stats << std::endl;
 
     if (!verbose) ::testing::internal::CaptureStdout();
-    run_lammps(lmp);
+    run_lammps(lmp, test_config);
     if (!verbose) ::testing::internal::GetCapturedStdout();
 
     EXPECT_FORCES("run_forces (newton on)", lmp->atom, test_config.run_forces, 5 * epsilon);
@@ -753,7 +746,7 @@ TEST(PairStyle, kokkos_omp)
         if (print_stats) std::cerr << "init_energy stats, newton off:" << stats << std::endl;
 
         if (!verbose) ::testing::internal::CaptureStdout();
-        run_lammps(lmp);
+        run_lammps(lmp, test_config);
         if (!verbose) ::testing::internal::GetCapturedStdout();
 
         EXPECT_FORCES("run_forces (newton off)", lmp->atom, test_config.run_forces, 5 * epsilon);
@@ -786,6 +779,90 @@ TEST(PairStyle, kokkos_omp)
     if (!verbose) ::testing::internal::CaptureStdout();
     cleanup_lammps(lmp, test_config);
     if (!verbose) ::testing::internal::GetCapturedStdout();
+}
+
+TEST(PairStyle, kokkos_omp)
+{
+    if (!Info::has_package("KOKKOS")) GTEST_SKIP();
+    if (test_config.skip_tests.count(test_info_->name())) GTEST_SKIP();
+    // skip entries may also be qualified by the KOKKOS package precision,
+    // e.g. "kokkos_omp_single" skips only single precision KOKKOS builds
+    if (test_config.skip_tests.count(std::string(test_info_->name()) + "_" + kokkos_precision()))
+        GTEST_SKIP();
+    // this test requires the OpenMP backend of KOKKOS
+    if (!Info::has_accelerator_feature("KOKKOS", "api", "openmp"))
+        GTEST_SKIP() << "KOKKOS OpenMP backend not enabled";
+    // if KOKKOS has GPU support enabled, it *must* be used. We cannot test OpenMP only.
+    if (Info::has_accelerator_feature("KOKKOS", "api", "cuda") ||
+        Info::has_accelerator_feature("KOKKOS", "api", "hip") ||
+        Info::has_accelerator_feature("KOKKOS", "api", "sycl")) {
+        GTEST_SKIP() << "Cannot test KOKKOS/OpenMP with GPU support enabled";
+    }
+
+    LAMMPS::argv args = {"PairStyle", "-log", "none", "-echo", "screen", "-nocite",
+                         "-k",        "on",   "t",    "4",     "-sf",    "kk"};
+
+    // some styles cannot run with more than one thread in the test (dpd uses
+    // multiple pRNGs, snap and pace due to their implementation); these are
+    // flagged with the "single_thread" tag in their YAML file
+    if (test_config.has_tag("single_thread")) args[9] = "1";
+
+    run_kokkos_test(args);
+};
+
+TEST(PairStyle, kokkos_serial)
+{
+    if (!Info::has_package("KOKKOS")) GTEST_SKIP();
+    if (test_config.skip_tests.count(test_info_->name())) GTEST_SKIP();
+    // skip entries may also be qualified by the KOKKOS package precision,
+    // e.g. "kokkos_serial_single" skips only single precision KOKKOS builds
+    if (test_config.skip_tests.count(std::string(test_info_->name()) + "_" + kokkos_precision()))
+        GTEST_SKIP();
+    // this test requires the KOKKOS package compiled with only the Serial backend: when the
+    // OpenMP (or a GPU) backend is enabled, the host execution space is not Serial
+    if (!Info::has_accelerator_feature("KOKKOS", "api", "serial"))
+        GTEST_SKIP() << "KOKKOS Serial backend not enabled";
+    if (Info::has_accelerator_feature("KOKKOS", "api", "openmp") ||
+        Info::has_accelerator_feature("KOKKOS", "api", "pthreads"))
+        GTEST_SKIP() << "Cannot test KOKKOS/Serial with threading support enabled";
+    if (Info::has_accelerator_feature("KOKKOS", "api", "cuda") ||
+        Info::has_accelerator_feature("KOKKOS", "api", "hip") ||
+        Info::has_accelerator_feature("KOKKOS", "api", "sycl")) {
+        GTEST_SKIP() << "Cannot test KOKKOS/Serial with GPU support enabled";
+    }
+
+    LAMMPS::argv args = {"PairStyle", "-log", "none", "-echo", "screen", "-nocite",
+                         "-k",        "on",   "t",    "1",     "-sf",    "kk"};
+
+    run_kokkos_test(args);
+};
+
+TEST(PairStyle, kokkos_gpu)
+{
+    if (!Info::has_package("KOKKOS")) GTEST_SKIP();
+    if (test_config.skip_tests.count(test_info_->name())) GTEST_SKIP();
+    // skip entries may also be qualified by the KOKKOS package precision,
+    // e.g. "kokkos_gpu_single" skips only single precision KOKKOS builds
+    if (test_config.skip_tests.count(std::string(test_info_->name()) + "_" + kokkos_precision()))
+        GTEST_SKIP();
+    // this test requires a GPU backend of the KOKKOS package
+    if (!Info::has_accelerator_feature("KOKKOS", "api", "cuda") &&
+        !Info::has_accelerator_feature("KOKKOS", "api", "hip") &&
+        !Info::has_accelerator_feature("KOKKOS", "api", "sycl"))
+        GTEST_SKIP() << "KOKKOS GPU backend not enabled";
+    // transparently skip when no compatible GPU device is present
+    if (!Info::has_kokkos_gpu_device())
+        GTEST_SKIP() << "No compatible GPU device available";
+
+    // use a half neighbor list with newton on so the GPU kernels run the way the
+    // input templates expect; the GPU default is "neigh full" + newton off, which
+    // (a) the templates do not use and (b) would make the package set newton off
+    // at startup, so a later "newton on" after the box exists would error out
+    LAMMPS::argv args = {"PairStyle", "-log", "none",   "-echo",  "screen", "-nocite", "-k",
+                         "on",        "g",    "1",      "-sf",    "kk",     "-pk",     "kokkos",
+                         "neigh",     "half", "newton", "on"};
+
+    run_kokkos_test(args);
 };
 
 TEST(PairStyle, gpu)
@@ -799,6 +876,17 @@ TEST(PairStyle, gpu)
     if (utils::strmatch(test_config.basename, ".*pppm.*") &&
         (Info::has_accelerator_feature("GPU", "precision", "single")) &&
         (!Info::has_fft_single_support()))
+        GTEST_SKIP();
+
+    // some GPU pair styles do not support single and/or mixed precision GPU mode
+    // (e.g. born/coul/long/cs/gpu errors out in single precision). Their tests are
+    // tagged "gpu_no_single" / "gpu_no_mixed" and skipped when the GPU package is
+    // compiled for that precision.
+    if (test_config.has_tag("gpu_no_single") &&
+        Info::has_accelerator_feature("GPU", "precision", "single"))
+        GTEST_SKIP();
+    if (test_config.has_tag("gpu_no_mixed") &&
+        Info::has_accelerator_feature("GPU", "precision", "mixed"))
         GTEST_SKIP();
 
     LAMMPS::argv args_neigh   = {"PairStyle", "-log",    "none", "-echo",
@@ -867,7 +955,7 @@ TEST(PairStyle, gpu)
     if (print_stats) std::cerr << "init_energy stats, newton off:" << stats << std::endl;
 
     if (!verbose) ::testing::internal::CaptureStdout();
-    run_lammps(lmp);
+    run_lammps(lmp, test_config);
     if (!verbose) ::testing::internal::GetCapturedStdout();
 
     EXPECT_FORCES("run_forces (newton off)", lmp->atom, test_config.run_forces, 5 * epsilon);
@@ -895,8 +983,9 @@ TEST(PairStyle, intel)
                          "-pk",       "intel", "0",    "mode",  "double", "omp",
                          "4",         "lrt",   "no",   "-sf",   "intel"};
 
-    // cannot use more than 1 thread for dpd styles due to pRNG
-    if (utils::strmatch(test_config.pair_style, "^dpd")) args[12] = "1";
+    // styles tagged "single_thread" (e.g. dpd, due to its pRNG) cannot use more
+    // than one thread in the test
+    if (test_config.has_tag("single_thread")) args[12] = "1";
 
     ::testing::internal::CaptureStdout();
     LAMMPS *lmp = nullptr;
@@ -954,7 +1043,7 @@ TEST(PairStyle, intel)
     if (print_stats) std::cerr << "init_energy stats:" << stats << std::endl;
 
     if (!verbose) ::testing::internal::CaptureStdout();
-    run_lammps(lmp);
+    run_lammps(lmp, test_config);
     if (!verbose) ::testing::internal::GetCapturedStdout();
 
     EXPECT_FORCES("run_forces", lmp->atom, test_config.run_forces, 5 * epsilon);
@@ -1031,7 +1120,7 @@ TEST(PairStyle, opt)
     if (print_stats) std::cerr << "init_energy stats:" << stats << std::endl;
 
     if (!verbose) ::testing::internal::CaptureStdout();
-    run_lammps(lmp);
+    run_lammps(lmp, test_config);
     if (!verbose) ::testing::internal::GetCapturedStdout();
 
     EXPECT_FORCES("run_forces", lmp->atom, test_config.run_forces, 5 * epsilon);
@@ -1152,7 +1241,13 @@ TEST(PairStyle, single)
         GTEST_SKIP();
     }
 
-    command("atom_style full");
+    if (std::find(test_config.tags.begin(), test_config.tags.end(), "ellipsoid") !=
+        test_config.tags.end()) {
+        command("atom_style ellipsoid");
+    } else {
+        command("atom_style full");
+    }
+
     command("units ${units}");
     command("boundary p p p");
     command("newton ${newton_pair} ${newton_bond}");
@@ -1183,14 +1278,24 @@ TEST(PairStyle, single)
 
     // create (only) two atoms
 
-    command("mass * 1.0");
     command("create_atoms 1 single 0.0 -0.75  0.4 units box");
     command("create_atoms 2 single 1.5  0.25 -0.1 units box");
-    command("set atom 1 charge -0.5");
-    command("set atom 2 charge  0.5");
-    command("set atom 1 mol 1");
-    command("set atom 2 mol 2");
     command("special_bonds lj/coul 1.0 1.0 1.0");
+
+    // need to use a different integrator for different atom styles
+    if (std::find(test_config.tags.begin(), test_config.tags.end(), "ellipsoid") !=
+        test_config.tags.end()) {
+        command("set atom 1 shape 1 2 2");
+        command("set atom 2 shape 3 1 1");
+        command("set group all quat/random 12238");
+        command("set group all mass 1.0");
+    } else {
+        command("mass * 1.0");
+        command("set atom 1 charge -0.5");
+        command("set atom 2 charge  0.5");
+        command("set atom 1 mol 1");
+        command("set atom 2 mol 2");
+    }
 
     if (molecular == Atom::MOLECULAR) {
         command("create_bonds single/bond 1 1 2");
@@ -1210,6 +1315,10 @@ TEST(PairStyle, single)
     double epsilon = test_config.epsilon;
     double **f     = lmp->atom->f;
     double **x     = lmp->atom->x;
+    bool is_ellipsoid =
+        std::find(test_config.tags.begin(), test_config.tags.end(), "ellipsoid") !=
+        test_config.tags.end();
+    double **tor   = is_ellipsoid ? lmp->atom->torque : nullptr;
     double delx    = x[idx2][0] - x[idx1][0];
     double dely    = x[idx2][1] - x[idx1][1];
     double delz    = x[idx2][2] - x[idx1][2];
@@ -1222,12 +1331,25 @@ TEST(PairStyle, single)
 
     epair[0] = pair->eng_vdwl + pair->eng_coul;
     esngl[0] = pair->single(idx1, idx2, 1, 2, rsq, spcl, splj, fsingle);
-    EXPECT_FP_LE_WITH_EPS(f[idx1][0], -fsingle * delx, epsilon);
-    EXPECT_FP_LE_WITH_EPS(f[idx1][1], -fsingle * dely, epsilon);
-    EXPECT_FP_LE_WITH_EPS(f[idx1][2], -fsingle * delz, epsilon);
-    EXPECT_FP_LE_WITH_EPS(f[idx2][0], fsingle * delx, epsilon);
-    EXPECT_FP_LE_WITH_EPS(f[idx2][1], fsingle * dely, epsilon);
-    EXPECT_FP_LE_WITH_EPS(f[idx2][2], fsingle * delz, epsilon);
+    if (is_ellipsoid) {
+        EXPECT_NE(pair->svector, nullptr);
+        EXPECT_GE(pair->single_extra, 6);
+        if (pair->svector != nullptr && pair->single_extra >= 6) {
+            EXPECT_FP_LE_WITH_EPS(pair->svector[0], f[idx1][0], epsilon);
+            EXPECT_FP_LE_WITH_EPS(pair->svector[1], f[idx1][1], epsilon);
+            EXPECT_FP_LE_WITH_EPS(pair->svector[2], f[idx1][2], epsilon);
+            EXPECT_FP_LE_WITH_EPS(pair->svector[3], tor[idx1][0], epsilon);
+            EXPECT_FP_LE_WITH_EPS(pair->svector[4], tor[idx1][1], epsilon);
+            EXPECT_FP_LE_WITH_EPS(pair->svector[5], tor[idx1][2], epsilon);
+        }
+    } else {
+        EXPECT_FP_LE_WITH_EPS(f[idx1][0], -fsingle * delx, epsilon);
+        EXPECT_FP_LE_WITH_EPS(f[idx1][1], -fsingle * dely, epsilon);
+        EXPECT_FP_LE_WITH_EPS(f[idx1][2], -fsingle * delz, epsilon);
+        EXPECT_FP_LE_WITH_EPS(f[idx2][0], fsingle * delx, epsilon);
+        EXPECT_FP_LE_WITH_EPS(f[idx2][1], fsingle * dely, epsilon);
+        EXPECT_FP_LE_WITH_EPS(f[idx2][2], fsingle * delz, epsilon);
+    }
 
     if (!verbose) ::testing::internal::CaptureStdout();
     command("displace_atoms all random 0.5 0.5 0.5 723456");
@@ -1236,6 +1358,7 @@ TEST(PairStyle, single)
 
     f       = lmp->atom->f;
     x       = lmp->atom->x;
+    if (is_ellipsoid) tor = lmp->atom->torque;
     idx1    = lmp->atom->map(1);
     idx2    = lmp->atom->map(2);
     delx    = x[idx2][0] - x[idx1][0];
@@ -1246,12 +1369,25 @@ TEST(PairStyle, single)
 
     epair[1] = pair->eng_vdwl + pair->eng_coul;
     esngl[1] = pair->single(idx1, idx2, 1, 2, rsq, spcl, splj, fsingle);
-    EXPECT_FP_LE_WITH_EPS(f[idx1][0], -fsingle * delx, epsilon);
-    EXPECT_FP_LE_WITH_EPS(f[idx1][1], -fsingle * dely, epsilon);
-    EXPECT_FP_LE_WITH_EPS(f[idx1][2], -fsingle * delz, epsilon);
-    EXPECT_FP_LE_WITH_EPS(f[idx2][0], fsingle * delx, epsilon);
-    EXPECT_FP_LE_WITH_EPS(f[idx2][1], fsingle * dely, epsilon);
-    EXPECT_FP_LE_WITH_EPS(f[idx2][2], fsingle * delz, epsilon);
+    if (is_ellipsoid) {
+        EXPECT_NE(pair->svector, nullptr);
+        EXPECT_GE(pair->single_extra, 6);
+        if (pair->svector != nullptr && pair->single_extra >= 6) {
+            EXPECT_FP_LE_WITH_EPS(pair->svector[0], f[idx1][0], epsilon);
+            EXPECT_FP_LE_WITH_EPS(pair->svector[1], f[idx1][1], epsilon);
+            EXPECT_FP_LE_WITH_EPS(pair->svector[2], f[idx1][2], epsilon);
+            EXPECT_FP_LE_WITH_EPS(pair->svector[3], tor[idx1][0], epsilon);
+            EXPECT_FP_LE_WITH_EPS(pair->svector[4], tor[idx1][1], epsilon);
+            EXPECT_FP_LE_WITH_EPS(pair->svector[5], tor[idx1][2], epsilon);
+        }
+    } else {
+        EXPECT_FP_LE_WITH_EPS(f[idx1][0], -fsingle * delx, epsilon);
+        EXPECT_FP_LE_WITH_EPS(f[idx1][1], -fsingle * dely, epsilon);
+        EXPECT_FP_LE_WITH_EPS(f[idx1][2], -fsingle * delz, epsilon);
+        EXPECT_FP_LE_WITH_EPS(f[idx2][0], fsingle * delx, epsilon);
+        EXPECT_FP_LE_WITH_EPS(f[idx2][1], fsingle * dely, epsilon);
+        EXPECT_FP_LE_WITH_EPS(f[idx2][2], fsingle * delz, epsilon);
+    }
 
     if (!verbose) ::testing::internal::CaptureStdout();
     command("displace_atoms all random 0.5 0.5 0.5 3456963");
@@ -1260,6 +1396,7 @@ TEST(PairStyle, single)
 
     f       = lmp->atom->f;
     x       = lmp->atom->x;
+    if (is_ellipsoid) tor = lmp->atom->torque;
     idx1    = lmp->atom->map(1);
     idx2    = lmp->atom->map(2);
     delx    = x[idx2][0] - x[idx1][0];
@@ -1270,12 +1407,25 @@ TEST(PairStyle, single)
 
     epair[2] = pair->eng_vdwl + pair->eng_coul;
     esngl[2] = pair->single(idx1, idx2, 1, 2, rsq, spcl, splj, fsingle);
-    EXPECT_FP_LE_WITH_EPS(f[idx1][0], -fsingle * delx, epsilon);
-    EXPECT_FP_LE_WITH_EPS(f[idx1][1], -fsingle * dely, epsilon);
-    EXPECT_FP_LE_WITH_EPS(f[idx1][2], -fsingle * delz, epsilon);
-    EXPECT_FP_LE_WITH_EPS(f[idx2][0], fsingle * delx, epsilon);
-    EXPECT_FP_LE_WITH_EPS(f[idx2][1], fsingle * dely, epsilon);
-    EXPECT_FP_LE_WITH_EPS(f[idx2][2], fsingle * delz, epsilon);
+    if (is_ellipsoid) {
+        EXPECT_NE(pair->svector, nullptr);
+        EXPECT_GE(pair->single_extra, 6);
+        if (pair->svector != nullptr && pair->single_extra >= 6) {
+            EXPECT_FP_LE_WITH_EPS(pair->svector[0], f[idx1][0], epsilon);
+            EXPECT_FP_LE_WITH_EPS(pair->svector[1], f[idx1][1], epsilon);
+            EXPECT_FP_LE_WITH_EPS(pair->svector[2], f[idx1][2], epsilon);
+            EXPECT_FP_LE_WITH_EPS(pair->svector[3], tor[idx1][0], epsilon);
+            EXPECT_FP_LE_WITH_EPS(pair->svector[4], tor[idx1][1], epsilon);
+            EXPECT_FP_LE_WITH_EPS(pair->svector[5], tor[idx1][2], epsilon);
+        }
+    } else {
+        EXPECT_FP_LE_WITH_EPS(f[idx1][0], -fsingle * delx, epsilon);
+        EXPECT_FP_LE_WITH_EPS(f[idx1][1], -fsingle * dely, epsilon);
+        EXPECT_FP_LE_WITH_EPS(f[idx1][2], -fsingle * delz, epsilon);
+        EXPECT_FP_LE_WITH_EPS(f[idx2][0], fsingle * delx, epsilon);
+        EXPECT_FP_LE_WITH_EPS(f[idx2][1], fsingle * dely, epsilon);
+        EXPECT_FP_LE_WITH_EPS(f[idx2][2], fsingle * delz, epsilon);
+    }
 
     if (!verbose) ::testing::internal::CaptureStdout();
     command("displace_atoms all random 0.5 0.5 0.5 9726532");
@@ -1284,6 +1434,7 @@ TEST(PairStyle, single)
 
     f       = lmp->atom->f;
     x       = lmp->atom->x;
+    if (is_ellipsoid) tor = lmp->atom->torque;
     idx1    = lmp->atom->map(1);
     idx2    = lmp->atom->map(2);
     delx    = x[idx2][0] - x[idx1][0];
@@ -1294,12 +1445,25 @@ TEST(PairStyle, single)
 
     epair[3] = pair->eng_vdwl + pair->eng_coul;
     esngl[3] = pair->single(idx1, idx2, 1, 2, rsq, spcl, splj, fsingle);
-    EXPECT_FP_LE_WITH_EPS(f[idx1][0], -fsingle * delx, epsilon);
-    EXPECT_FP_LE_WITH_EPS(f[idx1][1], -fsingle * dely, epsilon);
-    EXPECT_FP_LE_WITH_EPS(f[idx1][2], -fsingle * delz, epsilon);
-    EXPECT_FP_LE_WITH_EPS(f[idx2][0], fsingle * delx, epsilon);
-    EXPECT_FP_LE_WITH_EPS(f[idx2][1], fsingle * dely, epsilon);
-    EXPECT_FP_LE_WITH_EPS(f[idx2][2], fsingle * delz, epsilon);
+    if (is_ellipsoid) {
+        EXPECT_NE(pair->svector, nullptr);
+        EXPECT_GE(pair->single_extra, 6);
+        if (pair->svector != nullptr && pair->single_extra >= 6) {
+            EXPECT_FP_LE_WITH_EPS(pair->svector[0], f[idx1][0], epsilon);
+            EXPECT_FP_LE_WITH_EPS(pair->svector[1], f[idx1][1], epsilon);
+            EXPECT_FP_LE_WITH_EPS(pair->svector[2], f[idx1][2], epsilon);
+            EXPECT_FP_LE_WITH_EPS(pair->svector[3], tor[idx1][0], epsilon);
+            EXPECT_FP_LE_WITH_EPS(pair->svector[4], tor[idx1][1], epsilon);
+            EXPECT_FP_LE_WITH_EPS(pair->svector[5], tor[idx1][2], epsilon);
+        }
+    } else {
+        EXPECT_FP_LE_WITH_EPS(f[idx1][0], -fsingle * delx, epsilon);
+        EXPECT_FP_LE_WITH_EPS(f[idx1][1], -fsingle * dely, epsilon);
+        EXPECT_FP_LE_WITH_EPS(f[idx1][2], -fsingle * delz, epsilon);
+        EXPECT_FP_LE_WITH_EPS(f[idx2][0], fsingle * delx, epsilon);
+        EXPECT_FP_LE_WITH_EPS(f[idx2][1], fsingle * dely, epsilon);
+        EXPECT_FP_LE_WITH_EPS(f[idx2][2], fsingle * delz, epsilon);
+    }
     if (print_stats) std::cerr << "single_force  stats:" << stats << std::endl;
 
     if ((test_config.pair_style.find("coul/dsf") != std::string::npos) &&
