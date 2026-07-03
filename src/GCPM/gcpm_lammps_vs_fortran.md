@@ -395,3 +395,70 @@ term.
 
 
 
+# Self-diffusion coefficient: thermostat and mass pitfalls
+
+The GCPM self-diffusion coefficient (Paricaud et al., Table IV: **D = 0.226
+Ang^2/ps = 2.26e-5 cm^2/s** at T = 298 K, rho = 0.997 g/cm^3; Tables V/VI cover
+supercooled/supercritical states) is a *dynamic* property, so it is sensitive to
+two things that structure and energy are not: the per-molecule **mass** and the
+**thermostat**. Two mismatches broke the initial LAMMPS-vs-paper comparison.
+
+## 1. Per-atom mass (fixed in the data files)
+
+`fix rigid/small` builds each body's mass, COM, and moment of inertia from the
+**per-atom** `rmass` — and because `atom_style ... sphere` sets `rmass_flag`,
+`rmass` comes from **column 12 of the data file**, NOT from the `mass` command
+(`fix_rigid_small.cpp`: `if (rmass) massone = rmass[i]; else massone =
+mass[type[i]]`). For a point particle (diameter/col-11 = 0) column 12 is read
+verbatim as the mass (`atom_vec_sphere.cpp` `data_atom_post`: rmass is scaled by
+`4/3 pi r^3` only when radius > 0). The original `data.gcpm` / `data.water_box`
+had column 12 = 1.0 for every atom, so each water body weighed **4 amu instead of
+18.015**. At fixed temperature velocities scale as sqrt(3kT/m), so molecules moved
+sqrt(18/4) ~ **2.1x too fast** and D was inflated by ~2.1x. Fixed by writing the
+per-type mass into column 12 (O 15.9994, H 1.008, M 1e-100; M stays ~massless as a
+virtual site, and `1e-100` avoids the `rmass <= 0` "Invalid density" error).
+See also the M-site diameter/DOF note (diameter must be 0 for a point dipole).
+
+## 2. Thermostat: Langevin (LAMMPS input) vs. Evans-Hoover Gaussian (Fortran)
+
+The reference `in.gcpm` used `fix rigid/small molecule langevin 298 298 100.0`.
+A Langevin thermostat adds a stochastic drag gamma = 1/tau_damp (here 1/100 fs)
+that **directly suppresses diffusion** — wrong tool for a transport coefficient,
+and it pulls D in the opposite direction from the mass bug.
+
+The Fortran uses an **Evans-Hoover Gaussian isokinetic thermostat**, which the
+paper (p.8) states explicitly:
+
+- Friction coefficient computed every step (`Pos_alc.f:87`):
+  `alpha1 = Sum(F.p + tau.omega) / Sum(p^2 + I.omega^2)`
+  (translational numerator `Sum F.p`, denominator `Sum p^2`; plus the rotational
+  torque.omega / I.omega^2 terms).
+- Applied as a deterministic friction in the Gear corrector
+  (`pre_corrc_average.f:114-122`): `dp/dt = F - alpha1*p` (and the analogous
+  `dL/dt = tau - alpha1*omega` for rotation). This holds the **total
+  (translational + rotational) kinetic energy exactly constant** each step, is
+  time-reversible, and perturbs the trajectory far less than Langevin.
+- A hard velocity rescale to the target T every 4000 steps and at step 20
+  (`pre_corrc_average.f:242-258`, `lambdt = sqrt(3*nmol*tstar/psqr)`) mops up
+  drift in the isokinetic constraint.
+- Integrator: Gear 4th-order predictor-corrector; run params from `pwat1.dat`:
+  NC=5 -> 500 molecules (paper diffusion tables use N=256), reduced dt 6e-4 ->
+  ~0.98 fs (tau = sigma*sqrt(m/eps) ~ 1.637 ps), 1e6 steps ~ 1 ns, T = 298.15 K,
+  rho = 0.997 g/cm^3, cutoff 10 sigma capped at half-box, MSD -> `meansq.dat`,
+  D = slope/6 (Einstein).
+
+**Reproducing D in LAMMPS.** Gaussian isokinetic dynamics give the same transport
+coefficients as NVE, so the correct surrogate is energy-conserving production:
+
+- Simplest and most faithful: equilibrate with a thermostat, then run production
+  in pure NVE (`fix rigid/nve/small molecule`).
+- If a thermostat must stay on: `fix rigid/nvt/small molecule temp 298 298 Tdamp`
+  (Nose-Hoover, deterministic) with a *loose* `Tdamp` — much closer to isokinetic
+  than Langevin. Start at `Tdamp = 100*dt` (~100 fs at dt = 1 fs); for a
+  transport measurement use 100-500 fs, or emulate the Fortran's periodic rescale
+  with `fix temp/rescale` over NVE. Avoid tight coupling (< ~50 fs), which biases D.
+- Match dt ~ 1 fs, rho ~ 0.997 g/cm^3 (data.gcpm is already ~0.998), run ~1 ns
+  with a `compute msd`, and take D = slope/6. Compare to 0.226 Ang^2/ps.
+
+
+

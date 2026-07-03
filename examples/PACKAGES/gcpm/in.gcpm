@@ -38,7 +38,8 @@
 #    per-pair RF gets the self terms from intramolecular pairs instead.
 #  - Fortran adds an analytic exp-6 tail (eset); LAMMPS uses pair_modify shift/tail.
 
-variable steps     index 1000
+variable equil_steps     index 1000
+variable relax_steps     index 1000
 variable datafile  index data.gcpm
 variable r         index 1
 
@@ -72,8 +73,9 @@ velocity all create $T ${velseed} mom yes rot yes dist gaussian
 
 timestep 0.5
 
-fix 1 all rigid/small molecule langevin $T $T 100.0 ${seed}
+fix 1 all rigid/nvt/small molecule temp $T $T 100.0
 
+#fix 1 all rigid/small molecule langevin $T $T 100.0 ${seed}
 #fix 1 all rigid/npt/small molecule temp $T $T 100.0 iso $P $P 50.0
 
 variable num_mols      equal atoms/4
@@ -91,7 +93,15 @@ fix 2 all ave/time 100 10 1000 c_myRDF[*] file rdf.txt mode vector
 dump 1 all custom 1000 dump.txt id mol type q x y z mux muy muz
 dump_modify 1 sort id
 
-run ${steps}
+run ${equil_steps}
+
+# run for computing MSD with NVE, replacing NVT with NVE
+
+unfix 1
+fix 1 all rigid/nve/small molecule
+
+run ${relax_steps}
+
 
 
 
