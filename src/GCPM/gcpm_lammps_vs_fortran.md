@@ -460,5 +460,150 @@ coefficients as NVE, so the correct surrogate is energy-conserving production:
 - Match dt ~ 1 fs, rho ~ 0.997 g/cm^3 (data.gcpm is already ~0.998), run ~1 ns
   with a `compute msd`, and take D = slope/6. Compare to 0.226 Ang^2/ps.
 
+**What D measures.** The paper's D (Tables V/VI) is the **translational
+center-of-mass** self-diffusion coefficient. The Fortran MSD is built only from
+the molecular COM `x0,y0,z0` (`pre_corrc_average.f:284-286`; site positions are
+`x0(i)+xsite(i,j)`, so `x0` is the COM, not the O atom), and `D = slope/6` by the
+Einstein relation. Rotation never enters D directly -- it only affects the
+thermostat and the forces. The LAMMPS analogue is `compute msd` on the rigid-body
+COM (or the `fix rigid` COM output), *not* a per-atom MSD.
+
+## 3. How rotation is thermostatted: Evans isokinetic vs Nose-Hoover chains
+
+Both codes model each water as a rigid body with full 3-D rotation (principal-axis
+inertia + quaternion orientation), and **both thermostat the rotational
+*momentum*, never the quaternion**. The quaternion is a pure kinematic follower:
+it is integrated from the angular velocity/momentum, so the coupling chain is
+always `thermostat -> rotational momentum -> quaternion`. Damping the rotational
+momentum is exactly damping the rotational DOF; the orientation just tracks it.
+
+**Fortran (`MD_water/`) -- Evans-Hoover Gaussian isokinetic.**
+- Rotational state = body-frame angular velocity `(wx0,wy0,wz0)` + quaternion
+  `(q10..q40)`, propagated by a Gear 4th-order predictor-corrector.
+- The quaternion derivative is purely kinematic, `qdot = 1/2 Q(q).omega`
+  (`pre_corrc_average.f:123-126`, the `cq1..cq4`); it just tracks `omega`.
+- The thermostat is **one** friction `alpha1` shared by translation *and* rotation
+  (`Pos_alc.f:78-87`):
+  `alpha1 = Sum(F.p + tau.omega) / Sum(p^2 + I.omega^2)` -- numerator = translational
+  power `F.p` + rotational power `tau.omega`; denominator = `2 KE_trans + 2 KE_rot`.
+  That is a **single Gaussian constraint on the total (trans+rot) kinetic energy**.
+- Applied to `omega` via the Euler equation in the corrector
+  (`pre_corrc_average.f:117-122`):
+  `wdot_x = (tau_x + wy.wz(Iyy-Izz))/Ixx - alpha1.wx0`, with the *identical*
+  `alpha1` that damps translation (`pdot_x = fmol - alpha1.px0`, line 114). The
+  thermostatted `omega` then feeds the quaternion ODE.
+- Plus a periodic hard rescale every 4000 steps (and step 20), *separately* for
+  translation (`lambdt`) and rotation (`lambdr`); the quaternion first-derivatives
+  `q11..q41` are rebuilt from the rescaled `omega` (`pre_corrc_average.f:242-261`).
+
+**LAMMPS `fix rigid/nvt/small` -- Nose-Hoover chains.**
+- Rotational state = quaternion `quat` + angular momentum `angmom`, carried as the
+  conjugate quaternion momentum `conjqm`; propagated by the no_squish/Miller
+  symplectic rotation (`fix_rigid_nh_small.cpp:492-496`).
+- `no_squish_rotate` advances `quat` from `conjqm` -- again the quaternion just
+  follows the momentum.
+- The thermostat scales the *rotational momentum*: `conjqm *= scale_r`,
+  `scale_r = exp(-dtq.eta_dot_r)` (`:484-487`), where `eta_dot_r` comes from a
+  **separate rotational NH chain** driven by the rotational DOF count `nf_r` and
+  rotational KE `akin_r` (`:360`, `:305`). Translation is scaled independently by
+  `scale_t` from its own chain (`nf_t`, `akin_t`).
+
+**Side by side:**
+
+| | Fortran `MD_water` | LAMMPS `rigid/nvt/small` |
+|---|---|---|
+| Thermostat | Evans Gaussian **isokinetic** (deterministic, KE held exactly, ~NVE transport) | **Nose-Hoover chain** (canonical NVT, KE fluctuates) |
+| Trans/rot coupling | **one** friction `alpha1` over **total** KE | **two separate** chains (`nf_t`/`akin_t` vs `nf_r`/`akin_r`) |
+| Rotational variable damped | body-frame `omega` | angular momentum (`conjqm`) |
+| Rotation propagator | Gear PC on `omega` + quaternion ODE | no_squish (Miller) on `conjqm` |
+| Quaternion role | kinematic follower of `omega` (never thermostatted) | kinematic follower of `conjqm` (never thermostatted) |
+| Drift cleanup | periodic hard rescale (`lambdt`, `lambdr`) | absorbed continuously by the chain |
+
+**Bottom line for D.** The two thermostats are structurally similar (both damp the
+rotational momentum and let the quaternion follow), but the Fortran holds trans+rot
+KE *jointly and exactly* (isokinetic ~ NVE dynamics), whereas `rigid/nvt/small`
+runs *two independent canonical chains*. That is why NVE production is the faithful
+surrogate for reproducing D, and `rigid/nvt/small` with a loose `Tdamp` is the
+next-best -- deterministic like Evans, but canonical rather than isokinetic and
+split across two chains.
+
+## 4. How D is computed in the `Self-Diffusion-Study` folder (signac workflow)
+
+`src/GCPM/Self-Diffusion-Study/` is a signac/row project that reproduces the
+paper's Tables V/VI. How it computes D, and two pitfalls in that pipeline:
+
+**D is a molecular center-of-mass diffusivity (not per-atom).** LAMMPS itself
+computes no MSD -- the run (`src/files/in.simple_water`: `pair_style gcpm 1 78.4`,
+`fix rigid/small ... langevin`, `timestep 0.5`) only dumps a trajectory
+(`dump 2 all dcd 10000 trajectory.dcd`). D is computed in post-processing by
+`src/data.py::_calculate_msd` (MDAnalysis): each molecule's position is the
+mass-weighted average of its O + 2 H atoms, `np.average([O,H,H],
+weights=(16,1.01,1.01))` (`data.py:85-87`; the massless M site, type 3, is
+excluded), then a sliding-window MSD over molecules, linear fit of MSD vs. time
+between 10 % and 50 % of `max_lag`, `D = slope/6` (3-D Einstein, `data.py:104-120`).
+So D is the translational COM coefficient -- consistent with the Fortran (`x0` = COM)
+and the paper -- **not** an atom-based MSD.
+
+**PITFALL 1 -- frame-time mismatch (D comes out ~2x too small).** The DCD is dumped
+every `10000 * 0.5 fs = 5 ps`, but `data.py:79` hard-codes `dt = 10000/1000 = 10 ps`.
+The MSD time axis is stretched 2x, so the fitted slope and hence D are **half** the
+true value. This partially *cancels* the separate per-atom-mass bug (col-12 = 1.0 ->
+body mass 4 amu instead of 18 -> D inflated ~2.1x, section 1 above), so a
+plausible-looking D in this folder can be two compensating errors. Fix `dt` to match
+`dump_every * timestep` (here 5 ps), and correct the col-12 masses, before trusting
+the numbers.
+
+**PITFALL 2 -- COM built from wrapped coordinates, then unwrapped.** The COM is
+averaged from the raw (wrapped) atom positions and only unwrapped afterward at the
+COM level (`data.py:85-95`). LAMMPS DCD stores wrapped coordinates, so a molecule
+straddling a periodic boundary in a frame yields a corrupted COM (O and its H's
+averaged across the box). Usually minor, but a latent bug for rigid molecules that
+can sit on a boundary. The O/H pairing (`hs.positions[::2]` / `[1::2]`) also assumes
+atoms are ordered O,H,H,M per molecule and returned in matching molecule order --
+true for these data files but fragile.
+
+## 5. Recommended recipe to make D consistent with Tables V/VI
+
+Combining sections 1-4, here is the checklist to turn the `Self-Diffusion-Study`
+pipeline into a paper-comparable D. The first three items remove the *dynamical
+biases*; the last two set expectations for the *residual* gap.
+
+**(a) Correct the per-atom masses (data file).** Column 12 (sphere `rmass`) must be
+the real per-type mass: O 15.9994, H 1.008, M 1e-100 (kept ~massless, avoids the
+`rmass <= 0` error). Column-12 = 1.0 makes each body 4 amu instead of 18 and inflates
+D ~2.1x (section 1). This is mandatory.
+
+**(b) Thermostat -> NVE for production.** Equilibrate with
+`fix rigid/nvt/small molecule temp T T Tdamp` (loose `Tdamp`, ~100-500 fs), then run
+*production* under NVE with **`fix rigid/nve/small molecule`** (not plain `fix rigid`,
+which lumps atoms into few bodies by group; not `langevin`, whose drag suppresses D).
+This is the faithful surrogate for the Fortran's Evans isokinetic dynamics
+(sections 2-3). Measure D only on the NVE leg.
+
+**(c) Use the correct analysis `dt` = frame spacing (NOT the MD timestep).** In
+`data.py`, `dt` scales the MSD time axis and D ~ 1/dt, so it must equal
+`dump_every * timestep`. With `dump ... dcd 10000` and `timestep 0.5`, that is
+**5 ps per frame** -- not the current hard-coded 10 ps (D 2x too small) and *never*
+the 0.5 fs timestep (D 10^4x too big). If you change the dump frequency or timestep,
+update `dt` to match the product. Also prefer a finer dump (e.g. every 1000 steps =
+0.5 ps) so ~1 ns yields ~2000 frames and a clean linear MSD region instead of ~200.
+
+**(d) Finite-size correction (the dominant residual, ~10-20%).** MD self-diffusion in
+PBC is box-size dependent:
+`D_inf = D_PBC + 2.837297 * kB*T / (6*pi*eta*L)` (Yeh-Hummer), always making the raw
+`D_PBC` *smaller* than the infinite-system value. For N=256 water (~19-20 A box) this
+is a ~10-20% upward correction. Check whether Tables V/VI report raw-PBC or
+size-corrected D and match the convention (and box size / N) before comparing.
+
+**(e) Statistics.** A single 1 ns trajectory gives D with ~10% scatter (worse for the
+low-T supercooled points in Table V, where the diffusive regime sets in late). Use
+multiple seeds or longer runs, and fit the MSD only in the linear (diffusive) region.
+
+**Expected outcome.** With (a)-(c) applied and (d)-(e) accounted for, D should agree
+with Tables V/VI to within finite-size + statistical error (order ~10-20%), not
+bit-for-bit. If (a) and (c) are both wrong in the original folder, note they *partly
+cancel* (mass inflates ~2.1x, `dt`=10 ps deflates 2x), so a plausible-looking D there
+is two compensating errors, not a validated result.
+
 
 
