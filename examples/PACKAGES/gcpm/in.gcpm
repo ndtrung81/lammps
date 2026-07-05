@@ -95,12 +95,12 @@ dump_modify 1 sort id
 
 run ${equil_steps}
 
-# run for computing MSD with NVE, replacing NVT with NVE
+# optional: run for computing MSD with NVE, replacing NVT with NVE
 
-unfix 1
-fix 1 all rigid/nve/small molecule
+#unfix 1
+#fix 1 all rigid/nve/small molecule
 
-run ${relax_steps}
+#run ${relax_steps}
 
 
 
