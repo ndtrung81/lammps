@@ -720,6 +720,48 @@ Nose-Hoover-vs-NVE production choice (section 5b) also matters most here.
    At 873 K / 0.1 g/cm^3 that means dt_frame < ~0.2 ps, i.e. dump every
    <= 400 steps at 0.5 fs -- 25x finer than the current 10000.
 
+**Changes to `data.py` required by option 1.** Switching the dump to
+`xu yu zu` without touching the analysis re-corrupts the data; three edits
+must land together:
+
+1. **Delete the jump-correction block** (the `jumps = np.round(diff/box)`
+   loop, `data.py:90-95`). Applied to already-unwrapped coordinates it does
+   active harm: any genuine per-frame displacement larger than L/2 looks
+   like a wrap "jump" and gets folded back into the box -- the same D_sat
+   clipping artifact, now self-inflicted on clean data. The whole point of
+   `xu/yu/zu` is that LAMMPS unwraps exactly from integer image flags.
+2. **Change the trajectory loader** -- a `dump custom` file is not DCD:
+
+   ```python
+   u = mda.Universe(
+       job.fn("subset.lammps"), job.fn("trajectory.lammpstrj"),
+       format="LAMMPSDUMP",
+       topology_format="DATA",
+       atom_style="id type x y z resid charge dip radius rmas omega torque",
+       lammps_coordinate_convention="unwrapped",
+   )
+   ```
+
+   `lammps_coordinate_convention="unwrapped"` makes MDAnalysis read the
+   `xu yu zu` columns (and error out if they are missing -- a useful guard).
+   On the LAMMPS side use `dump ... custom N trajectory.lammpstrj id type
+   xu yu zu` **plus `dump_modify ... sort id`**: the COM pairing
+   (`hs.positions[::2]` / `[1::2]`) relies on atoms arriving in data-file
+   order.
+3. **Set `dt` to the new frame spacing.** `data.py:79` hard-codes it; it must
+   equal `dump_every * timestep / 1000` ps. Since unwrapped coordinates make
+   fine spacing safe, dump more often for statistics (e.g. every 1000 steps
+   = 0.5 ps) -- but then this line must change in the same commit as the
+   dump line, or the unwrap artifact is traded for the old factor-of-N
+   time-axis error (section 4, PITFALL 1).
+
+Everything else -- the O+2H mass-weighted COM, the sliding-window MSD, the
+10-50% fit window, `D = slope/6` -- carries over unchanged. (Bonus: the
+wrapped-COM pitfall of section 4 disappears too, since the COM is now built
+from unwrapped atom positions.) Option 2 instead replaces most of `data.py`:
+no MDAnalysis or trajectory at all, just read the `msd/chunk` output file
+and fit the slope.
+
 **Expected outcome after (f).** The supercritical points should collapse to
 the same +/- 10% band as the 313-343 K liquid points, since the reference is
 the same code-and-model lineage at the same N. Residual systematic gaps beyond
