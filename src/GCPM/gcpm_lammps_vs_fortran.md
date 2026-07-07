@@ -605,5 +605,128 @@ bit-for-bit. If (a) and (c) are both wrong in the original folder, note they *pa
 cancel* (mass inflates ~2.1x, `dt`=10 ps deflates 2x), so a plausible-looking D there
 is two compensating errors, not a validated result.
 
+## 6. Results after the mass + thermostat fixes (2026-07): the remaining
+## supercritical bias is a trajectory-unwrapping artifact, not dynamics
+
+With the per-atom masses corrected (section 1) and production switched to
+`fix rigid/nvt/small` (section 2), the `Self-Diffusion-Study` workflow
+(N = 256 molecules per the signac statepoints) now gives:
+
+| T (K) | rho (g/cm^3) | D_calc (Ang^2/ps) | D_ref (Ang^2/ps) | Error (%) |
+|------:|-------------:|------------------:|-----------------:|----------:|
+|   273 |        1.000 |          0.085595 |           0.1269 |     -32.5 |
+|   313 |        0.996 |          0.267661 |           0.2468 |      +8.5 |
+|   333 |        0.983 |          0.380537 |           0.4194 |      -9.3 |
+|   343 |        0.978 |          0.464706 |           0.4999 |      -7.0 |
+|   673 |        0.800 |          2.860751 |           3.5050 |     -18.4 |
+|   673 |        0.600 |          3.278022 |           5.3230 |     -38.4 |
+|   673 |        0.400 |          5.424735 |           8.3620 |     -35.1 |
+|   673 |        0.200 |          8.300653 |          16.4900 |     -49.7 |
+|   673 |        0.100 |         14.488891 |          32.5000 |     -55.4 |
+|   873 |        0.800 |          2.994687 |           4.2360 |     -29.3 |
+|   873 |        0.600 |          4.062095 |           6.3090 |     -35.6 |
+|   873 |        0.400 |          5.497201 |          10.5900 |     -48.1 |
+|   873 |        0.200 |          8.588294 |          21.8500 |     -60.7 |
+|   873 |        0.100 |         14.514719 |          43.9500 |     -67.0 |
+
+(D_ref are the paper's own GCPM simulation values -- Table VI for the
+atmospheric points and Table VII for the supercritical isotherms, both N = 256
+NVT MD -- so this comparison is implementation-vs-implementation, with no
+model error in the gap. For the record, the pre-fix Langevin-era numbers in
+`Self-Diffusion-Study/msd.txt` were -37 to -50% at ambient and -60 to -87%
+supercritical, so the mass/thermostat fixes clearly moved things the right way.)
+
+**Reading the table.** The ambient-liquid points (313-343 K) now agree to
+within +/- 10%, i.e. within the expected statistics for a single ~1 ns
+trajectory (section 5e). The supercooled 273 K point and, especially, the
+supercritical isotherms are still systematically low, and the error *grows as
+the density drops* (-18% at rho = 0.8 down to -67% at rho = 0.1). That
+density trend is not a dynamics problem -- it is the MSD post-processing
+failing, specifically the jump-unwrapping step in `data.py`.
+
+**The artifact.** The DCD trajectory stores *wrapped* coordinates and
+`_calculate_msd` unwraps them post hoc by minimum-image jump correction
+(`jumps = np.round(diff/box)`). That reconstruction is only valid while the
+*true* displacement of a molecule between consecutive frames stays well below
+L/2. With frames every 5 ps (dump every 10000 steps x 0.5 fs) and the large,
+fast supercritical D, the per-frame displacement is comparable to the half
+box, the round() picks the wrong image, and every too-large jump is folded
+back into [-L/2, L/2]. The measured "MSD" then saturates at the slope of a
+random walk whose steps are box-limited, giving an apparent
+
+    D_sat = L^2 / (24 * dt_frame)
+
+(per component the folded jump has variance ~L^2/12, three components, Einstein
+factor 6). This ceiling depends only on box size and frame spacing -- not on
+temperature, not on the physics. Computing it for each state point (N = 256):
+
+| T (K) | rho | L (Ang) | sigma_1D/frame (Ang) | P(jump > L/2) | D_sat | D_calc | D_ref |
+|------:|----:|--------:|---------------------:|--------------:|------:|-------:|------:|
+|  673 | 0.8 |   21.2 |                 5.9 |         7% |  3.8 |   2.86 |  3.50 |
+|  673 | 0.6 |   23.4 |                 7.3 |        11% |  4.6 |   3.28 |  5.32 |
+|  673 | 0.4 |   26.7 |                 9.1 |        14% |  6.0 |   5.42 |  8.36 |
+|  673 | 0.2 |   33.7 |                12.8 |        19% |  9.5 |   8.30 | 16.49 |
+|  673 | 0.1 |   42.5 |                18.0 |        24% | 15.0 |  14.49 | 32.50 |
+|  873 | 0.8 |   21.2 |                 6.5 |        10% |  3.8 |   2.99 |  4.24 |
+|  873 | 0.6 |   23.4 |                 7.9 |        14% |  4.6 |   4.06 |  6.31 |
+|  873 | 0.4 |   26.7 |                10.3 |        19% |  6.0 |   5.50 | 10.59 |
+|  873 | 0.2 |   33.7 |                14.8 |        25% |  9.5 |   8.59 | 21.85 |
+|  873 | 0.1 |   42.5 |                21.0 |        31% | 15.0 |  14.51 | 43.95 |
+
+(sigma_1D/frame = sqrt(2 * D_ref * dt_frame) is the true rms one-component
+displacement between frames; P is the per-component per-frame probability of
+a mis-unwrapped jump.)
+
+Two smoking guns:
+
+1. **D_calc pins to D_sat, not to D_ref, once rho <= 0.4.** At rho = 0.1 the
+   ceiling is 15.0 and both isotherms measured ~14.5; at rho = 0.2 the ceiling
+   is 9.5 and both measured ~8.4-8.6; at rho = 0.4 the ceiling is 6.0 and both
+   measured ~5.4-5.5. The measured values track L^2 (i.e. rho^(-2/3)), exactly
+   as the artifact predicts.
+2. **D_calc is temperature-independent where the true D is not.** 14.489 vs
+   14.515 at 673 vs 873 K (rho = 0.1), while the reference values differ by
+   35% (32.5 vs 43.95). A real diffusion measurement cannot produce that; a
+   box-size-limited one must.
+
+At rho = 0.6-0.8 the clipping is partial (P ~ 7-14%): D_calc sits below both
+D_ref and D_sat, biased low by the fraction of folded jumps. The ambient
+points are immune (sigma_1D/frame ~ 1.5 Ang vs L/2 ~ 9.9 Ang), which is why
+they came out clean -- and their +/- 10% agreement also confirms the old
+frame-time bug (section 4, PITFALL 1) is no longer in play, since that one
+would show up as a uniform -50% everywhere.
+
+**The 273 K point (-32.5%) is a different story.** Unwrapping is safe there
+(0.9 Ang/frame). This is the supercooled regime: the diffusive MSD regime sets
+in late, single-trajectory scatter is at its worst, and the reference itself
+is soft -- the paper's Table V (250/273 K isochores) reports D = 0.1182 at
+273 K / 1.00 g/cm^3 while its Table VI (atmospheric) reports 0.1269 at the
+same nominal state point, an 8% internal spread. Treat this point with longer
+runs and multiple seeds (section 5e) before reading anything into it; the
+Nose-Hoover-vs-NVE production choice (section 5b) also matters most here.
+
+**(f) Fix: never post-hoc-unwrap wrapped frames.** In order of preference:
+
+1. **Dump unwrapped coordinates** -- `dump ... custom N file id mol type xu yu zu`
+   (image-flag-based, exact for any frame spacing) instead of DCD, and build
+   the COM from `xu/yu/zu` directly. This also kills PITFALL 2 of section 4
+   (COM assembled from wrapped atoms across a boundary) in one stroke, and it
+   frees the frame spacing to be chosen purely for statistics.
+2. Or compute the MSD inside LAMMPS: `compute com/chunk` on molecules (LAMMPS
+   uses image flags internally) + `compute msd/chunk`, or the COM output of
+   `fix rigid/small`, with no trajectory post-processing at all.
+3. If wrapped DCD must be kept, the frame spacing must satisfy
+   `sqrt(2 * D_expected * dt_frame) < L/10` (mis-unwrap probability < 1e-6).
+   At 873 K / 0.1 g/cm^3 that means dt_frame < ~0.2 ps, i.e. dump every
+   <= 400 steps at 0.5 fs -- 25x finer than the current 10000.
+
+**Expected outcome after (f).** The supercritical points should collapse to
+the same +/- 10% band as the 313-343 K liquid points, since the reference is
+the same code-and-model lineage at the same N. Residual systematic gaps beyond
+that would then be worth attributing to real protocol differences (Nose-Hoover
+vs Evans isokinetic production, cutoff convention at low density where the
+Fortran caps rcut at L/2 with 10 sigma while LAMMPS keeps ~11.2 Ang) -- but
+none of those can be assessed until the measurement itself is valid.
+
 
 
