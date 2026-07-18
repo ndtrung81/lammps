@@ -81,10 +81,11 @@ hard-coded 4-site water).
 
 | | Fortran (`force.f`, `main.f`) | C++ (`pair_gcpm_long.cpp`) |
 |---|---|---|
-| Long-range method | Real-space cutoff **+ Onsager reaction field** (`ferf`). No Ewald. | **Ewald / PPPM** (`ewaldflag = pppmflag = 1`, requires a `kspace` style). |
+| Long-range method | Real-space cutoff **+ Onsager reaction field** (`ferf`). No Ewald. | **Full Ewald / PPPM in ALL three channels** (charge-charge, charge-dipole, dipole-dipole); requires `kspace_style pppm/dipole` when polarization is on (`ewaldflag = pppmflag = dipoleflag = 1`). |
 | Smeared Coulomb | `cerf(v)/r` with `v = r/alpha(is,js)`; `cerf` is the Abramowitz–Stegun erf approximation. | `erf(alpha_ij·r)/r` via `MathSpecial::my_erfcx`. |
-| Real-space form | full smeared term (no screening subtraction). | GCPM Gaussian **minus** Ewald real-space screening: `falpha - erf(g_ewald·r) + EWALD_F·grij·expm2` (`pair_gcpm_long.cpp:331,337`). |
-| Reaction field | **always on**, dielectric `erf` **hard-coded to 78.4** (`diel_cerf_hbond.f:46`); `ferf = 2(erf-1)/((2·erf+1)·rc³)` (`main.f:324`). | **optional** (`enable_rf`, only when `eps_rf > 0`); `eps_rf` is a user input. |
+| Real-space form | full smeared term (no screening subtraction). | GCPM Gaussian **minus** the point-multipole Ewald long-range part in every channel: charges `falpha - erf(g_ewald·r) + EWALD_F·grij·expm2`; dipole tensor scalars `f,g` minus the b1/b2-equivalent erf forms (see status section below). |
+| Reaction field | **always on**, dielectric `erf` **hard-coded to 78.4** (`diel_cerf_hbond.f:46`); `ferf = 2(erf-1)/((2·erf+1)·rc³)` (`main.f:324`). | **removed from gcpm/long** (errors if `eps_rf > 0`); the RF was the stand-in for the reciprocal dipole interactions, now supplied exactly by `pppm/dipole`. RF remains available in the base style `gcpm`. |
+| Intramolecular exclusion | hard-coded intermolecular-only site loops. | by molecule ID inside the pair kernels (`factor_coul = 0` for same-molecule pairs); `neigh_modify exclude` is rejected because removed pairs could not cancel the k-space contributions. |
 
 **The shared constant:** Fortran `constpi = 1.12837916702184` (commented
 "sqrt(2)/pi" but actually `2/sqrt(pi)`) equals LAMMPS `EWALD_F`. In Fortran it
@@ -149,12 +150,18 @@ Gaussian widths `alphao`/`alphah`. **Consistent.**
   the very first call only, then warm-starts thereafter — functionally
   equivalent after step 1.
 
-### Smeared T tensor (Eqs. 6–7) — identical math
-- C++ `compute_induced_efield()` uses plain `erf(r/(2·sigmaM))` (no Ewald):
+### Smeared T tensor (Eqs. 6–7) — identical math, Ewald-split in C++
+- C++ `compute_induced_efield()` starts from the same smeared scalars
   `f = erf - (rds + rds·r²/(6s²))·exp`, `g = erf - rds·exp`,
-  `T = 3f·r⁻⁵·rr - g·r⁻³·I`.
-- Fortran `force.f:210–230` uses the same `fv`/`gv` and tensor, with
-  `v = r/alpha` and `cerf`.
+  `T = 3f·r⁻⁵·rr - g·r⁻³·I`, then subtracts the point-dipole Ewald
+  long-range part (so real + reciprocal = full smeared sum over images):
+  `f += -erf(Gr) + EWALD_F*Gr*(1 + 2(Gr)^2/3)*exp(-(Gr)^2)`,
+  `g += -erf(Gr) + EWALD_F*Gr*exp(-(Gr)^2)` — the b1/b2 real-space kernels
+  of `pair lj/cut/dipole/long`, generalized to smeared dipoles. The
+  reciprocal part plus the per-iteration SCF field come from
+  `kspace_style pppm/dipole`.
+- Fortran `force.f:210–230` uses the same `fv`/`gv` and tensor (no Ewald),
+  with `v = r/alpha` and `cerf`.
 
 ### Polarization energy — same
 `U_pol = -½ Σ p_i·E_q_i` (Eq. 9): Fortran `force.f:371,386`; C++
@@ -167,35 +174,28 @@ Gaussian widths `alphao`/`alphah`. **Consistent.**
   `fxij(i,is)` and per-molecule `fmolx`.
 - **Reaction-field self-force:** Fortran adds
   `fxij(i,is) += q(1,is)·mxt(i)·ferf` (`force.f:663–667`, noted as a fix to an
-  earlier bug — "affects the torque"). In C++ this is subsumed into
-  `reaction_field_post()` (the `q_k·(R_m^q + ½R_m^p)` site forces).
+  earlier bug — "affects the torque"). In the C++ base style `gcpm` this is
+  subsumed into the reaction-field machinery; `gcpm/long` has no RF (the
+  analogous long-range self-consistency is handled exactly by the Ewald
+  dipole self-field correction in the SCF loop, see status section below).
 
 ---
 
-## 5. Reaction field — equivalent formula, different bookkeeping
+## 5. Reaction field — base style `gcpm` only
 
-- **Fortran:** folds `ferf` into every pair's tensor diagonal
-  (`txx(i,j)+ferf`, `force.f:232`) and the charge field, plus self terms. For
-  neutral molecules the per-pair sum reduces to a per-molecule cavity field
-  `R_i = ferf · Σ_{j in cutoff incl. i} d_j`, and a per-pair charge-charge
-  energy `0.5·qi·qj·ferf·r²` (`force.f:520`) that makes the Coulomb force go to
-  zero smoothly at the cutoff.
-- **C++:** implements the per-**molecule** form directly
-  (`reaction_field()`): `R_i = c_rf · Σ_j d_j` over molecular cavity centers
-  within `cut_coul`, with
-  `c_rf = 2·qqrd2e·(eps_rf-1)/((2·eps_rf+1)·rc³)` — exactly the Fortran `ferf`
-  with `qqrd2e` baked in. Permanent (`mol_mu` → `mol_Rq`) and induced
-  (`mol_p` → `mol_Rp`) contributions are handled in `reaction_field_pre()` /
-  `reaction_field_post()`.
+The reaction field now exists ONLY in the base style `gcpm` (`pair_gcpm.cpp`,
+folded in per pair, matching the Fortran `ferf` physics — see
+`pair_gcpm_summary.md`). `gcpm/long` **rejects** `eps_rf > 0`: the RF was the
+stand-in for the reciprocal-space charge-dipole and dipole-dipole
+interactions, which `kspace_style pppm/dipole` now supplies exactly (an RF on
+top of a complete Ewald sum would double-count the dielectric response).
 
-The constants match (`c_rf` ≡ `ferf` at `qqrd2e = 1`). The difference is
-granularity: Fortran applies the reaction field **per atom pair** (which also
-smooths the pairwise cutoff); C++ applies it **per molecule** (an add-on to a
-complete Ewald sum, which is already smooth at the cutoff). With Ewald present
-this is consistent and energy-conserving; without Ewald, the per-molecule form
-does **not** smooth the pairwise smeared-Coulomb cutoff — which is why the
-reaction-field `gcpm` style (`pair_gcpm.cpp`) folds it in per pair instead. See
-`pair_gcpm_summary.md`.
+Historical note: an intermediate version of `gcpm/long` used Ewald for
+charge-charge only plus a per-molecule Onsager RF
+(`c_rf = 2·qqrd2e·(eps_rf-1)/((2·eps_rf+1)·rc³)` ≡ Fortran `ferf` with
+`qqrd2e` baked in) for the dipole channels. That mix-and-match form was
+replaced by the full long-range treatment documented in the status section
+below.
 
 ---
 
@@ -205,8 +205,9 @@ reaction-field `gcpm` style (`pair_gcpm.cpp`) folds it in per pair instead. See
   `eqq += 0.5·qi·qj·(erf(v)/r + 0.5·ferf·r²)` — smeared Coulomb **plus** the
   per-pair reaction-field energy.
 - **C++** (`charge_charge`): Ewald-split energy `prefactor·(erfa - erf)` for the
-  real-space part; the reciprocal part comes from PPPM; the reaction-field
-  energy (when enabled) is added in `reaction_field_post()`.
+  real-space part; the reciprocal part comes from `pppm/dipole`. (Total-energy
+  bookkeeping across pair and kspace is stage 4 of the long-range upgrade and
+  is NOT finished yet — see the status section below.)
 
 ---
 
@@ -228,9 +229,11 @@ corrections, and the fixed 78.4 reaction-field dielectric.
 The per-pair smeared-Coulomb, exp-6, and self-consistent-dipole **kernels are
 equivalent** (modulo the `alpha ↔ 1/alpha_ij` width convention and the reduced
 ↔ real unit system). The one substantive physics change is that
-`pair_gcpm_long.cpp` replaces the Fortran's **cutoff + reaction field** electrostatics
-with **Ewald / PPPM long-range**, keeping the reaction field only as an
-optional, user-tunable add-on.
+`pair_gcpm_long.cpp` replaces the Fortran's **cutoff + reaction field**
+electrostatics with a **full Ewald / PPPM long-range treatment of all three
+channels** (charge-charge, charge-dipole, dipole-dipole) via
+`kspace_style pppm/dipole`; the reaction field survives only in the base
+style `gcpm`.
 
 For a head-to-head numerical validation against the Fortran reference, use the
 reaction-field style **`gcpm`** (`pair_gcpm.cpp`, no k-space) rather than
@@ -240,6 +243,399 @@ treatments are otherwise not directly comparable.
 Note on class layout: `gcpm` (class `PairGCPM`, reaction field) is the base
 class holding the shared GCPM machinery; `gcpm/long` (class `PairGCPMLong`,
 Ewald/PPPM) derives from it and overrides only the Coulomb method.
+
+
+
+# pair gcpm/long full long-range upgrade: staged plan and status
+
+Goal: give `gcpm/long` the complete long-range charge-dipole and dipole-dipole
+interactions using the charge+dipole-capable `pppm/dipole` merged from
+upstream (PR #5059: three influence functions `greensfn_qq` / `greensfn_qmu` /
+`greensfn` for the q-q, q-mu, mu-mu channels, with forces, torques, energy,
+virial, per-atom terms, self-energy and slab correction).
+
+7-stage plan agreed 2026-07-16. **Stages 1-5 are COMPLETE; stage 6
+(validation) is next -- the user will supply specific test cases for it.**
+Nothing is committed to git yet; all changes are in the working tree
+(`src/kspace.h`, `src/KSPACE/pppm_dipole.{h,cpp}`,
+`src/GCPM/pair_gcpm_long.{h,cpp}`, `examples/PACKAGES/gcpm/in.water_box.long`).
+
+## Stage 1 (DONE) — field-only API on PPPMDipole
+
+`src/KSPACE/pppm_dipole.{h,cpp}` gained two public entry points for SCF
+polarization solvers; both ACCUMULATE (`+=`) the reciprocal-space E-field,
+scaled by `qqrd2e*scale`, at all LOCAL atom positions (matching the pair's
+`efield` convention):
+
+- `compute_efield_from_charges(double **)` — field generated by the point
+  charges through the **q-mu cross influence function** (`greensfn_qmu`) —
+  the same channel `compute()` uses for the charge contribution to the field
+  felt by dipoles, so SCF and final forces/torques are mutually consistent.
+  Cost: 1 forward + 3 backward FFTs; charges are static during SCF, so it is
+  called once per step.
+- `compute_efield_from_dipoles(double **)` — field generated by the current
+  `atom->mu` through the dipole-dipole influence function (3 fwd + 3 bwd
+  FFTs); called once per SCF iteration. Includes the dipole self-image term
+  (see stage 3) and all periodic/excluded-pair contributions.
+
+Supporting pieces: mu-only / q-only density spreading (`make_rho_mu`,
+`make_rho_charge`), field-only Poisson solves, a shared interpolator
+(`interpolate_efield`), and three comm flags appended to the `kspace.h` enums
+(`REVERSE_Q_ONLY`, `REVERSE_MU_ONLY`, `FORWARD_EFIELD`). The
+`u{x,y,z}_brick_dipole` arrays are reused as scratch.
+
+Validation hook kept in the code: env var `PPPM_DIPOLE_FIELD_CHECK=1` makes
+`compute()` verify split-vs-combined fields (exact by FFT linearity).
+Measured 2e-15 on 1/2/4 MPI ranks with `examples/dipole/in.charge_dipole`;
+normal-path behavior bit-identical to pristine HEAD.
+
+## Stage 2 (DONE) — Ewald-screened real-space dipole kernels in the pair
+
+`pair_gcpm_long.cpp`: the dipole-field tensor (`compute_induced_efield`) and
+the dipole-dipole force/torque loop (`polar`) subtract the point-dipole Ewald
+long-range part from the smeared Eq. (7) scalars:
+
+    f += -erf(Gr) + EWALD_F*Gr*(1 + 2(Gr)^2/3)*exp(-(Gr)^2)
+    g += -erf(Gr) + EWALD_F*Gr*exp(-(Gr)^2)
+    df -= (4/3)*EWALD_F*G^3*(Gr)^2*r^2*exp(-(Gr)^2)     (radial derivative)
+    dg -= 2*EWALD_F*G^3*r^2*exp(-(Gr)^2)
+
+(verified numerically to match the b1/b2 kernels of
+`pair lj/cut/dipole/long`; derivatives FD-checked to 1e-10; splitting
+identity exact). Both dipole loops now gate on `cut_coulsq` (the neighbor
+list always covers it: `init_one` returns `MAX(cut_lj, cut_coul)`). The
+charge-dipole kernel's exclusion convention was fixed from
+`factor_coul * screened` to `screened - (1-factor)*full_smeared` (same
+convention as the q-q loop), so excluded pairs cancel the point contribution
+the reciprocal sum adds back.
+
+## Stage 3 (DONE) — SCF wired to k-space; RF removed; exclusions by molecule
+
+- `compute()` adds `compute_efield_from_charges(efield)` once per step (after
+  the real-space reverse-comm); the SCF loop in `polar()` adds
+  `compute_efield_from_dipoles(efield_pol)` each iteration, then the
+  **self-field correction**: the reciprocal sum polarizes each dipole with
+  its own Gaussian image, `E_self = -(4/3)*g_ewald^3/sqrt(pi)*qqrd2e*mu_i`,
+  so `+eself*mu_i` is added back (`eself > 0`). Energy cross-check: this
+  corresponds exactly to the `-musqsum*2*g^3/(3*sqrt(pi))` self-energy term
+  in `PPPMDipole::compute()`.
+- **Reaction field removed from gcpm/long**: `eps_rf > 0` errors out.
+- `init_style` requires `kspace_style pppm/dipole` when polarization is on
+  (`dipoleflag = 1` set in the constructor so `KSpace::pair_check()` accepts
+  it), requires `atom->molecule_flag`, and ERRORS on any
+  `neigh_modify exclude` (removed pairs could never cancel the k-space
+  contributions).
+- **Intramolecular exclusion by molecule ID inside the kernels**: GCPM is
+  intermolecular-only, and the decks have no bond topology for
+  special_bonds. `charge_charge()` and the q-p loop in `polar()` set
+  `factor_coul = 0` when `molecule[i] == molecule[j] != 0`; the
+  subtract-full-smeared convention then cancels the reciprocal-space
+  intramolecular terms pair by pair. (No mu-mu intramolecular handling:
+  GCPM has one polarizable site per molecule — documented assumption.)
+- **Critical ordering fix**: `Verlet::setup()` / `Min::setup()` compute pair
+  forces BEFORE calling `kspace->setup()`, so the first SCF of every run
+  (and every `run 0`) would use uninitialized FFT tables (symptom: spurious
+  g^3-scaled induced dipole on an isolated molecule; recip field silently
+  ~0). Fixed by `PairGCPMLong::setup()` (invoked from `Force::setup()`,
+  which runs first) calling `pppm_dipole->setup()` itself — idempotent, the
+  integrator repeats it harmlessly.
+- Example deck `examples/PACKAGES/gcpm/in.water_box.long` updated:
+  `kspace_style pppm/dipole 0.0001`, `pair_style gcpm/long 1 0.0 12.0`
+  (eps_rf 0), `neigh_modify exclude` removed.
+
+### Stage 3 validation results (all on the 500-molecule water box unless noted)
+
+1. **g_ewald independence** (the strong whole-physics test; any missing or
+   mis-split term shifts with the splitting parameter): gewald 0.28 vs 0.36
+   at accuracy 1e-6 -> forces agree to 2e-5 relative, mu to 2e-5.
+   Caveat: need `g_ewald*rc >= ~3.3`; at 0.22*12 = 2.64 the real-space
+   truncation (erfc level ~2e-4) dominates and shows up as ~1e-3 apparent
+   gewald dependence.
+2. **Zero net torque on converged dipoles** (max ~1e-11): at self-consistency
+   `mu || E_total`, so total torque per dipole must vanish; this proves the
+   pair + kspace torque channels are exactly consistent with the SCF field
+   channels. (Useful permanent diagnostic.)
+3. **Absolute 2-molecule check** (`data.2water`, 40 A box) vs the
+   FD-validated base `gcpm` (cutoff 15, no RF, `neigh_modify exclude` — fine
+   there, no kspace): mu matches to 7.6e-5, which is EXACTLY the predicted
+   tinfoil-vs-vacuum boundary term `(4*pi/(3V))*M_box*alpha ~ 8.5e-5` — the
+   only remaining difference is physical (pppm/dipole = metallic boundary).
+4. **Single-molecule exclusion cancellation**: all electrostatics
+   intramolecular -> residual mu 4e-5 and gewald-INDEPENDENT (PPPM grid
+   error on the short excluded pairs, same class as any coul/long
+   exclusion); residual site forces ~0.01 kcal/mol/A canceling within the
+   molecule.
+5. **Invariance**: net momentum 1.5e-12 (max|F| ~ 96); newton on/off x
+   1/2/4 MPI ranks agree to 5e-11 in forces, 2e-13 in mu.
+6. 20-step 4-rank dynamics runs cleanly; ~21 SCF iterations/step at the
+   default tol 1e-5.
+
+Testing notes: the SCF tolerance is hardcoded (`tol = 1.0e-5`, `maxiter = 50`
+in the `PairGCPM` constructor); machine-precision invariance tests require
+temporarily setting `tol = 1e-12`, `maxiter = 200` and rebuilding (default
+tol limits cross-rank reproducibility to ~1e-3 in forces — SCF noise, not a
+bug). Build used: `build-gcpm/` (PKG_GCPM + KSPACE + DIPOLE + RIGID +
+MOLECULE).
+
+## Stage 4 (DONE) — energy/virial bookkeeping
+
+The Eq. (9) shortcut `-1/2 sum p.E_q` was dropped from `PairGCPMLong::polar()`
+(it would double-count: `E_q` now contains the reciprocal field while
+`pppm/dipole` tallies its own q-mu and mu-mu reciprocal energies + dipole
+self-energy). The pair now tallies its real-space pieces explicitly:
+
+- U_qq_real: unchanged (`charge_charge()`).
+- U_qp_real: in the q-p force loop, `-pre2*pidotr` (interaction A) and
+  `-pre2*pjdotr` (interaction B) per pair via `ev_tally()` with zero force
+  arguments (energy only; the virial of these forces is already tallied by
+  `vtally_force`). `pre2` contains the exclusion-corrected kernel, so the
+  intramolecular cancellation against the k-space sum extends to energies.
+- U_pp_real: in the dd force loop, `-(Aq*pir*pjr - qqrd2e*g_s*r3inv*pij)`
+  per pair.
+- Induction self-energy `+ qqrd2e*p_i^2/(2*alpha_i)` once per dipole atom
+  (guarded against `alpha_pol == 0`).
+
+At self-consistency U_qp(real+recip) + U_pp(real+recip+self) + U_ind =
+-1/2 sum p.E_q, so the grand pair+kspace total still equals Eq. (9).
+
+**Second real bug found (in pppm/dipole, upstream-relevant):**
+`PPPMDipole::compute()` refreshed `musum_musq()` only when `atom->natoms`
+changed, so the dipole self-energy correction `-musqsum*2g^3/(3 sqrt(pi))`
+used the STALE dipoles from init. Harmless for permanent dipoles (rotation
+preserves mu^2 — why upstream never saw it), but induced dipoles change
+magnitude every step: the total energy was g_ewald-DEPENDENT by ~1%
+(residual = exactly `(2/(3 sqrt(pi)))*qqrd2e*g^3*sum mu^2`). Fixed:
+`musum_musq(0)` is called every `compute()` (one small allreduce; new
+`errorflag` argument suppresses the no-dipoles error for the per-step
+refresh since induced dipoles may transiently vanish).
+
+Stage 4 validation (SCF tol temporarily 1e-12):
+1. Total energy g_ewald-independence (500-molecule box, gewald 0.28 vs
+   0.36, accuracy 1e-6): pe matches to 0.035 kcal/mol out of 9877
+   (3.5e-6 relative; was 112.7 kcal/mol before the musqsum fix).
+2. Absolute 2-molecule energy vs the FD-validated base `gcpm`:
+   pe_long = pe_base - 0.0079 kcal/mol, EXACTLY the predicted
+   tinfoil-vs-vacuum surface term `2*pi*M_box^2/(3V)*qqrd2e` (the only
+   physical difference); g_ewald-independent to 2e-4 kcal.
+3. **FD ground truth F = -dU/dx** (2-molecule, displace single atoms
+   +/- 2e-4 A, fixed 48^3 mesh): M-site force -6.9497 vs FD -6.9497
+   (1e-5 relative), H site 1.1e-5 relative; small-force probe agrees at
+   the same ~6e-5 absolute level (PPPM grid noise). Forces are the exact
+   gradient of the tallied total energy through the SCF.
+4. Pressure g_ewald-independence: 0.004-0.07 atm out of ~8778 (<= 1e-5
+   relative) for truncation-converged splittings (gewald 0.36 vs 0.40;
+   grid-converged, checked at accuracy 1e-8). The 1.8 atm deviation at
+   gewald 0.28 is real-space truncation (G*rc = 3.36), not bookkeeping.
+   No virial changes were needed: `vtally_force` + fdotr (real) and the
+   PR #5059 recip virial (kspace) were already complete.
+
+## Stage 5 (DONE) — init/robustness details
+
+- **SCF solver control from the input script**: `pair_style gcpm[/long]
+  enable_polar eps_rf cut_buck [cutcoul] [polar/tol <tol>] [polar/maxiter <n>]`
+  (defaults 1.0e-5 / 50, parsed in `PairGCPM::settings()`; inherited by the
+  GPU variants). No more rebuild-to-tighten for validation runs:
+  `polar/tol 1.0e-12 polar/maxiter 200` reproduces the temporary-build
+  results bit-for-bit.
+- **Restart settings** now persist `enable_polar`, `eps_rf` (with `enable_rf`
+  rederived), `tol`, and `maxiter` (previously NOT saved -- they silently
+  reset to constructor defaults on read_restart). Restart roundtrip
+  validated bit-identical (pe to 13 digits, which also proves the restored
+  tol since the default would differ in the 7th digit). NOTE: this changes
+  the restart format for the GCPM styles; old GCPM restart files are not
+  readable.
+- **g_ewald auto-estimate with near-zero seed dipoles, characterized**: the
+  water-box deck (accuracy 1e-4, auto) picks g_ewald = 0.219 / 12^3 grid --
+  effectively charge-only values, because tiny induced-dipole seeds are
+  invisible to the error model. Measured cost vs a tight reference
+  (1e-6, gewald 0.36): max force error 0.117 kcal/mol/A = ~3x the
+  charge-only estimate (0.041) -- usable, but optimistic.
+  `PairGCPMLong::init_style()` now WARNS when the rms seed dipole is below
+  0.05 e*A, recommending `kspace_modify gewald` (g_ewald*cut_coul >= ~3.3)
+  and/or `mesh`. Restarts with converged bulk dipoles (~0.28 e*A) do not
+  trigger it; weakly-polarized small systems may -- harmless. The example
+  deck now pins `kspace_modify gewald 0.30` with an explanatory comment.
+
+## Stage 6 — validation (user-specified acceptance test): DONE, gcpm/long PASSES
+
+**Primary acceptance test (specified by the user 2026-07-16):** use
+`examples/PACKAGES/gcpm/data.gcpm` with `in.gcpm` (500 GCPM waters from the
+Fortran frame, `fix rigid/nvt/small` at 298 K, dt 0.5, rc 11.220684,
+`pair gcpm 1 78.4 rc rc` + per-pair RF) as the reference, and run the
+`gcpm/long` counterpart deck **`examples/PACKAGES/gcpm/in.gcpm.long`**
+(same data file/thermostat/seed; `pair_style gcpm/long 1 0.0 rc`,
+`kspace_style pppm/dipole 0.0001`, `kspace_modify gewald 0.30`, NO
+`neigh_modify exclude`). Acceptance criterion: statistical consistency
+with pair gcpm in temperature, energy, and pressure.
+
+### Results (run 2026-07-16, 4 MPI ranks, 1000 steps, samples at steps 100-1000)
+
+| quantity | gcpm/long (in.gcpm.long) | gcpm RF (log.16Jul26.gcpm.g++.4) |
+|---|---|---|
+| Temp [K]      | 291.8 +/- 5.5   | 294.6 +/- 5.9  |
+| Press [atm]   | 76 +/- 274      | 82 +/- 286     |
+| PotEng [kcal/mol] | -5135.6 +/- 25.5 | +16177 +/- 4193 (spurious, see below) |
+| NVE etotal drift (500 steps, fix rigid/small) | +/- 0.07 kcal/mol | +17,000 kcal/mol |
+| wall time (1000 steps, 4 ranks) | 64 s | 43 s |
+
+- **Temperature and pressure: statistically consistent** (differences well
+  inside one sigma of the fluctuations).
+- **Structure: consistent.** RDF first peaks (long / RF / Fortran gofr.dat):
+  O-O 2.75/2.60 vs 2.75/2.58 vs 2.79/2.76; intermolecular O-H
+  1.85/1.33 vs 1.85/1.36 vs 1.83/1.39; H-H 2.41/1.33 vs 2.41/1.31 vs
+  2.42/1.39. Long-vs-RF max |dg| for r > 2 A is 0.12 (gOO), 0.04 (gOH, gHH).
+- **SCF cost**: ~11 iterations/step at tol 1e-5; gcpm/long is only ~1.5x the
+  RF wall time on this box.
+- Reference artifacts saved: `examples/PACKAGES/gcpm/log.16Jul26.gcpm.long.g++.4`
+  and `rdf.long.txt` (compare with the user's committed
+  `log.16Jul26.gcpm.g++.4` and `rdf.txt`).
+
+### Finding: the RF reference's reported ENERGY is unusable on this deck
+(pair gcpm defect, not a gcpm/long problem)
+
+The RF run's PotEng climbs from -4808 to ~+16000 within 100 fs and then
+random-walks with sigma ~4000 kcal/mol (reproduced bit-for-bit against the
+user's committed reference log), while its temperature, pressure, induced
+dipoles (M-site |mu| 0.174 +/- stable over 500 steps), and RDFs all stay
+normal. Diagnosis chain:
+
+1. **2x2 cross-evaluation** (each style single-pointed on each run's final
+   config): gcpm/long rates BOTH configs normal (-5147 / -5164 kcal/mol);
+   RF rates the long-config normal (-4744) but its OWN config +14949.
+2. **Term isolation**: plain truncated smeared Coulomb (`gcpm 0 0.0`,
+   polar off, RF off) already shows the split (+8597 vs -4538), so neither
+   polarization nor the RF term causes it.
+3. **Post-processing resum** of both final configs: atom-atom truncated sum
+   +8059 vs -5096; adding the RF r^2 term +14751 vs -4997; **adding the
+   missing shift constant -5375 vs -5409** (gap collapses from ~19,700 to
+   34 kcal/mol); molecular (M-site distance) truncation -5348 vs -5409.
+
+**Root cause** (`PairGCPM::charge_charge()`, src/GCPM/pair_gcpm.cpp:453-455):
+the per-pair energy `qq*erfa/r + 0.5*qq*c_rf*r^2` has NO shift constant, so
+it does not vanish at the cutoff: E(rc) = qq*(1 + B0/2)*qqrd2e/rc, up to
+~66 kcal/mol per M-M pair. The Fortran never sees this because it truncates
+by molecule COM-COM distance and GCPM molecules are neutral: the per-pair
+constants sum to exactly zero over each molecule pair. With LAMMPS atom-atom
+truncation, sites straddle the cutoff individually, so every crossing jumps
+the reported energy (and NVE etotal) by O(10) kcal/mol. Forces are only
+~2% discontinuous at rc (factor 1-B0, eps=78.4), which is why the RF
+TRAJECTORY (structure, dipoles, pressure, temperature) remains essentially
+correct -- the RF dynamics wanders across cutoff-shell pair-count
+fluctuations that the energy tally, lacking the shift, amplifies ~1000x.
+
+**Proposed fix (NOT YET APPLIED -- deferred to the next session, agreed
+2026-07-16):** add the per-type-pair shift constant
+`e_shift_ij = qqrd2e*erfa(alpha_ij*rc)/rc + 0.5*c_rf*rc^2` (times qq, bare
+part scaled by factor_coul) to ecoul in `charge_charge()` when enable_rf is
+on. This is a constant inside the cutoff: forces and trajectories are
+BIT-IDENTICAL, only the reported ecoul/pe and NVE-etotal bookkeeping change.
+Absolute pe would then differ from the Fortran single-point records by the
+(small, bounded) sum over molecule pairs straddling the cutoff. A
+"KNOWN DEFECT" comment now marks the exact spot in the source (the eflag
+branch of `PairGCPM::charge_charge()`, src/GCPM/pair_gcpm.cpp); no
+functional change has been made to pair_gcpm.cpp yet.
+
+**Acceptance verdict:** gcpm/long passes -- temperature, pressure, and
+structure are statistically consistent with the RF reference; its absolute
+energy is stable, NVE-conserving, and consistent with the shifted-RF /
+molecular-truncation evaluation of the RF trajectory up to the expected
+RF-vs-tinfoil systematic offset (~200 kcal/mol on this box). The energy
+criterion cannot be scored against the RF style's own reported pe until the
+shift fix lands. (2026-07-17: the user accepts the RF style's energy
+inconsistency vs the Fortran as a cutoff-convention artifact; the energy
+criterion for gcpm/long is instead scored directly against the Fortran
+below, and passes.)
+
+### Stage 6b (2026-07-17) — gcpm/long vs the Fortran, single point, same frame
+
+Number-by-number comparison on the exact pwatin frame (the same frame behind
+`examples/PACKAGES/gcpm/data.gcpm`; coordinate identity re-verified against a
+fresh `frame.dat` -> converter round trip). Fortran side: `md_water_cmp` with
+`dump_compare.f` extended to also export per-molecule induced dipoles
+(`mu_frame.dat`, e*Ang; unit factor validated by the permanent dipole coming
+out at exactly 1.855 D) and the exact molecular COM (`com_frame.dat`).
+LAMMPS side: `gcpm/long` single point, PPPM accuracy 1e-6, `gewald 0.30`,
+`polar/tol 1e-10` (`in.singlepoint.long` in the session scratchpad).
+
+Headline energies (kcal/mol):
+
+| term | Fortran | gcpm/long (M-site dipole) | gcpm/long (COM dipole) |
+|---|---|---|---|
+| dispersion (exp-6, no tail) | 1101.464 | 1101.441 | 1101.441 |
+| permanent-charge electrostatics | -4773.10 (bare) / -4780.14 (RF+self) | -4778.91 | -4778.91 |
+| E_pol | -1535.95 | -1421.20 | -1534.76 |
+| total (uconf, no tail) | -5214.63 | -5098.66 | **-5212.23** |
+
+- **The paper (Eq. 3) places the induced dipole at the molecular COM**, as
+  the Fortran does; LAMMPS puts it on the M site (~0.2 A away). That
+  placement is the ENTIRE 116 kcal/mol total-energy gap: with a 5-site
+  variant data file (massless, chargeless type-4 site at the exact Fortran
+  COM carrying the dipole flag, polarizability 1.444 and width 0.610; M
+  keeps its charge, loses the dipole flag; NO code changes needed), the
+  total agrees to **2.4 kcal/mol (0.046%)** and E_pol to 0.08%. The
+  residual is the genuine RF-vs-Ewald long-range difference.
+- Per-molecule comparison, COM-dipole variant vs Fortran (500 molecules):
+  induced dipoles median |dmu|/|mu| 1.8%, cos(angle) 0.9999; net forces
+  median 2.7%, cos 0.9998; torques about COM median 4.4%, cos 0.9995.
+  With the M-site placement instead: dipoles 7.6% (|mu| mean 0.174 vs
+  0.183 e*Ang), forces 15%, torques 16% -- all model difference, not bugs.
+  (Compare the old RF-style force comparison in section D: median 72%,
+  cos 0.857 -- most of that scatter was the atom-atom cutoff, which Ewald
+  removes.)
+- **Why the M-site dipoles are ~4.5% weaker (systematic, not
+  frame-specific):** isolating placement within LAMMPS (M-site vs COM
+  single points, same Ewald code), the per-molecule ratio
+  |mu_M|/|mu_COM| = 0.956 +/- 0.043 with 436/500 molecules below 1 and
+  direction unchanged (cos 0.999) -- a uniform shift, not outliers. The
+  driver is the axial gradient of the local field in the H-bond network:
+  the smeared charge field projected on the molecular axis is 2.2% weaker
+  at M (0.0892 vs 0.0912 e/Ang^2, bare min-image sum). The two accepting
+  H-bond hydrogens (~1.9 A behind the center) actually contribute slightly
+  MORE at M; the deficit comes from the farther, opposing shells (> 2.5 A,
+  net projection -0.063 vs -0.059). The SCF dipole-dipole feedback then
+  roughly doubles the relative deficit (2.2% in E_q -> 4.4% in mu), and
+  E_pol follows as ~mu^2 (0.956^2 = 0.914 vs the observed -1421/-1536 =
+  0.925). Every molecule in the liquid sees the same axial field profile
+  on the 0.2 A scale, so the effect persists for any equilibrated
+  liquid-water configuration at this state point (the MD trajectory
+  average |mu| 0.174 equals this frame's M-site value); its magnitude
+  will vary with density/temperature as the H-bond structure changes.
+  Analysis script: `MD_water/MD_water/mu_placement_analysis.py`.
+- g_ewald independence at this frame: pe shifts 0.0015 kcal/mol between
+  gewald 0.30 and 0.36 (grid re-tuned each time).
+- SCF/torque-channel consistency: max residual torque on converged dipoles
+  1e-9 (M-site) / 2e-9 (COM) kcal/mol.
+- Tooling (all in `MD_water/MD_water/`): `dump_compare.f` (extended to
+  write `mu_frame.dat` and `com_frame.dat`), `make_data5.py` (builds the
+  5-site COM-dipole data file from `frame.dat` + `com_frame.dat`),
+  `in.singlepoint.long` / `in.sp.com` (the two single-point decks; run
+  them next to `data.gcpm` / `data.gcpm5`), and `compare_frame.py`
+  (per-molecule dipole/force/torque comparison:
+  `compare_frame.py <dump> <dipole-type>`).
+- **Promoted to the example directory (2026-07-18):** `data.gcpm5` and
+  `in.sp.com` now live in `examples/PACKAGES/gcpm/`, with the reference log
+  `log.18Jul26.sp.com.g++.4` (4 ranks; pe -5212.225, matching the table
+  above; 25 SCF iterations at `polar/tol 1e-10`).
+
+**Stage 6 verdict (final): gcpm/long is validated against the Fortran
+reference.** Dispersion matches to 2e-5, permanent-charge electrostatics to
+0.12% (molecular truncation vs Ewald), and -- once the dipole is placed at
+the COM as the paper prescribes -- polarization energy to 0.08%, total
+energy to 0.046%, with per-molecule dipoles/forces/torques matching to a
+few percent (RF-vs-Ewald residual). Open modeling decision: whether to keep
+the M-site dipole placement (convenient 4-site decks, ~7% weaker induced
+dipoles than the published model) or promote the 5-site COM-dipole data
+layout, which reproduces the paper exactly with the existing pair style.
+
+## Stage 7 — docs, examples, housekeeping
+
+`doc/src/pair_gcpm.rst` (with `.. versionchanged:: TBD` for the gcpm/long
+behavior change), reference logs, `make check`; add the still-untracked
+`src/GCPM/pair_gcpm_long.{cpp,h}` (and friends) to git and to
+`src/.gitignore`; update the three GCPM `.md` notes. Performance follow-up
+(not in plan): the SCF costs 6 FFTs/iteration (~21 iters/step) — FFT-plan
+reuse, caching the charge-density FFT, or convergence acceleration are the
+targets. `gcpm/gpu` stays RF-only for now.
 
 
 

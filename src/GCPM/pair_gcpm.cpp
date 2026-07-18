@@ -450,6 +450,26 @@ void PairGCPM::charge_charge(int eflag, int /*vflag*/)
 
           if (eflag) {
             if (rsq < cut_coulsq) {
+              // KNOWN DEFECT (2026-07-16, see the stage 6 section of
+              // src/GCPM/gcpm_lammps_vs_fortran.md): this pair energy does
+              // not vanish at the cutoff -- there is no shift constant, so
+              // E(rc) = qi*qj*qqrd2e*(1 + B0/2)/rc, up to ~66 kcal/mol for
+              // an M-M pair. The Fortran GCPM code truncates by molecule
+              // COM-COM distance, where these constants sum to exactly zero
+              // over each (neutral) molecule pair; the atom-atom truncation
+              // used here does not cancel them. Consequence: the reported
+              // ecoul/pe (and NVE etotal) jump at every cutoff crossing and
+              // random-walk by O(10^4) kcal/mol on bulk decks, while forces
+              // (discontinuous only at the (1-B0) ~ 2% level for eps_rf =
+              // 78.4), structure, pressure, and induced dipoles remain
+              // essentially correct. Planned fix: subtract the per-type-pair
+              // constant
+              //   qi*qj*(factor_coul*qqrd2e*erfa(alpha_ij*rc)/rc
+              //          + 0.5*c_rf*rc^2)
+              // so the energy is continuous at rc. The shift is constant
+              // inside the cutoff: forces and trajectories are unchanged,
+              // only the energy bookkeeping (and the absolute-pe offset
+              // against the Fortran single-point records) changes.
               ecoul = factor_coul * prefactor * erfa;
               // (A) charge-charge reaction-field energy: 0.5*qi*qj*c_rf*r^2
               if (enable_rf) ecoul += 0.5*qtmp*q[j]*c_rf*rsq;
@@ -1331,13 +1351,43 @@ void PairGCPM::allocate()
 
 void PairGCPM::settings(int narg, char **arg)
 {
-  if (narg < 3 || narg > 4) error->all(FLERR,"Illegal pair_style command");
+  if (narg < 3) error->all(FLERR,"Illegal pair_style command");
 
   enable_polar = utils::numeric(FLERR,arg[0],false,lmp);
   eps_rf = utils::numeric(FLERR,arg[1],false,lmp);
   cut_lj_global = utils::numeric(FLERR,arg[2],false,lmp);
-  if (narg < 4) cut_coul = cut_lj_global;
-  else cut_coul = utils::numeric(FLERR,arg[3],false,lmp);
+
+  // optional 4th positional argument: Coulomb cutoff (defaults to cut_lj);
+  // then optional keyword/value pairs controlling the induced-dipole solver:
+  //   polar/tol <tol>       convergence tolerance on the max dipole change
+  //   polar/maxiter <n>     max SCF iterations per solver call
+
+  int iarg = 3;
+  cut_coul = cut_lj_global;
+  if ((narg > 3) && (strcmp(arg[3],"polar/tol") != 0) &&
+      (strcmp(arg[3],"polar/maxiter") != 0)) {
+    cut_coul = utils::numeric(FLERR,arg[3],false,lmp);
+    iarg = 4;
+  }
+
+  while (iarg < narg) {
+    if (strcmp(arg[iarg],"polar/tol") == 0) {
+      if (iarg+2 > narg) error->all(FLERR,"Illegal pair_style command: "
+                                    "polar/tol requires a value");
+      tol = utils::numeric(FLERR,arg[iarg+1],false,lmp);
+      if (tol <= 0.0)
+        error->all(FLERR,"Illegal pair_style command: polar/tol must be > 0");
+      iarg += 2;
+    } else if (strcmp(arg[iarg],"polar/maxiter") == 0) {
+      if (iarg+2 > narg) error->all(FLERR,"Illegal pair_style command: "
+                                    "polar/maxiter requires a value");
+      maxiter = utils::inumeric(FLERR,arg[iarg+1],false,lmp);
+      if (maxiter < 1)
+        error->all(FLERR,"Illegal pair_style command: polar/maxiter must be >= 1");
+      iarg += 2;
+    } else error->all(FLERR,"Illegal pair_style command: unknown keyword {}",
+                      arg[iarg]);
+  }
 
   // reaction-field correction: eps_rf (2nd arg) is the continuum dielectric.
   // eps_rf <= 0 disables the correction.
@@ -1529,6 +1579,10 @@ void PairGCPM::write_restart_settings(FILE *fp)
   fwrite(&offset_flag,sizeof(int),1,fp);
   fwrite(&mix_flag,sizeof(int),1,fp);
   fwrite(&tail_flag,sizeof(int),1,fp);
+  fwrite(&enable_polar,sizeof(int),1,fp);
+  fwrite(&eps_rf,sizeof(double),1,fp);
+  fwrite(&tol,sizeof(double),1,fp);
+  fwrite(&maxiter,sizeof(int),1,fp);
 }
 
 /* ---------------------------------------------------------------------- */
@@ -1541,12 +1595,23 @@ void PairGCPM::read_restart_settings(FILE *fp)
     utils::sfread(FLERR,&offset_flag,sizeof(int),1,fp,nullptr,error);
     utils::sfread(FLERR,&mix_flag,sizeof(int),1,fp,nullptr,error);
     utils::sfread(FLERR,&tail_flag,sizeof(int),1,fp,nullptr,error);
+    utils::sfread(FLERR,&enable_polar,sizeof(int),1,fp,nullptr,error);
+    utils::sfread(FLERR,&eps_rf,sizeof(double),1,fp,nullptr,error);
+    utils::sfread(FLERR,&tol,sizeof(double),1,fp,nullptr,error);
+    utils::sfread(FLERR,&maxiter,sizeof(int),1,fp,nullptr,error);
   }
   MPI_Bcast(&cut_lj_global,1,MPI_DOUBLE,0,world);
   MPI_Bcast(&cut_coul,1,MPI_DOUBLE,0,world);
   MPI_Bcast(&offset_flag,1,MPI_INT,0,world);
   MPI_Bcast(&mix_flag,1,MPI_INT,0,world);
   MPI_Bcast(&tail_flag,1,MPI_INT,0,world);
+  MPI_Bcast(&enable_polar,1,MPI_INT,0,world);
+  MPI_Bcast(&eps_rf,1,MPI_DOUBLE,0,world);
+  MPI_Bcast(&tol,1,MPI_DOUBLE,0,world);
+  MPI_Bcast(&maxiter,1,MPI_INT,0,world);
+
+  // derived flag (settings() computes it from eps_rf)
+  enable_rf = (eps_rf > 0.0) ? 1 : 0;
 }
 
 /* ---------------------------------------------------------------------- */

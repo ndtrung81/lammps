@@ -19,17 +19,25 @@ mass 2 1.008     # H
 mass 3 1.0e-100  # site M
 
 # pair style parameters:  enable_polar eps_rf cut_buck [cutcoul]
-pair_style gcpm/long      1            78.0   12.0
+#   optional keywords: polar/tol <tol> polar/maxiter <n>  (SCF solver control,
+#   defaults 1.0e-5 / 50)
+pair_style gcpm/long      1            0.0    12.0
 
 # coeffs       epsilon sigma  gamma  alpha_pol sigmaM
 pair_coeff 1 1 0.1550  3.1536 12.75  0.0       0.000
 pair_coeff 2 2 0.0     1.0    12.75  0.0       0.455
 pair_coeff 3 3 0.0     1.0    12.75  1.444     0.610
 
-kspace_style pppm 0.0001
+kspace_style pppm/dipole 0.0001
+# pin the Ewald splitting: the automatic estimate is effectively charge-only
+# while the induced-dipole seeds are near zero (g_ewald*cut_coul >= ~3.3
+# keeps the real-space truncation below the grid error)
+kspace_modify gewald 0.30
 
-# the GCPM model excludes the intramolecular Coulombic interaction
-neigh_modify exclude molecule/intra all
+# the GCPM model excludes the intramolecular Coulombic interaction; pair
+# gcpm/long does this internally via molecule IDs (do NOT use neigh_modify
+# exclude here: the k-space contributions of removed pairs could not be
+# cancelled in real space)
 
 velocity all create 298.0 187421 mom yes rot yes
 

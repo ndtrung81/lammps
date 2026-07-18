@@ -34,7 +34,9 @@ class KSpace : protected Pointers {
     REVERSE_AD,
     REVERSE_AD_PERATOM,
     REVERSE_MU,
-    REVERSE_MU_PERATOM
+    REVERSE_MU_PERATOM,
+    REVERSE_MU_ONLY,
+    REVERSE_Q_ONLY
   };
   enum {
     FORWARD_RHO,
@@ -63,7 +65,8 @@ class KSpace : protected Pointers {
     FORWARD_IK_A,
     FORWARD_AD_A,
     FORWARD_IK_PERATOM_A,
-    FORWARD_AD_PERATOM_A
+    FORWARD_AD_PERATOM_A,
+    FORWARD_EFIELD
   };
 
   double energy;    // accumulated energies
