@@ -523,17 +523,31 @@ TRAJECTORY (structure, dipoles, pressure, temperature) remains essentially
 correct -- the RF dynamics wanders across cutoff-shell pair-count
 fluctuations that the energy tally, lacking the shift, amplifies ~1000x.
 
-**Proposed fix (NOT YET APPLIED -- deferred to the next session, agreed
-2026-07-16):** add the per-type-pair shift constant
-`e_shift_ij = qqrd2e*erfa(alpha_ij*rc)/rc + 0.5*c_rf*rc^2` (times qq, bare
-part scaled by factor_coul) to ecoul in `charge_charge()` when enable_rf is
-on. This is a constant inside the cutoff: forces and trajectories are
-BIT-IDENTICAL, only the reported ecoul/pe and NVE-etotal bookkeeping change.
-Absolute pe would then differ from the Fortran single-point records by the
-(small, bounded) sum over molecule pairs straddling the cutoff. A
-"KNOWN DEFECT" comment now marks the exact spot in the source (the eflag
-branch of `PairGCPM::charge_charge()`, src/GCPM/pair_gcpm.cpp); no
-functional change has been made to pair_gcpm.cpp yet.
+**Fix APPLIED (2026-07-18):** the per-type-pair shift constant
+`e_shift_ij = qqrd2e*erf(alpha_ij*rc)/rc + 0.5*c_rf*rc^2` (times qq, bare
+part scaled by factor_coul) is subtracted from ecoul in `charge_charge()`
+when enable_rf is on, so E(rc) = 0. Implementation: new per-type-pair array
+`e_shift_qq[i][j] = qqrd2e*erf(alpha_ij*rc)/rc` computed in `init_one()`
+(erf(inf) = 1 covers the zero-width O-O pairs, which carry no charge and
+never tally anyway); the RF part is applied inline as
+`0.5*qq*c_rf*(r^2 - rc^2)`. The GPU kernels (`lib/gpu/lal_gcpm.cu`, both
+plain and fast) apply the identical shift, computed in-kernel from `aij`
+and `cut_coulsq` under `EVFLAG && eflag`. Not applied when enable_rf is
+off (the bare-truncation debug mode keeps its historical unshifted
+values), and gcpm/long is untouched (it overrides `charge_charge()` and
+forbids RF). Validation (4 ranks, in.gcpm 1000-step deck vs the committed
+log.16Jul26.gcpm.g++.4): temperature and pressure columns BIT-IDENTICAL
+at every thermo step (trajectories unchanged); pe now -5120 +/- 30
+kcal/mol (was a random walk from -4808 to +13163, sigma 7237), consistent
+with gcpm/long's -5136 +/- 25 on the same deck. NVE (rigid/nve/small,
+dt 0.5, 500 steps): etotal drift ~0.6 kcal/mol per 250 fs within a
++/-1 kcal/mol band (residual = the documented ~2% RF force discontinuity
+at rc + SCF tol 1e-5). GPU runtime cross-check (after the post-suspend
+nvidia_uvm reload restored CUDA): gcpm/gpu with `-pk gpu 1 neigh no`
+(host neighboring; GPU neighbor builds reject neigh_modify exclude)
+matches the CPU pe to ~2e-4 kcal/mol out of -5088 (rel ~4e-8, normal
+GPU accumulation-order noise) at steps 0 and 10 of the NVE deck --
+without the kernel shift the GPU pe would read -4808 (+280 kcal/mol).
 
 **Acceptance verdict:** gcpm/long passes -- temperature, pressure, and
 structure are statistically consistent with the RF reference; its absolute

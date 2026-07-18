@@ -174,10 +174,18 @@ __kernel void k_gcpm(const __global numtyp4 *restrict x_,
           ecoul_smeared = sc * prefactor * erfa;
 
           // (A) per-pair charge-charge reaction field: force -qi*qj*c_rf*r_vec,
-          // energy 0.5*qi*qj*c_rf*r^2. Applied to all pairs (not scaled by sc).
+          // energy 0.5*qi*qj*c_rf*(r^2 - rc^2). Applied to all pairs (not
+          // scaled by sc). The energy includes the cutoff shift that makes
+          // E(rc) = 0 (matches CPU charge_charge): the -rc^2 term for the RF
+          // part plus -sc*qi*qj*qqrd2e*erf(aij*rc)/rc for the smeared Coulomb.
           if (enable_rf) {
             frf = -qtmp*qj*c_rf;
-            ecoul_rfA = (numtyp)0.5 * qtmp*qj*c_rf*rsq;
+            if (EVFLAG && eflag) {
+              numtyp rc = ucl_sqrt(cut_coulsq);
+              numtyp erfa_rc = (numtyp)1.0 - ucl_erfc(aij*rc);
+              ecoul_rfA = (numtyp)0.5 * qtmp*qj*c_rf*(rsq - cut_coulsq)
+                        - sc * qqrd2e*qtmp*qj*erfa_rc/rc;
+            }
           }
         }
 
@@ -318,10 +326,16 @@ __kernel void k_gcpm_fast(const __global numtyp4 *restrict x_,
           forcecoul = sc * prefactor * falpha;
           ecoul_smeared = sc * prefactor * erfa;
 
-          // (A) per-pair charge-charge reaction field (see non-fast kernel)
+          // (A) per-pair charge-charge reaction field (see non-fast kernel),
+          // energy shifted so E(rc) = 0 (matches CPU charge_charge)
           if (enable_rf) {
             frf = -qtmp*qj*c_rf;
-            ecoul_rfA = (numtyp)0.5 * qtmp*qj*c_rf*rsq;
+            if (EVFLAG && eflag) {
+              numtyp rc = ucl_sqrt(cut_coulsq);
+              numtyp erfa_rc = (numtyp)1.0 - ucl_erfc(aij*rc);
+              ecoul_rfA = (numtyp)0.5 * qtmp*qj*c_rf*(rsq - cut_coulsq)
+                        - sc * qqrd2e*qtmp*qj*erfa_rc/rc;
+            }
           }
         }
 

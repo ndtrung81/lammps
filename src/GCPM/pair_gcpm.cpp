@@ -153,6 +153,7 @@ PairGCPM::~PairGCPM()
     memory->destroy(alpha_pol);
     memory->destroy(sigmaM);
     memory->destroy(alpha_ij);
+    memory->destroy(e_shift_qq);
   }
   memory->destroy(efield);
   memory->destroy(efield_pol);
@@ -450,29 +451,22 @@ void PairGCPM::charge_charge(int eflag, int /*vflag*/)
 
           if (eflag) {
             if (rsq < cut_coulsq) {
-              // KNOWN DEFECT (2026-07-16, see the stage 6 section of
-              // src/GCPM/gcpm_lammps_vs_fortran.md): this pair energy does
-              // not vanish at the cutoff -- there is no shift constant, so
-              // E(rc) = qi*qj*qqrd2e*(1 + B0/2)/rc, up to ~66 kcal/mol for
-              // an M-M pair. The Fortran GCPM code truncates by molecule
-              // COM-COM distance, where these constants sum to exactly zero
-              // over each (neutral) molecule pair; the atom-atom truncation
-              // used here does not cancel them. Consequence: the reported
-              // ecoul/pe (and NVE etotal) jump at every cutoff crossing and
-              // random-walk by O(10^4) kcal/mol on bulk decks, while forces
-              // (discontinuous only at the (1-B0) ~ 2% level for eps_rf =
-              // 78.4), structure, pressure, and induced dipoles remain
-              // essentially correct. Planned fix: subtract the per-type-pair
-              // constant
-              //   qi*qj*(factor_coul*qqrd2e*erfa(alpha_ij*rc)/rc
-              //          + 0.5*c_rf*rc^2)
-              // so the energy is continuous at rc. The shift is constant
-              // inside the cutoff: forces and trajectories are unchanged,
-              // only the energy bookkeeping (and the absolute-pe offset
-              // against the Fortran single-point records) changes.
               ecoul = factor_coul * prefactor * erfa;
-              // (A) charge-charge reaction-field energy: 0.5*qi*qj*c_rf*r^2
-              if (enable_rf) ecoul += 0.5*qtmp*q[j]*c_rf*rsq;
+              if (enable_rf) {
+                // cutoff shift (2026-07-18, see the stage 6 section of
+                // src/GCPM/gcpm_lammps_vs_fortran.md): subtract the constant
+                // pair energy at r = rc so E(rc) = 0. The Fortran GCPM code
+                // gets this cancellation for free from its molecule-COM
+                // truncation over neutral molecules; the atom-atom truncation
+                // used here needs the explicit constant, otherwise ecoul/pe
+                // jump at every cutoff crossing and random-walk by O(10^4)
+                // kcal/mol on bulk decks. The shift is constant inside the
+                // cutoff: forces and trajectories are unchanged.
+                ecoul -= factor_coul * qtmp*q[j] * e_shift_qq[itype][jtype];
+                // (A) charge-charge reaction-field energy, shifted:
+                // 0.5*qi*qj*c_rf*(r^2 - rc^2)
+                ecoul += 0.5*qtmp*q[j]*c_rf*(rsq - cut_coulsq);
+              }
             } else ecoul = 0.0;
           }
 
@@ -1345,6 +1339,7 @@ void PairGCPM::allocate()
   memory->create(alpha_pol,n+1,n+1,"pair:alpha_pol");
   memory->create(sigmaM,n+1,n+1,"pair:sigmaM");
   memory->create(alpha_ij,n+1,n+1,"pair:alpha_ij");
+  memory->create(e_shift_qq,n+1,n+1,"pair:e_shift_qq");
 }
 
 /* ---------------------------------------------------------------------- */
@@ -1504,6 +1499,14 @@ double PairGCPM::init_one(int i, int j)
   double si = sigmaM[i][i], sj = sigmaM[j][j];
   alpha_ij[i][j] = MY_ISQRT2 / sqrt(si*si + sj*sj);
   alpha_ij[j][i] = alpha_ij[i][j];
+
+  // charge-independent smeared-Coulomb pair energy at the Coulomb cutoff,
+  // subtracted in charge_charge() when enable_rf so E(rc) = 0. erf(inf) = 1
+  // handles the zero-width (alpha_ij = inf) pairs; those have q = 0 and never
+  // tally energy anyway. The c_rf part of the shift is applied in
+  // charge_charge() as 0.5*c_rf*(r^2 - rc^2).
+  e_shift_qq[i][j] = force->qqrd2e * erf(alpha_ij[i][j]*cut_coul) / cut_coul;
+  e_shift_qq[j][i] = e_shift_qq[i][j];
 
   cut_ljsq[j][i]    = cut_ljsq[i][j];
   epsilon[j][i]     = epsilon[i][j];

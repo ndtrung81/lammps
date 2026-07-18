@@ -100,6 +100,9 @@ class PairGCPM : public Pair {
   double **alpha_pol;   // molecular polarizability for each type pair
   double **sigmaM;      // Gaussian charge width of M site (individual, per type pair)
   double **alpha_ij;    // per-pair Gaussian parameter: 1/sqrt(2*(si^2+sj^2)) [1/A]
+  double **e_shift_qq;  // charge-independent smeared-Coulomb energy at the cutoff:
+                        // qqrd2e*erf(alpha_ij*rc)/rc, subtracted per pair when
+                        // enable_rf so the pair energy vanishes at r = rc
   double g_ewald;       // Ewald splitting parameter (0 for the reaction-field base)
   double *cut_respa;
 
