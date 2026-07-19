@@ -396,52 +396,52 @@ __kernel void k_gcpm_efield(
               numj, n_stride, nbor_end, nbor);
 
     numtyp4 ix; fetch4(ix, i, pos_tex);
-    numtyp qtmp; fetch(qtmp, i, q_tex);
     int itype = (int)ix.w * lj_types;
 
-    if (qtmp != (numtyp)0.0) {
-      for (; nbor < nbor_end; nbor += n_stride) {
-        ucl_prefetch(dev_packed + nbor + n_stride);
-        int j = dev_packed[nbor];
-        numtyp factor_coul = (numtyp)1.0 - sp_lj[sbmask(j) + 4];
-        j &= NEIGHMASK;
+    // no q[i] gate here: the field receiver need not carry a charge (the
+    // induced-dipole site may be chargeless, e.g. a COM dipole site), only
+    // the sources q[j] must be nonzero (matches CPU charge_charge)
+    for (; nbor < nbor_end; nbor += n_stride) {
+      ucl_prefetch(dev_packed + nbor + n_stride);
+      int j = dev_packed[nbor];
+      numtyp factor_coul = (numtyp)1.0 - sp_lj[sbmask(j) + 4];
+      j &= NEIGHMASK;
 
-        numtyp qj; fetch(qj, j, q_tex);
-        if (qj == (numtyp)0.0) continue;
+      numtyp qj; fetch(qj, j, q_tex);
+      if (qj == (numtyp)0.0) continue;
 
-        numtyp4 jx; fetch4(jx, j, pos_tex);
-        int mtype = itype + (int)jx.w;
+      numtyp4 jx; fetch4(jx, j, pos_tex);
+      int mtype = itype + (int)jx.w;
 
-        numtyp delx = ix.x - jx.x;
-        numtyp dely = ix.y - jx.y;
-        numtyp delz = ix.z - jx.z;
-        numtyp rsq = delx*delx + dely*dely + delz*delz;
+      numtyp delx = ix.x - jx.x;
+      numtyp dely = ix.y - jx.y;
+      numtyp delz = ix.z - jx.z;
+      numtyp rsq = delx*delx + dely*dely + delz*delz;
 
-        if (rsq < cut_coulsq) {
-          numtyp r = ucl_sqrt(rsq);
-          numtyp r2inv = ucl_recip(rsq);
+      if (rsq < cut_coulsq) {
+        numtyp r = ucl_sqrt(rsq);
+        numtyp r2inv = ucl_recip(rsq);
 
-          numtyp grij = g_ewald * r;
-          numtyp expm2_g = ucl_exp(-grij*grij);
-          numtyp erf_g = (numtyp)1.0 - ucl_erfc(grij);
+        numtyp grij = g_ewald * r;
+        numtyp expm2_g = ucl_exp(-grij*grij);
+        numtyp erf_g = (numtyp)1.0 - ucl_erfc(grij);
 
-          numtyp aij = coeff2[mtype].w;
-          numtyp aijr = aij * r;
-          numtyp expa = ucl_exp(-aijr*aijr);
-          numtyp erfa = (numtyp)1.0 - ucl_erfc(aijr);
-          numtyp falpha = erfa - EWALD_F*aijr*expa;
+        numtyp aij = coeff2[mtype].w;
+        numtyp aijr = aij * r;
+        numtyp expa = ucl_exp(-aijr*aijr);
+        numtyp erfa = (numtyp)1.0 - ucl_erfc(aijr);
+        numtyp falpha = erfa - EWALD_F*aijr*expa;
 
-          numtyp scale = qqrd2e / r;
-          // factor_coul = 1 - special_coul; inline avoids inverted-conditional bug
-          numtyp es = scale * (falpha - erf_g + EWALD_F*grij*expm2_g - factor_coul*falpha);
-          es *= r2inv;
+        numtyp scale = qqrd2e / r;
+        // factor_coul = 1 - special_coul; inline avoids inverted-conditional bug
+        numtyp es = scale * (falpha - erf_g + EWALD_F*grij*expm2_g - factor_coul*falpha);
+        es *= r2inv;
 
-          efx += delx * qj * es;
-          efy += dely * qj * es;
-          efz += delz * qj * es;
-        }
-      } // for nbor
-    } // if qtmp != 0
+        efx += delx * qj * es;
+        efy += dely * qj * es;
+        efz += delz * qj * es;
+      }
+    } // for nbor
   } // if ii
   store_efield(efx, efy, efz, ii, inum, tid, t_per_atom, offset, dev_efield);
 }

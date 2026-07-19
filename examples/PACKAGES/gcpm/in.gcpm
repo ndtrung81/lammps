@@ -38,16 +38,23 @@
 #    per-pair RF gets the self terms from intramolecular pairs instead.
 #  - Fortran adds an analytic exp-6 tail (eset); LAMMPS uses pair_modify shift/tail.
 
-variable equil_steps     index 1000
-variable relax_steps     index 1000
-variable datafile  index data.gcpm
-variable r         index 1
+# Two variants, selecting where the induced dipole lives:
+#   COM placement (paper Eq. 3, matches the Fortran):
+#     lmp -in in.gcpm  (defaults: data.gcpm5, dipoletype 4)
+#   M-site placement (original 4-site decks, ~4.5% weaker dipoles):
+#     lmp -in in.gcpm -v datafile data.gcpm -v dipoletype 3
 
-variable T         index 298
-variable P         index 1.0         # 1 atm = 0.101 MPa
+variable datafile    index data.gcpm5
+variable dipoletype  index 4        # 4 = COM dipole site (data.gcpm5); 3 = M site (data.gcpm)
+variable equil_steps index 1000
+variable relax_steps index 1000
+variable r           index 1
 
-variable velseed   index 817324
-variable seed      index 576211
+variable T           index 298
+variable P           index 1.0         # 1 atm = 0.101 MPa
+
+variable velseed     index 817324
+variable seed        index 576211
 
 # cutoff must equal the Fortran rcut printed at startup (e.g. 11.220684 Ang)
 variable rc        index 11.220684
@@ -62,7 +69,11 @@ replicate $r $r $r
 pair_style gcpm 1 78.4 ${rc} ${rc}
 pair_coeff 1 1 0.218445 3.69 12.75 0.0   0.000
 pair_coeff 2 2 0.0      1.0  12.75 0.0   0.455  # No LJ interactions for H atoms
-pair_coeff 3 3 0.0      1.0  12.75 1.444 0.610  # No LJ interactions for M atoms
+if "${dipoletype} == 4" then &
+  "pair_coeff 3 3 0.0      1.0  12.75 0.0   0.610" &
+  "pair_coeff 4 4 0.0      1.0  12.75 1.444 0.610" &
+else &
+  "pair_coeff 3 3 0.0      1.0  12.75 1.444 0.610"
 
 neigh_modify exclude molecule/intra all
 
