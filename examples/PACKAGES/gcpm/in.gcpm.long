@@ -1,0 +1,74 @@
+# Full-Ewald counterpart of in.gcpm: pair gcpm/long + kspace pppm/dipole.
+#
+# Same GCPM water model and data file as in.gcpm, but the long-range
+# electrostatics (charge-charge, charge-dipole, dipole-dipole) are treated
+# with the full Ewald/PPPM method instead of the per-pair reaction field:
+#   - pair_style gcpm/long with eps_rf = 0 (RF is not supported here)
+#   - kspace_style pppm/dipole
+#   - NO neigh_modify exclude: the intramolecular Coulomb exclusion is done
+#     internally by molecule ID, so the real-space subtraction cancels the
+#     k-space contributions of excluded pairs exactly.
+#
+# Expectations vs in.gcpm (RF, eps 78.4): reaction field and Ewald are
+# different long-range treatments of the same model, so the absolute
+# potential energy carries a systematic offset (RF vs tinfoil-Ewald
+# bookkeeping); temperature/pressure distributions and energy fluctuations
+# should agree within statistical error for homogeneous water.
+
+variable equil_steps     index 1000
+variable relax_steps     index 1000
+variable datafile  index data.gcpm
+variable r         index 1
+
+variable T         index 298
+variable P         index 1.0         # 1 atm = 0.101 MPa
+
+variable velseed   index 817324
+variable seed      index 576211
+
+# cutoff must equal the Fortran rcut printed at startup (e.g. 11.220684 Ang)
+variable rc        index 11.220684
+
+units real
+atom_style hybrid full dipole sphere
+read_data ${datafile}
+
+replicate $r $r $r
+
+# --- full GCPM (polar + Ewald/PPPM), eps_rf must be 0 for gcpm/long ---
+pair_style gcpm/long 1 0.0 ${rc}
+pair_coeff 1 1 0.218445 3.69 12.75 0.0   0.000
+pair_coeff 2 2 0.0      1.0  12.75 0.0   0.455  # No LJ interactions for H atoms
+pair_coeff 3 3 0.0      1.0  12.75 1.444 0.610  # No LJ interactions for M atoms
+
+kspace_style pppm/dipole 0.0001
+# pin the Ewald splitting: the automatic estimate is effectively charge-only
+# while the induced-dipole seeds are near zero (g_ewald*cut_coul >= ~3.3
+# keeps the real-space truncation below the grid error)
+kspace_modify gewald 0.30
+
+thermo_style custom step pe evdwl ecoul
+
+# initialize atom velocities
+velocity all create $T ${velseed} mom yes rot yes dist gaussian
+
+timestep 0.5
+
+fix 1 all rigid/nvt/small molecule temp $T $T 100.0
+
+variable num_mols      equal atoms/4
+variable water_density equal v_num_mols/vol   # molecules per Angstrom^3, expected around 0.033 for 1 g/cm^3
+
+thermo_style custom step temp pe evdwl ecoul etotal v_water_density press
+thermo 100
+
+# compute RDF of pairs: 1-1 (O-O), 1-2 and 2-1 (O-H and H-O), and 2-2 (H-H)
+compute myRDF all rdf 100 1 1 1 2 2 1 2 2
+
+# write to file every 1000 steps, averaging over 10 samples at 100-step intervals
+fix 2 all ave/time 100 10 1000 c_myRDF[*] file rdf.long.txt mode vector
+
+dump 1 all custom 1000 dump.long.txt id mol type q x y z mux muy muz
+dump_modify 1 sort id
+
+run ${equil_steps}

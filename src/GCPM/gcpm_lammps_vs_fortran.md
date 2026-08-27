@@ -190,6 +190,13 @@ stand-in for the reciprocal-space charge-dipole and dipole-dipole
 interactions, which `kspace_style pppm/dipole` now supplies exactly (an RF on
 top of a complete Ewald sum would double-count the dielectric response).
 
+The Fortran's `eps_rf` is **hard-coded to 78.4** at every state point, with a
+T/rho dielectric correlation computed and then discarded -- so
+`pair_style gcpm 1 78.4` matches it exactly everywhere, but that value is only
+physically defensible in the liquid range. See section 8 of the self-diffusion
+part below for the full trace, the quantitative impact (a no-op in the liquid,
+a 3.8x error at supercritical states), and the matching cutoff derivation.
+
 Historical note: an intermediate version of `gcpm/long` used Ewald for
 charge-charge only plus a per-molecule Onsager RF
 (`c_rf = 2·qqrd2e·(eps_rf-1)/((2·eps_rf+1)·rc³)` ≡ Fortran `ferf` with
@@ -1179,6 +1186,233 @@ that would then be worth attributing to real protocol differences (Nose-Hoover
 vs Evans isokinetic production, cutoff convention at low density where the
 Fortran caps rcut at L/2 with 10 sigma while LAMMPS keeps ~11.2 Ang) -- but
 none of those can be assessed until the measurement itself is valid.
+
+## 7. The Fortran's own D estimator: single origin, exact unwrap, 27-30 ps fit
+
+Section 4 documented how `Self-Diffusion-Study` computes D. This section
+documents how the *Fortran* computes it, because the two are different
+estimators and only one of them is what the reference numbers came from.
+
+**The Fortran MSD** (`pre_corrc_average.f:280-292`):
+
+```fortran
+if(mod(itime,200).eq.0) then
+   meansq = 0.d0
+   do i = 1,nmol
+     meansq = meansq + (x0(i)+boundx(i)-xini(i))**2 + ...
+   enddo
+   meansq = meansq * (sig*1.d8)**2/nmol
+   write(54,*) itime*factorstep, meansq
+endif
+```
+
+- **Single time origin.** `xini` is set once, after the initial config/velocity
+  setup (`main.f:294`), and never reset. So `meansq.dat` is `<|r(t)-r(0)|^2>`
+  averaged over molecules only -- no time-origin averaging.
+- **Exact unwrapping.** `boundx/boundy/boundz` are accumulated boundary
+  crossings tracked *during* the run. There is no post-hoc min-image guessing,
+  so the `D_sat` clipping artifact of section 6 cannot occur.
+- **True molecular COM.** `x0,y0,z0` is the rigid-body COM the integrator
+  propagates (site positions are `x0(i)+xsite(i,j)`).
+- Output every 200 steps at dt ~0.98 fs = **~0.196 ps per frame**, over 1e6
+  steps (~980 ps).
+
+**The fit window is 27-30 ps** (per the Fortran author). At 0.196 ps spacing
+that is ~16 points, drawn from the first ~3% of the trajectory -- deliberately
+early, which is the right choice for a single-origin MSD (its long-lag tail is
+statistically worthless).
+
+**Side by side:**
+
+| | Fortran | `Self-Diffusion-Study` (`data.py`) |
+|---|---|---|
+| Time origins | one (t=0) | all (sliding window) |
+| Unwrapping | exact, accumulated in-run (`boundx`) | min-image jump fix on 5-ps wrapped frames |
+| COM | integrator's rigid-body COM | mass-weighted O+H+H from wrapped coords |
+| Frame spacing | 0.196 ps | 5 ps (analysis hard-codes 10) |
+| Fit window | **27-30 ps**, ~16 pts | **50-250 ps** real (labeled 100-500) |
+| D | slope/6 | slope/6 |
+
+Single-origin vs. sliding-window is a *variance* difference, not a bias -- both
+estimate the same D if the MSD is genuinely linear over the fit range. The
+consequential differences are the unwrapping (section 6), the `dt` factor of 2
+(section 4, PITFALL 1), and the fit window.
+
+**`compute msd` matches the Fortran's estimator form.** `in.gcpm.msd` uses
+`compute msd oxygens msd com yes`, and `compute_msd.cpp:84` / `:199-201`
+reconstruct positions via `domain->unmap` with integer image flags -- exactly
+equivalent to the Fortran's `boundx` accumulation, and single-origin like it.
+Two small deltas remain: `com yes` subtracts the group COM drift each step
+(the Fortran does not; negligible in NVE with `velocity ... mom yes`), and the
+O-site MSD differs from the COM MSD by a constant rotational offset, which
+shifts the intercept but not the slope (fine as long as the fit is not forced
+through the origin).
+
+**Current status of the runs in `examples/PACKAGES/gcpm/` (as of this note).**
+
+```
+msd.com.out    213 pts, t_max = 10.6 ps   D = 0.172 (fit 1-10.6 ps) / 0.193 (5-10.6)
+msd.msite.out  339 pts, t_max = 16.9 ps   D = 0.171 (fit 1-16.9 ps) / 0.176 (5-16.9)
+```
+
+Two things to note. First, `log.18Jul26.gcpm.msd.g++.8:79` shows production ran
+`run 40000` = **20 ps**, not the 400000 (200 ps) that `in.gcpm.msd` declares as
+`prod_steps`. **The author's 27-30 ps window does not exist in this data.**
+Reproducing it needs >= 40 ps of NVE production, and realistically 100-200 ps so
+the window is not the tail of the run. Second, the slope is still window-
+dependent (0.172 vs 0.193 on the same 10.6 ps curve) -- that spread is
+single-origin sampling noise over 500 molecules, not physics, since water's cage
+regime is over by ~2 ps. Do not compare to the reference 0.226 Ang^2/ps until it
+stabilizes.
+
+**Finite-size.** `data.gcpm5` is L = 24.6553682 Ang with 500 molecules, which
+matches the Fortran's `pwat1.dat` NC=5 box exactly (see section 8). So
+LAMMPS-vs-Fortran needs **no** Yeh-Hummer correction -- same box, same N. It
+only enters when comparing to the paper's tables, which used N = 256. For this
+box the correction is ~+0.030 Ang^2/ps (~17% on 0.17), so it must not be left
+implicit in either direction.
+
+**For a supercooled state point, check the fit window before anything else.**
+Supercooled water has a long sub-diffusive cage regime, so a window calibrated
+at 298 K (or the Fortran's 27-30 ps) can still be pre-diffusive at 250 K and
+will read low. Testable directly: plot log(MSD) vs log(t) and confirm the slope
+has reached 1 before the fit range starts.
+
+## 8. eps_RF in the Fortran: hard-coded 78.4, and the cutoff it pairs with
+
+### 8.1 The dielectric constant is hard-coded, overriding a T/rho correlation
+
+`main.f:99` calls `calcul_dielectric(temp,rho,erf)`, and `main.f:324` builds the
+reaction-field prefactor from the result:
+
+```fortran
+ferf = 2.d0*(erf-1.d0)*rcut3/(2.d0*erf+1.d0)
+```
+
+which is exactly `c_rf` in `pair_gcpm.cpp:1074`
+(`c_rf = 2*qqrd2e*(eps_rf-1)/((2*eps_rf+1)*rc^3)`, documented as `= qqrd2e*ferf`
+at `:35`). But `calcul_dielectric` (`diel_cerf_hbond.f:34-46`) evaluates a
+T- and density-dependent correlation for the static dielectric constant of real
+water and then **discards it on the next line**:
+
+```fortran
+         DIELW = 1.0d0 + a1/Tred*Rred + ... + (a8/Tred**2+a9/Tred+a10)*Rred4
+c
+         DIELW = 78.4
+```
+
+There is a second, independent blocker for supercooled states at
+`diel_cerf_hbond.f:22`: `if (T .lt. 273.15) T = 273.15`. The correlation's
+stated validity starts at 273.15 K, so even with the hard-code removed every
+sub-freezing point would be evaluated at 273.15 K. **The Fortran has no code
+path that adjusts eps_RF for supercooled water.**
+
+So `pair_style gcpm 1 78.4` is the correct match to the Fortran -- same value,
+same formula -- at every state point.
+
+### 8.2 Where this matters (and where it does not)
+
+The RF strength depends on eps only through `f(eps) = (eps-1)/(2*eps+1)`, which
+saturates at 0.5. Correlation values vs. the hard-coded 78.4:
+
+| state | eps (correlation) | f(eps) |
+|---|---|---|
+| supercooled (clamped to 273.15 K, rho 1.0) | 87.8 | 0.4915 |
+| real supercooled water, 238 K (experiment) | ~118 | 0.4937 |
+| 273 K / 1.000 | 87.8 | 0.4915 |
+| 298 K / 0.997 | 78.4 | 0.4905 |
+| 343 K / 0.978 | 63.8 | 0.4883 |
+| 673 K / 0.800 | 19.9 | 0.4633 |
+| 673 K / 0.400 | 7.0 | 0.400 |
+| 873 K / 0.800 | 15.7 | 0.457 |
+| 873 K / 0.100 (T clamped to 823.15) | 1.52 | 0.1293 |
+| hard-coded 78.4 | 78.4 | 0.4905 |
+| tinfoil limit | inf | 0.5000 |
+
+- **Liquid and supercooled: the hard-code is a no-op.** Across the entire cold
+  range (78.4 -> 118) `f` moves **0.65%**; even 78.4 -> infinity is only 1.94%.
+  Because eps is large and `f` is saturated, eps_RF **cannot** explain the
+  supercooled D discrepancy. Look at the fit window instead (section 7).
+- **Supercritical: a real 3.8x error.** At 873 K / 0.1 g/cm^3 the code applies
+  a continuum 3.8x more polarizable than the fluid actually is
+  (`f = 0.4905` instead of `0.1293`). Physically the surroundings there are
+  nearly vacuum and `f` should be near zero, i.e. almost plain truncation.
+
+**Unresolved: was the hard-code active when the paper's Tables V/VI were
+generated?** `DIELW = 78.4` on the line immediately after a fully-computed
+correlation has the shape of a debugging override, plausibly added later during
+the LAMMPS single-point comparison work (a fixed eps makes term-by-term matching
+easier). `MD_water/` is untracked in this repo, so there is no history to check.
+This changes which value reproduces the reference:
+
+- If active for the paper -- the supercritical D values were produced with
+  `f = 0.49`, and matching them requires 78.4 in the LAMMPS deck too. Do **not**
+  "fix" it to the physical value, or LAMMPS disagrees with the Fortran by
+  construction.
+- If added afterward -- the paper used the correlation, and the current Fortran
+  can no longer reproduce its own supercritical tables.
+
+Two ways to settle it: (a) check whether Paricaud et al. state the RF dielectric
+in the methods section of `Paricaud-et-al.pdf`; (b) run the Fortran at
+873 K / 0.1 g/cm^3 with and without the hard-code and see which lands closer to
+the tabulated D = 43.95 Ang^2/ps. Worth doing on its own merits: a 3.8x error in
+the RF prefactor is large enough to be a real contributor to the -80 to -87%
+supercritical gap in `msd.txt`, independent of the unwrapping artifact of
+section 6.
+
+Separately from the reproduce-the-reference question: 78.4 at every state point
+is not physically defensible, and the correlation is the right input for new
+production work outside the ambient liquid range.
+
+### 8.3 The RF cutoff matches exactly (traced)
+
+`ferf` scales as `1/rcut^3`, so a cutoff mismatch would scale the RF term
+directly. Traced end to end, it matches to 8 significant figures.
+
+Inputs: `sig = 3.69` Ang (`param` line 2, read at `main.f:88`);
+`rcut = 10`, `skin = 0.3`, both **in units of sigma** (`main.f:71-72`, from
+`pwat1.dat`); `mass1 = 2*mh+mo` (`init.f:133`) with `mo = 2.6564834e-23`,
+`mh = 1.6603021e-24` g (`main.f:61-62`); `nmol = 4*nc^3 = 500` (`main.f:139`).
+
+Box from density (`init.f:204-211`), then the cap (`init.f:224-231`):
+
+```fortran
+rstar = (rho*sig**3)/mass1
+lgtx  = (nmol/(rstar*dimy*dimz))**(1.d0/3.d0)
+lmin  = 0.5d0*min(min(lgtx,lgty),lgtz)
+rlist = rcut + skin
+if(rlist .gt. lmin) then
+   rlist = lmin
+   rcut  = lmin - skin
+endif
+```
+
+`rlist = 10.3` sigma vastly exceeds `lmin = 3.341` sigma, so **the cap always
+fires** -- the `10` in `pwat1.dat` is dead input and the effective cutoff is
+always `half_box - skin`:
+
+```
+mass1  = 2.988544e-23 g  (17.9974 amu)
+rstar  = 1.676157
+L      = 24.6553681 Ang      data.gcpm5:            24.6553682014
+lmin   =  3.3408358 sigma =  12.3276841 Ang
+rcut   =  3.0408358 sigma =  11.2206841 Ang      in.gcpm.msd rc = 11.220684
+```
+
+The identity is exact by construction:
+`24.6553682014/2 - 0.3*3.69 = 12.3276841 - 1.1070000 = 11.2206841`. Combined
+with `eps_rf = 78.4` matching the hard-coded `DIELW`, the reaction-field
+prefactor agrees exactly between the two codes.
+
+**One sub-0.1% discrepancy, for the record.** The Fortran's atomic masses are
+round numbers, not standard weights: `mo/u = 15.9976`, `mh/u = 0.99979`, giving
+`mass1 = 17.9974 amu`. `data.gcpm5` uses O 15.9994 / H 1.008 = 18.0154 amu.
+Since the box was sized from the Fortran's `mass1` at rho = 0.997, the LAMMPS
+system in that same box is actually at **rho = 0.9980 g/cm^3**, 0.1% denser.
+Far below the noise on D and not worth changing -- but it means the box is not
+reproducible from `data.gcpm5`'s own masses, so a rebuild script will land on
+24.663 Ang instead of 24.655. To make them agree exactly, set the data-file
+masses to O 15.9976 / H 0.99979.
 
 
 

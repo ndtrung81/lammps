@@ -1,0 +1,201 @@
+LAMMPS (4 Jul 2026 - Development - r14624-40799-gec6656b4d3-modified)
+OMP_NUM_THREADS environment is not set. Defaulting to 1 thread.
+  using 1 OpenMP thread(s) per MPI task
+# Full-Ewald counterpart of in.gcpm: pair gcpm/long + kspace pppm/dipole.
+#
+# Same GCPM water model and data file as in.gcpm, but the long-range
+# electrostatics (charge-charge, charge-dipole, dipole-dipole) are treated
+# with the full Ewald/PPPM method instead of the per-pair reaction field:
+#   - pair_style gcpm/long with eps_rf = 0 (RF is not supported here)
+#   - kspace_style pppm/dipole
+#   - NO neigh_modify exclude: the intramolecular Coulomb exclusion is done
+#     internally by molecule ID, so the real-space subtraction cancels the
+#     k-space contributions of excluded pairs exactly.
+#
+# Expectations vs in.gcpm (RF, eps 78.4): reaction field and Ewald are
+# different long-range treatments of the same model, so the absolute
+# potential energy carries a systematic offset (RF vs tinfoil-Ewald
+# bookkeeping); temperature/pressure distributions and energy fluctuations
+# should agree within statistical error for homogeneous water.
+
+variable equil_steps     index 1000
+variable relax_steps     index 1000
+variable datafile  index data.gcpm
+variable r         index 1
+
+variable T         index 298
+variable P         index 1.0         # 1 atm = 0.101 MPa
+
+variable velseed   index 817324
+variable seed      index 576211
+
+# cutoff must equal the Fortran rcut printed at startup (e.g. 11.220684 Ang)
+variable rc        index 11.220684
+
+units real
+atom_style hybrid full dipole sphere
+WARNING: Atom style hybrid defines both, per-type and per-atom masses; both must be set, but only per-atom masses will be used (src/atom_vec_hybrid.cpp:134)
+read_data ${datafile}
+read_data data.gcpm
+Reading data file ...
+  orthogonal box = (0 0 0) to (24.655368 24.655368 24.655368)
+  1 by 2 by 2 MPI processor grid
+WARNING: Atom style in data file full + dipole + sphere differs from currently defined atom style hybrid (src/read_data.cpp:728)
+  reading atoms ...
+  2000 atoms
+Finding 1-2 1-3 1-4 neighbors ...
+  special bond factors lj:    0        0        0       
+  special bond factors coul:  0        0        0       
+     0 = max # of 1-2 neighbors
+     0 = max # of 1-3 neighbors
+     0 = max # of 1-4 neighbors
+     1 = max # of special neighbors
+  special bonds CPU = 0.001 seconds
+  read_data CPU = 0.067 seconds
+
+replicate $r $r $r
+replicate 1 $r $r
+replicate 1 1 $r
+replicate 1 1 1
+Replication is creating a 1x1x1 = 1 times larger system...
+WARNING: Atom style hybrid defines both, per-type and per-atom masses; both must be set, but only per-atom masses will be used (src/atom_vec_hybrid.cpp:134)
+  orthogonal box = (0 0 0) to (24.655368 24.655368 24.655368)
+  1 by 2 by 2 MPI processor grid
+  2000 atoms
+Finding 1-2 1-3 1-4 neighbors ...
+  special bond factors lj:    0        0        0       
+  special bond factors coul:  0        0        0       
+     0 = max # of 1-2 neighbors
+     0 = max # of 1-3 neighbors
+     0 = max # of 1-4 neighbors
+     1 = max # of special neighbors
+  special bonds CPU = 0.000 seconds
+  replicate CPU = 0.006 seconds
+
+# --- full GCPM (polar + Ewald/PPPM), eps_rf must be 0 for gcpm/long ---
+pair_style gcpm/long 1 0.0 ${rc}
+pair_style gcpm/long 1 0.0 11.220684
+pair_coeff 1 1 0.218445 3.69 12.75 0.0   0.000
+pair_coeff 2 2 0.0      1.0  12.75 0.0   0.455  # No LJ interactions for H atoms
+pair_coeff 3 3 0.0      1.0  12.75 1.444 0.610  # No LJ interactions for M atoms
+
+kspace_style pppm/dipole 0.0001
+# pin the Ewald splitting: the automatic estimate is effectively charge-only
+# while the induced-dipole seeds are near zero (g_ewald*cut_coul >= ~3.3
+# keeps the real-space truncation below the grid error)
+kspace_modify gewald 0.30
+Updated KSpace settings:
+  KSpace computation is turned:    ON
+  Use MPI collective operations:   OFF
+  Use MPI non-blocking operations: OFF
+  Gewald manually set to:          0.3
+
+thermo_style custom step pe evdwl ecoul
+
+# initialize atom velocities
+velocity all create $T ${velseed} mom yes rot yes dist gaussian
+velocity all create 298 ${velseed} mom yes rot yes dist gaussian
+velocity all create 298 817324 mom yes rot yes dist gaussian
+
+timestep 0.5
+
+fix 1 all rigid/nvt/small molecule temp $T $T 100.0
+fix 1 all rigid/nvt/small molecule temp 298 $T 100.0
+fix 1 all rigid/nvt/small molecule temp 298 298 100.0
+Fix rigid/nvt/small setup ...
+  create bodies CPU = 0.000 seconds
+  500 rigid bodies with 2000 atoms
+  0.82021669 = max distance from body owner to body atom
+
+variable num_mols      equal atoms/4
+variable water_density equal v_num_mols/vol   # molecules per Angstrom^3, expected around 0.033 for 1 g/cm^3
+
+thermo_style custom step temp pe evdwl ecoul etotal v_water_density press
+thermo 100
+
+# compute RDF of pairs: 1-1 (O-O), 1-2 and 2-1 (O-H and H-O), and 2-2 (H-H)
+compute myRDF all rdf 100 1 1 1 2 2 1 2 2
+
+# write to file every 1000 steps, averaging over 10 samples at 100-step intervals
+fix 2 all ave/time 100 10 1000 c_myRDF[*] file rdf.long.txt mode vector
+
+dump 1 all custom 1000 dump.long.txt id mol type q x y z mux muy muz
+dump_modify 1 sort id
+
+run ${equil_steps}
+run 1000
+PPPMDipole initialization ...
+  G vector (1/distance) = 0.3
+  grid = 18 18 18
+  stencil order = 5
+  estimated absolute RMS force accuracy = 0.028236736
+  estimated relative force accuracy = 8.5034093e-05
+  using double precision FFTW3
+  3d grid and FFT values/proc = 6400 1458
+WARNING: Pair gcpm/long: initial induced dipoles are near zero, so the pppm/dipole accuracy estimate is effectively charge-only; consider kspace_modify gewald and/or mesh for production-quality accuracy (src/GCPM/pair_gcpm_long.cpp:204)
+Generated 3 of 3 mixed pair_coeff terms from geometric mixing rule
+Neighbor list info ...
+  update: every = 1 steps, delay = 0 steps, check = yes
+  max neighbors/atom: 2000, page size: 100000
+  master list distance cutoff = 13.220684
+  ghost atom cutoff = 13.220684
+  binsize = 6.610342, bins = 4 4 4
+  2 neighbor lists, perpetual/occasional/extra = 1 1 0
+  (1) pair gcpm/long, perpetual
+      attributes: half, newton on
+      pair build: half/bin/newton
+      stencil: half/bin/3d
+      bin: standard
+  (2) compute rdf, occasional, copy from (1)
+      attributes: half, newton on
+      pair build: copy
+      stencil: none
+      bin: none
+Per MPI rank memory allocation (min/avg/max) = 18.62 | 18.62 | 18.62 Mbytes
+   Step          Temp          PotEng         E_vdwl         E_coul         TotEng     v_water_density     Press     
+         0   299.36565     -5098.6334      1101.4407      56846.953     -4207.1737      0.033360729   -13626.175    
+       100   300.0588      -5099.351       1080.147       56869.132     -4205.8272      0.033360729    192.40338    
+       200   301.15944     -5106.1962      1098.2274      56841.693     -4209.3948      0.033360729    418.48069    
+       300   294.96719     -5105.4895      1139.7257      56803.387     -4227.1276      0.033360729    661.625      
+       400   290.13485     -5132.1296      1091.2477      56824.388     -4268.1576      0.033360729   -20.478299    
+       500   286.79362     -5163.8851      1109.5848      56774.579     -4309.8626      0.033360729    31.894183    
+       600   284.13456     -5166.8381      1084.5122      56795.968     -4320.7339      0.033360729   -225.17077    
+       700   286.22797     -5163.7811      1107.5596      56774.678     -4311.4431      0.033360729   -95.336513    
+       800   293.2286      -5162.1693      1081.6908      56802.337     -4288.9846      0.033360729   -284.4845     
+       900   288.11645     -5127.653       1094.9605      56825.284     -4269.6914      0.033360729    116.14422    
+      1000   293.18702     -5128.2224      1075.7292      56843.969     -4255.1615      0.033360729   -37.537734    
+Loop time of 66.3687 on 4 procs for 1000 steps with 2000 atoms
+
+Performance: 0.651 ns/day, 36.871 hours/ns, 15.067 timesteps/s, 30.135 katom-step/s
+96.7% CPU use with 4 MPI tasks x 1 OpenMP threads
+
+GCPM induced-dipole solver stats:
+  solver calls = 1001
+  iterations/call (min/avg/max) = 10 11.23 12
+  total iterations = 11242
+
+MPI task timing breakdown:
+Section |  min time  |  avg time  |  max time  |%varavg| %total
+---------------------------------------------------------------
+Pair    | 61.286     | 62.18      | 62.876     |   7.5 | 93.69
+Bond    | 0.00018683 | 0.00021714 | 0.00027852 |   0.0 |  0.00
+Kspace  | 2.157      | 2.8592     | 3.7584     |  35.3 |  4.31
+Neigh   | 0.14788    | 0.15312    | 0.16552    |   1.9 |  0.23
+Comm    | 0.47803    | 0.4842     | 0.49269    |   0.8 |  0.73
+Output  | 0.0018443  | 0.0019521  | 0.0020155  |   0.1 |  0.00
+Modify  | 0.65561    | 0.65632    | 0.65704    |   0.1 |  0.99
+Other   |            | 0.03384    |            |       |  0.05
+
+Nlocal:            500 ave         523 max         475 min
+Histogram: 1 0 1 0 0 0 0 1 0 1
+Nghost:        9810.25 ave        9830 max        9782 min
+Histogram: 1 0 0 0 1 0 0 0 1 1
+Neighs:         322920 ave      342482 max      292559 min
+Histogram: 1 0 0 0 0 1 0 0 1 1
+
+Total # of neighbors = 1291682
+Ave neighs/atom = 645.841
+Ave special neighs/atom = 0
+Neighbor list builds = 20
+Dangerous builds = 0
+Total wall time: 0:01:06
