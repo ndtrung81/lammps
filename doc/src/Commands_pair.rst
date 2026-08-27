@@ -114,6 +114,8 @@ parenthesis: g = GPU, i = INTEL, k = KOKKOS, o = OPENMP, t = OPT.
    * :doc:`gauss (gko) <pair_gauss>`
    * :doc:`gauss/cut (ko) <pair_gauss>`
    * :doc:`gayberne (gio) <pair_gayberne>`
+   * :doc:`gcpm (g) <pair_gcpm>`
+   * :doc:`gcpm/long (g) <pair_gcpm>`
    * :doc:`gran/hertz/history (o) <pair_gran>`
    * :doc:`gran/hooke (o) <pair_gran>`
    * :doc:`gran/hooke/history (ko) <pair_gran>`

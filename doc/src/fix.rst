@@ -408,6 +408,7 @@ accelerated styles exist.
 * :doc:`rigid/npt/small <fix_rigid>` - constrain many small clusters of atoms to move as a rigid body with NPT integration
 * :doc:`rigid/nve <fix_rigid>` - constrain one or more clusters of atoms to move as a rigid body with alternate NVE integration
 * :doc:`rigid/nve/small <fix_rigid>` - constrain many small clusters of atoms to move as a rigid body with alternate NVE integration
+* :doc:`rigid/nvk/small <fix_rigid>` - constrain many small clusters of atoms to move as a rigid body with Gaussian isokinetic integration
 * :doc:`rigid/nvt <fix_rigid>` - constrain one or more clusters of atoms to move as a rigid body with NVT integration
 * :doc:`rigid/nvt/small <fix_rigid>` - constrain many small clusters of atoms to move as a rigid body with NVT integration
 * :doc:`rigid/small <fix_rigid>` - constrain many small clusters of atoms to move as a rigid body with NVE integration

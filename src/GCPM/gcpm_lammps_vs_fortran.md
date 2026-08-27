@@ -497,6 +497,35 @@ with pair gcpm in temperature, energy, and pressure.
   and `rdf.long.txt` (compare with the user's committed
   `log.16Jul26.gcpm.g++.4` and `rdf.txt`).
 
+> **Note (2026-08-27).** `log.16Jul26.gcpm.g++.4` no longer exists. It was
+> generated two days before the RF energy shift of 2026-07-18, so its `pe` and
+> `ecoul` columns are the pre-fix random walk described in the next subsection
+> (the `temp`, `evdwl` and `press` columns are still exactly reproducible).
+> Keeping a reference log whose energy diverges was misleading, so it was
+> replaced by `log.27Aug26.gcpm.g++.4`, generated from the current `in.gcpm`
+> defaults (`data.gcpm5`, 500 bodies / 2500 atoms, 4 ranks, 1000 steps):
+> `pe` stays within -5201 to -5286 kcal/mol and `ecoul` within -6300 to -6520.
+> The two older `log.26Jun26.gcpm.g++.4` and `log.3Jul26.gcpm.g++.4` had the
+> same pre-fix defect (all three started from `pe = -4808.1962` and reached
+> +22764, +9105 and +13163 at step 1000) and were removed at the same time, so
+> `log.27Aug26.gcpm.g++.4` is now the only reference log for `in.gcpm`.
+> The `in.water_box` logs had the same defect and were replaced the same way by
+> `log.27Aug26.water_box.g++.4`. Rerunning that deck settles what its 100-step
+> window had made ambiguous: `temp`, `evdwl` and `press` come back
+> bit-identical to `log.3Jul26.water_box.g++.4` at every step, while `pe` and
+> `ecoul` are both shifted by exactly +2464.6500 kcal/mol at step 0 -- the RF
+> energy shift, one constant for the whole deck. The oscillation in the old log
+> (`pe` swinging -12310 -> -4540 -> -8391 over 100 steps) was the broken energy
+> accumulation, not a startup transient: with the fix, `pe` descends smoothly
+> and monotonically from -9845 to -10565 over the same 100 steps. A 4000-step
+> diagnostic run confirms it then plateaus near -11650 +/- 150 with no drift.
+>
+> Still open on that deck, unchanged by the fix and present in the old logs
+> too: the instantaneous pressure swings between -100535 and +94233 atm. The
+> `press` column is bit-identical before and after, so this is not an energy
+> bookkeeping problem; the strong Langevin coupling (`Tdamp = 10` fs, i.e.
+> gamma = 100/ps) is the first thing to check.
+
 ### Finding: the RF reference's reported ENERGY is unusable on this deck
 (pair gcpm defect, not a gcpm/long problem)
 
@@ -990,12 +1019,14 @@ the real per-type mass: O 15.9994, H 1.008, M 1e-100 (kept ~massless, avoids the
 `rmass <= 0` error). Column-12 = 1.0 makes each body 4 amu instead of 18 and inflates
 D ~2.1x (section 1). This is mandatory.
 
-**(b) Thermostat -> NVE for production.** Equilibrate with
+**(b) Thermostat -> isokinetic (or NVE) for production.** Equilibrate with
 `fix rigid/nvt/small molecule temp T T Tdamp` (loose `Tdamp`, ~100-500 fs), then run
-*production* under NVE with **`fix rigid/nve/small molecule`** (not plain `fix rigid`,
-which lumps atoms into few bodies by group; not `langevin`, whose drag suppresses D).
-This is the faithful surrogate for the Fortran's Evans isokinetic dynamics
-(sections 2-3). Measure D only on the NVE leg.
+*production* under **`fix rigid/nvk/small molecule temp T`** -- the Evans Gaussian
+isokinetic thermostat the Fortran uses, added in section 9 -- or under
+**`fix rigid/nve/small molecule`**, which gives the same D but lets T wander. Not
+plain `fix rigid`, which lumps atoms into few bodies by group; and never `langevin`,
+whose drag suppresses D by 15-25% near ambient (section 9). Measure D only on the
+production leg.
 
 **(c) Use the correct analysis `dt` = frame spacing (NOT the MD timestep).** In
 `data.py`, `dt` scales the MSD time axis and D ~ 1/dt, so it must equal
@@ -1416,3 +1447,138 @@ masses to O 15.9976 / H 0.99979.
 
 
 
+
+## 9. The Langevin drag in the production runs, and `fix rigid/nvk/small`
+
+### 9.1 The colleague's 2026-08 D plot is quantitatively a thermostat artifact
+
+`diffusivity_calc_vs_ref.png` (2026-08-27) plots D_calc against the paper's
+Tables V/VI over 273-343 K. The RDFs at the same state point
+(`rdf_comparison_298K.png`) lie exactly on the reference, so structure,
+electrostatics and the reaction field are all correct and the deficit is
+purely dynamical. Read off the figure, D_calc is about **-24% at 343 K,
+widening to about -49% at 273 K**, one-signed throughout.
+
+The production deck is still
+`src/GCPM/Self-Diffusion-Study/src/files/in.simple_water`:
+
+```
+fix 1 all rigid/small molecule langevin $T $T 100.0 ${seed}
+```
+
+That is not a bookkeeping thermostat. `fix_rigid_small.cpp:927` sets
+
+```
+gamma1 = -body[ibody].mass / t_period / ftm2v;
+```
+
+i.e. a friction `gamma = 1/t_period = 1/(100 fs) = 10 ps^-1` on every body's
+center of mass, plus the matching rotational friction. Adding the frictions in
+the Markovian way, `1/D = 1/D_MD + m*gamma/(kB*T)`, with the molecular mass
+18.0154 amu:
+
+| T (K) | D_ref | D_Langevin ceiling | D predicted | predicted error | figure reads |
+|---|---|---|---|---|---|
+| 273 | 0.1269 | 1.260 | 0.1153 | -9%  | ~-49% |
+| 298 | 0.2263 | 1.375 | 0.1943 | -14% | ~-31% |
+| 313 | 0.2468 | 1.445 | 0.2462 | -17% | ~-24% |
+| 323 | 0.3626 | 1.491 | 0.2917 | -20% | ~-23% |
+| 333 | 0.4194 | 1.537 | 0.3295 | -21% | ~-24% |
+| 343 | 0.4999 | 1.583 | 0.3799 | -24% | ~-24% |
+
+(D in Ang^2/ps.) At the warm end the thermostat drag accounts for essentially
+the whole deficit. The residual that remains at the cold end is the separate,
+already-documented problem: the MSD fit window reaching into the supercooled
+cage regime, and under-equilibration at 273-283 K where the structural
+relaxation time is of order a nanosecond (sections 6-7).
+
+**Do not read the drag off the deficit and stop there.** Rerunning production
+without Langevin is the test; the prediction above is a model, not a
+measurement.
+
+### 9.2 Why the Evans thermostat is not what closes the gap
+
+The Fortran's thermostat (`Pos_alc.f:78-92`) is
+
+```fortran
+alpha1 = (anum + anumrt) / (aden + adenrt)
+```
+
+with `anum = sum(F.p)`, `anumrt = sum((tau + gyroscopic).omega)`,
+`aden = sum(p.p)`, `adenrt = sum(I.omega.omega)`. In the code's reduced units
+every molecule has mass 1, so this is exactly the textbook Gaussian isokinetic
+friction
+
+    alpha = (sum F.v + sum tau.omega) / (sum m v^2 + sum omega.I.omega)
+
+applied as `dp/dt = F - alpha p` to translation and rotation alike. The
+gyroscopic terms cancel identically in the numerator --
+
+    w_x w_y w_z [(I_yy - I_zz) + (I_zz - I_xx) + (I_xx - I_yy)] = 0
+
+-- so they need not appear in alpha at all.
+
+This is a *deterministic constraint*, not a bath: alpha fluctuates about zero
+and contributes no net drag, so isokinetic dynamics gives the same transport
+coefficients as constant energy. Swapping Langevin for Evans and swapping
+Langevin for NVE will move D by the same amount. What the isokinetic
+thermostat buys is that the temperature is pinned exactly instead of drifting,
+which matters over the long production runs and at the state points where the
+polarization SCF residual heats the system.
+
+### 9.3 `fix rigid/nvk/small`
+
+Added in `src/RIGID/fix_rigid_nvk_small.{cpp,h}`, deriving from
+`FixRigidNHSmall` the way `fix rigid/nve/small` does. One friction over the
+combined translational and rotational kinetic energy of all bodies, applied to
+`vcm` and to `conjqm` with the exact half-step propagator of Minary et al.
+(the same one `fix nvk` uses for point particles), so it reduces to the
+ordinary rigid-body velocity Verlet half kick when the friction vanishes.
+
+```
+fix 1 all rigid/nvk/small molecule temp 298
+```
+
+The `temp` keyword takes a single temperature -- there is no damping parameter
+and no ramp -- and rescales the body velocities once at the start of the run so
+the constrained kinetic energy is exactly `0.5*nf*kB*T`, with `nf = nf_t + nf_r`
+the rigid-body degrees of freedom. That reproduces the Fortran's hard rescale
+to the target temperature; the Fortran's *periodic* rescale every 4000 steps is
+then unnecessary, since the constraint holds the kinetic energy on its own.
+Without `temp` the kinetic energy is held at whatever the bodies carry when the
+run starts, as in `fix nvk`. Combining it with the `langevin` keyword is an
+error.
+
+`fix rigid/small` and `fix rigid/nh/small` are **not** modified to host this.
+`temp` means something different here than it does for the Nose-Hoover rigid
+styles (one value, not `Tstart Tstop Tdamp`), so the base classes never see it:
+`base_args()` returns the argument list with the keyword and its value removed,
+as a `std::vector` temporary in the constructor's mem-initializer, which lives
+until the base class constructor it feeds has returned. The keyword is then
+parsed from the original argument list in the constructor body. Keyword order
+does not matter, and an unknown keyword is still rejected by the base classes.
+The one wart: a group, file, molecule template or fix literally named `temp`
+would be mistaken for the keyword, so `is_temp_keyword()` excludes the token
+following `infile`, `mol`, `dilate` and `gravity`.
+
+Like the 2 NVT rigid styles it converts the requested temperature using `nf`
+without the 3-component center-of-mass subtraction that `compute temp` applies,
+so a thermo `temp` column reads slightly high (298.298 for `temp 298` on the
+500-molecule box: 3000 vs 2997 degrees of freedom).
+
+**Validation** (500-molecule `data.gcpm5`, `pair gcpm` RF, dt = 0.5 fs):
+
+| | KE at step 0 | KE at step 4000 | relative drift | KE spread over the run |
+|---|---|---|---|---|
+| `rigid/nvk/small temp 298` | 888.281395 | 888.283148 | +2.0e-6 | 4.3e-3 (5e-6 relative) |
+| `rigid/nve/small`          | 918.166276 | 911.337447 | -7.4e-3 | 98 (11% peak-to-peak) |
+
+The kinetic energy is constant to a few parts in 10^6 over 2 ps; the residual
+walk is the O(dt^3) discretization of the constraint and is not monotonic. Total
+energy is of course *not* conserved under the constraint (-52.5 kcal/mol over
+the same 2 ps), which is the thermostat doing its work. 1-rank and 4-rank runs
+agree to all 12 printed digits at step 120, so the two `MPI_Allreduce` sums in
+`compute_scale_factors()` are rank-count independent.
+
+`examples/PACKAGES/gcpm/in.gcpm.msd` now defaults its production leg to this
+style (`-var prod nve` switches back to constant energy).

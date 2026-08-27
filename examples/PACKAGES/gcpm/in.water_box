@@ -33,7 +33,9 @@ velocity all create 298.0 187421 mom yes rot yes
 
 timestep 0.5
 
-fix 1 all rigid/small molecule langevin 298.0 298.0 10.0 234563
+# Tdamp = 100 fs (gamma = 10/ps).  A much stiffer coupling injects large
+# random forces every step, which shows up as huge instantaneous pressures.
+fix 1 all rigid/small molecule langevin 298.0 298.0 100.0 234563
 
 thermo_style custom step temp pe evdwl ecoul etotal v_water_density press
 thermo 10

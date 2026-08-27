@@ -223,6 +223,11 @@ whether an extra library is needed to build and use the package:
      - :doc:`compute fep <compute_fep>`
      - ``PACKAGES/fep``
      - no
+   * - :ref:`GCPM <PKG-GCPM>`
+     - Gaussian charge polarizable model
+     - :doc:`pair_style gcpm <pair_gcpm>`
+     - ``PACKAGES/gcpm``
+     - no
    * - :ref:`GPU <PKG-GPU>`
      - GPU-enabled styles
      - :doc:`Section gpu <Speed_gpu>`

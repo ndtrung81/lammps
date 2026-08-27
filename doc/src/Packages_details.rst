@@ -58,6 +58,7 @@ gives those details.
    * :ref:`EXTRA-MOLECULE <PKG-EXTRA-MOLECULE>`
    * :ref:`EXTRA-PAIR <PKG-EXTRA-PAIR>`
    * :ref:`FEP <PKG-FEP>`
+   * :ref:`GCPM <PKG-GCPM>`
    * :ref:`GPU <PKG-GPU>`
    * :ref:`GRAPHICS <PKG-GRAPHICS>`
    * :ref:`GRANULAR <PKG-GRANULAR>`
@@ -1070,6 +1071,30 @@ package in ``tools/fep``; see its ``README`` file.
 * ``examples/PACKAGES/fep``
 * tools/fep/README
 * tools/fep
+
+----------
+
+.. _PKG-GCPM:
+
+GCPM package
+----------------
+
+**Contents:**
+
+Pair styles for the Gaussian charge polarizable model (GCPM) of water,
+in which the Coulomb interaction uses spherical Gaussian charge
+distributions and the molecular polarizability is carried by an induced
+dipole on a single site of each molecule, solved self-consistently at
+every timestep.  The molecules are held rigid with one of the
+:doc:`fix rigid <fix_rigid>` styles.
+
+**Supporting info:**
+
+* ``src/GCPM``: filenames -> commands
+* ``src/GCPM/README.md``
+* :doc:`pair_style gcpm <pair_gcpm>`
+* :doc:`pair_style gcpm/long <pair_gcpm>`
+* ``examples/PACKAGES/gcpm``
 
 ----------
 

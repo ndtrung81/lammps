@@ -1156,6 +1156,8 @@
 /fix_rigid_npt_small.h
 /fix_rigid_nve_small.cpp
 /fix_rigid_nve_small.h
+/fix_rigid_nvk_small.cpp
+/fix_rigid_nvk_small.h
 /fix_rigid_nvt_small.cpp
 /fix_rigid_nvt_small.h
 /fix_rigid_small.cpp

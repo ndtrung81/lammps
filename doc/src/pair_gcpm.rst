@@ -4,9 +4,14 @@
 .. index:: pair_style gcpm/long/gpu
 
 pair_style gcpm command
-========================================
+=======================
 
-Accelerator Variants: *gcpm/gpu*, *gcpm/long/gpu*
+Accelerator Variants: *gcpm/gpu*
+
+pair_style gcpm/long command
+============================
+
+Accelerator Variants: *gcpm/long/gpu*
 
 Syntax
 """"""
@@ -15,7 +20,7 @@ Syntax
 
    pair_style style args
 
-* style = *gcpm*
+* style = *gcpm* or *gcpm/long*
 * args = list of arguments for a particular style
 
 .. parsed-literal::
@@ -23,6 +28,11 @@ Syntax
      *gcpm* args = enable_polar eps_rf cutoff (cutoff2)
        enable_polar = 1 to solve for induced dipoles (polarizable), 0 for charges only
        eps_rf   = dielectric constant of the reaction-field continuum (<= 0 disables the reaction field)
+       cutoff   = global cutoff for Buckingham (and Coulombic if only 1 arg) (distance units)
+       cutoff2  = global cutoff for Coulombic (optional) (distance units)
+     *gcpm/long* args = enable_polar eps_rf cutoff (cutoff2)
+       enable_polar = 1 to solve for induced dipoles (polarizable), 0 for charges only
+       eps_rf   = must be <= 0; the reaction field is replaced by the k-space solver
        cutoff   = global cutoff for Buckingham (and Coulombic if only 1 arg) (distance units)
        cutoff2  = global cutoff for Coulombic (optional) (distance units)
 
@@ -34,6 +44,9 @@ Examples
    pair_style gcpm   1   78.0  12.0
    pair_coeff 1  1   0.1550  3.1536  12.75  0.0    0.000
    pair_coeff 3  3   0.0     1.0     12.75  1.444  0.610
+
+   pair_style gcpm/long   1   0.0   12.0
+   kspace_style pppm/dipole 0.0001
 
 Description
 """""""""""
@@ -51,7 +64,7 @@ of the GCPM contains three terms:
 
 The dispersion term are similar to
 the :doc:`pair buck6d/coul/gauss/long <pair_buck6d_coul_gauss>`
-style in the MOF-FF force field :ref:`(Schmid) <Schmid>`.
+style in the MOF-FF force field :ref:`(Schmid) <Schmid2>`.
 
 The dispersion term computes a dispersion damped Buckingham potential:
 
@@ -70,18 +83,21 @@ become an issue for soft vdW potentials.
 
 The *gcpm* style uses the reaction field approximation
 for the long range contribution as described in :ref:`(Paricaud) <Paricaud>`.
-The *gcpm* style uses the real-space term as in
+The *gcpm/long* style instead uses the real-space term as in
 the :doc:`pair buck6d/coul/gauss/long <pair_buck6d_coul_gauss>`
-style and requires a kspace style.
+style and requires a :doc:`kspace_style pppm/dipole <kspace_style>`, which
+supplies the reciprocal-space charge-charge, charge-dipole and dipole-dipole
+contributions.  Because the k-space solver takes over that role, *gcpm/long*
+does not accept a reaction field: give it *eps_rf* <= 0.
 
 This pair style include a smoothing function which is invoked
 according to the global smoothing parameter within the specified
 cutoff.  Hereby a parameter of i.e. 0.9 invokes the smoothing
 within 90% of the cutoff.  No smoothing is applied at a value
-of 1.0. For the *gauss/dsf* style this smoothing is only applicable
-for the dispersion damped Buckingham potential. For the *gauss/long*
-styles the smoothing function can also be invoked for the real
-space coulomb interactions which enforce continuous energies and
+of 1.0. For the *gcpm* style this smoothing is only applicable
+for the dispersion damped Buckingham potential. For the *gcpm/long*
+style the smoothing function can also be invoked for the real
+space Coulomb interactions, which enforces continuous energies and
 forces at the cutoff.
 
 The *gcpm* styles evaluates a Coulomb potential using spherical
@@ -138,6 +154,10 @@ is used.
 
 ----------
 
+.. include:: accel_styles.rst
+
+----------
+
 Mixing, shift, table, tail correction, restart, rRESPA info
 """""""""""""""""""""""""""""""""""""""""""""""""""""""""""
 
@@ -157,6 +177,11 @@ Restrictions
 These styles are part of the GCPM package.  They are only
 enabled if LAMMPS was built with that package.  See the :doc:`Build package <Build_package>` page for more info.
 
+The *gcpm/long* style requires :doc:`kspace_style pppm/dipole <kspace_style>`,
+and must not be combined with :doc:`neigh_modify exclude <neigh_modify>`:
+excluded pairs cannot cancel the k-space contributions.  Intramolecular
+Coulomb interactions are already excluded by the pair style using molecule IDs.
+
 Related commands
 """"""""""""""""
 
@@ -169,9 +194,9 @@ none
 
 .. _Paricaud:
 
-.. _Schmid:
-
 **(Paricaud)** P. Paricaud, M. Predota, A. A. Chialvo, P. T. Cummings, J Chem Phys, 122, 244511 (2005).
+
+.. _Schmid2:
 
 **(Schmid)** S. Bureekaew, S. Amirjalayer, M. Tafipolsky, C. Spickermann, T.K. Roy and R. Schmid, Phys. Status Solidi B, 6, 1128 (2013).
 

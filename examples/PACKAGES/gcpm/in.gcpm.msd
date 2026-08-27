@@ -1,11 +1,14 @@
-# Self-diffusion of GCPM water with pair gcpm (reaction field), NVE production.
+# Self-diffusion of GCPM water with pair gcpm (reaction field), isokinetic production.
 #
 # Reference: Paricaud et al., J. Chem. Phys. 122, 244511 (2005), Table IV:
 #   D = 0.226 Ang^2/ps at T = 298 K, rho = 0.997 g/cm^3.
 # The Fortran reference code uses an Evans Gaussian isokinetic thermostat
-# (holds total KE constant, ~NVE for transport), so production here is NVE
-# after an NVT equilibration.  MSD is computed in LAMMPS (no wrapped-DCD
-# post-processing) on the O sites: a rigid site's MSD equals the molecular
+# (holds the total kinetic energy constant, adds no drag), reproduced here by
+# fix rigid/nvk/small.  Production defaults to that; -var prod nve switches to
+# constant energy, which gives the same D but lets the temperature wander.
+# Never produce with the langevin keyword of the rigid styles: its friction
+# suppresses D by 15-25% near ambient.  MSD is computed in LAMMPS (no wrapped-
+# DCD post-processing) on the O sites: a rigid site's MSD equals the molecular
 # COM MSD plus a constant rotational offset, so the slope (and D = slope/6)
 # is unaffected.
 #
@@ -18,6 +21,7 @@
 variable datafile    index data.gcpm5
 variable dipoletype  index 4        # 4 = COM dipole site (data.gcpm5); 3 = M site (data.gcpm)
 variable tag         index com      # suffix for the msd output file
+variable prod        index nvk      # production integrator: nvk (isokinetic) or nve
 variable T           index 298
 variable velseed     index 817324
 variable rc          index 11.220684
@@ -50,9 +54,15 @@ thermo 1000
 
 run ${equil_steps}
 
-# --- NVE production with molecular-COM MSD ---
+# --- production with molecular-COM MSD ---
+# rigid/nvk/small rescales once to the target temperature and then holds the
+# total (translational + rotational) kinetic energy exactly, as the Fortran does
+
 unfix 1
-fix 1 all rigid/nve/small molecule
+if "${prod} == nvk" then &
+  "fix 1 all rigid/nvk/small molecule temp $T" &
+else &
+  "fix 1 all rigid/nve/small molecule"
 
 reset_timestep 0
 

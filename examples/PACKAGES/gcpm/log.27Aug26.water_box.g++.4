@@ -1,4 +1,4 @@
-LAMMPS (30 Mar 2026 - Development - r14624-38261-gb1badc2ff8)
+LAMMPS (4 Jul 2026 - Development - r14624-40802-gd2019d25c2-modified)
 OMP_NUM_THREADS environment is not set. Defaulting to 1 thread.
   using 1 OpenMP thread(s) per MPI task
 # Water box with explicit TIP4P water model for use with fix rigid and  hybrid full and dipole atom styles
@@ -9,14 +9,14 @@ variable datafile  index data.water_box  # data.tip4p
 
 units real
 atom_style hybrid full dipole sphere
-WARNING: Atom style hybrid defines both, per-type and per-atom masses; both must be set, but only per-atom masses will be used (src/atom_vec_hybrid.cpp:132)
+WARNING: Atom style hybrid defines both, per-type and per-atom masses; both must be set, but only per-atom masses will be used (src/atom_vec_hybrid.cpp:134)
 
 read_data ${datafile}
 read_data data.water_box
 Reading data file ...
   orthogonal box = (-1 -1 -1) to (23.94128 23.94128 23.94128)
   1 by 2 by 2 MPI processor grid
-WARNING: Atom style in data file full + dipole + sphere differs from currently defined atom style hybrid (src/read_data.cpp:726)
+WARNING: Atom style in data file full + dipole + sphere differs from currently defined atom style hybrid (src/read_data.cpp:728)
   reading atoms ...
   2048 atoms
   reading velocities ...
@@ -29,14 +29,14 @@ Finding 1-2 1-3 1-4 neighbors ...
      0 = max # of 1-4 neighbors
      1 = max # of special neighbors
   special bonds CPU = 0.000 seconds
-  read_data CPU = 0.018 seconds
+  read_data CPU = 0.022 seconds
 
 replicate $r $r $r
 replicate 1 $r $r
 replicate 1 1 $r
 replicate 1 1 1
 Replication is creating a 1x1x1 = 1 times larger system...
-WARNING: Atom style hybrid defines both, per-type and per-atom masses; both must be set, but only per-atom masses will be used (src/atom_vec_hybrid.cpp:132)
+WARNING: Atom style hybrid defines both, per-type and per-atom masses; both must be set, but only per-atom masses will be used (src/atom_vec_hybrid.cpp:134)
   orthogonal box = (-1 -1 -1) to (23.94128 23.94128 23.94128)
   1 by 2 by 2 MPI processor grid
   2048 atoms
@@ -72,7 +72,9 @@ velocity all create 298.0 187421 mom yes rot yes
 
 timestep 0.5
 
-fix 1 all rigid/small molecule langevin 298.0 298.0 10.0 234563
+# Tdamp = 100 fs (gamma = 10/ps).  A much stiffer coupling injects large
+# random forces every step, which shows up as huge instantaneous pressures.
+fix 1 all rigid/small molecule langevin 298.0 298.0 100.0 234563
 Fix rigid/small setup ...
   create bodies CPU = 0.000 seconds
   512 rigid bodies with 2048 atoms
@@ -101,44 +103,49 @@ Neighbor list info ...
       bin: standard
 Per MPI rank memory allocation (min/avg/max) = 17.33 | 17.43 | 17.72 Mbytes
    Step          Temp          PotEng         E_vdwl         E_coul         TotEng     v_water_density     Press     
-         0   301.89244     -12309.722      768.21517     -13077.937     -11389.14       0.032999985   -14249.272    
-        10   353.05628     -7623.5613      812.97241     -8436.5337     -6546.9625      0.032999985   -33777.881    
-        20   358.3533      -8313.6226      922.93874     -9236.5613     -7220.8712      0.032999985   -8067.9947    
-        30   350.17047     -9630.4705      1022.6093     -10653.08      -8562.6717      0.032999985   -33120.259    
-        40   334.76913     -8149.3866      1098.3514     -9247.738      -7128.5521      0.032999985   -42963.11     
-        50   318.31669     -6564.9598      1171.8592     -7736.819      -5594.2949      0.032999985   -15822.425    
-        60   321.23597     -3802.7602      1230.493      -5033.2532     -2823.1933      0.032999985    42128.286    
-        70   324.99147     -1733.1888      1297.7099     -3030.8987     -742.17001      0.032999985   -19999.262    
-        80   306.5179      -2722.9476      1367.6937     -4090.6413     -1788.2615      0.032999985   -42093.068    
-        90   300.34443     -4614.8729      1397.776      -6012.6489     -3699.012       0.032999985   -12523.406    
-       100   313.84389     -5335.5719      1423.6972     -6759.2692     -4378.5462      0.032999985   -8799.5759    
-Loop time of 7.59184 on 4 procs for 100 steps with 2048 atoms
+         0   296.86475     -9845.0713      768.21517     -10613.287     -8939.8213      0.032999985   -13151.838    
+        10   341.92267     -10002.569      777.60943     -10780.178     -8959.9204      0.032999985   -29020.734    
+        20   405.35845     -10231.004      798.60792     -11029.612     -8994.9165      0.032999985   -6350.0135    
+        30   405.83474     -10257.738      836.10031     -11093.838     -9020.1983      0.032999985   -26725.58     
+        40   395.51707     -10241.677      886.95862     -11128.636     -9035.5998      0.032999985   -44553.586    
+        50   401.74102     -10314.816      944.26467     -11259.081     -9089.7594      0.032999985   -22986.411    
+        60   422.50227     -10408.118      1010.0192     -11418.137     -9119.7525      0.032999985    12475.635    
+        70   432.70157     -10467.787      1087.6629     -11555.45      -9148.3209      0.032999985   -1452.7748    
+        80   436.94688     -10531.773      1174.876      -11706.649     -9199.3606      0.032999985   -33292.018    
+        90   449.09454     -10595.583      1266.8309     -11862.414     -9226.1282      0.032999985    3377.9961    
+       100   458.49324     -10649.373      1359.1712     -12008.544     -9251.258       0.032999985   -16889.682    
+Loop time of 7.28373 on 4 procs for 100 steps with 2048 atoms
 
-Performance: 0.569 ns/day, 42.177 hours/ns, 13.172 timesteps/s, 26.976 katom-step/s
-97.4% CPU use with 4 MPI tasks x 1 OpenMP threads
+Performance: 0.593 ns/day, 40.465 hours/ns, 13.729 timesteps/s, 28.117 katom-step/s
+97.1% CPU use with 4 MPI tasks x 1 OpenMP threads
+
+GCPM induced-dipole solver stats:
+  solver calls = 101
+  iterations/call (min/avg/max) = 21 23.55 26
+  total iterations = 2379
 
 MPI task timing breakdown:
 Section |  min time  |  avg time  |  max time  |%varavg| %total
 ---------------------------------------------------------------
-Pair    | 7.2679     | 7.3565     | 7.4522     |   2.5 | 96.90
-Bond    | 1.3939e-05 | 1.6923e-05 | 1.9952e-05 |   0.0 |  0.00
-Neigh   | 0.016002   | 0.017618   | 0.018704   |   0.8 |  0.23
-Comm    | 0.048937   | 0.14568    | 0.23583    |  17.9 |  1.92
-Output  | 0.0017266  | 0.0017889  | 0.0019068  |   0.2 |  0.02
-Modify  | 0.066118   | 0.066262   | 0.066464   |   0.0 |  0.87
-Other   |            | 0.003999   |            |       |  0.05
+Pair    | 7.0349     | 7.0702     | 7.0919     |   0.9 | 97.07
+Bond    | 1.5218e-05 | 1.7306e-05 | 1.9885e-05 |   0.0 |  0.00
+Neigh   | 0.035165   | 0.036893   | 0.040866   |   1.2 |  0.51
+Comm    | 0.080803   | 0.10161    | 0.13842    |   7.2 |  1.39
+Output  | 0.0026961  | 0.0027639  | 0.0028767  |   0.1 |  0.04
+Modify  | 0.067558   | 0.067904   | 0.068366   |   0.1 |  0.93
+Other   |            | 0.004394   |            |       |  0.06
 
-Nlocal:            512 ave         549 max         483 min
-Histogram: 1 0 0 2 0 0 0 0 0 1
-Nghost:        10810.5 ave       10862 max       10771 min
-Histogram: 1 0 0 1 1 0 0 0 0 1
-Neighs:         386588 ave      418156 max      374317 min
-Histogram: 3 0 0 0 0 0 0 0 0 1
+Nlocal:            512 ave         552 max         491 min
+Histogram: 2 0 0 1 0 0 0 0 0 1
+Nghost:          10827 ave       10872 max       10750 min
+Histogram: 1 0 0 0 0 0 1 0 1 1
+Neighs:         386569 ave      418862 max      368208 min
+Histogram: 1 1 0 1 0 0 0 0 0 1
 
-Total # of neighbors = 1546354
-Ave neighs/atom = 755.05566
+Total # of neighbors = 1546277
+Ave neighs/atom = 755.01807
 Ave special neighs/atom = 0
-Neighbor list builds = 1
+Neighbor list builds = 2
 Dangerous builds = 0
 
 write_dump all custom final.dump id mol type q x y z mux muy muz modify sort id

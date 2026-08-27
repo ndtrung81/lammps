@@ -84,12 +84,26 @@ velocity all create $T ${velseed} mom yes rot yes dist gaussian
 
 timestep 0.5
 
+# Nose-Hoover chains: canonical sampling, the right choice for the RDF below.
+# The reference log file for this deck was generated with this line.
 fix 1 all rigid/nvt/small molecule temp $T $T 100.0
 
+# Evans Gaussian isokinetic, the thermostat the Fortran uses: holds the total
+# (translational + rotational) kinetic energy exactly and adds no drag, so it
+# leaves transport properties alone.  Use this, not langevin, whenever the run
+# has to hold a temperature without disturbing the dynamics.
+#fix 1 all rigid/nvk/small molecule temp $T
+
+# Langevin: fine for equilibrating, but its friction (gamma = 1/Tdamp = 10/ps
+# at Tdamp = 100 fs) suppresses the self-diffusion coefficient by 15-25% near
+# ambient.  Never use it for a production run that measures dynamics.
 #fix 1 all rigid/small molecule langevin $T $T 100.0 ${seed}
+
 #fix 1 all rigid/npt/small molecule temp $T $T 100.0 iso $P $P 50.0
 
-variable num_mols      equal atoms/4
+# data.gcpm5 has 5 sites per molecule (COM dipole site), data.gcpm has 4
+variable sites         equal (${dipoletype}==4)*5+(${dipoletype}==3)*4
+variable num_mols      equal atoms/${sites}
 variable water_density equal v_num_mols/vol   # molecules per Angstrom^3, expected around 0.033 for 1 g/cm^3
 
 thermo_style custom step temp pe evdwl ecoul etotal v_water_density press
@@ -106,9 +120,13 @@ dump_modify 1 sort id
 
 run ${equil_steps}
 
-# optional: run for computing MSD with NVE, replacing NVT with NVE
+# optional: a production leg for dynamic properties, replacing the Nose-Hoover
+# thermostat with the isokinetic one (or with NVE, which gives the same
+# transport but lets the temperature wander).  For a self-diffusion measurement
+# with the MSD computed in LAMMPS, use in.gcpm.msd instead.
 
 #unfix 1
+#fix 1 all rigid/nvk/small molecule temp $T
 #fix 1 all rigid/nve/small molecule
 
 #run ${relax_steps}

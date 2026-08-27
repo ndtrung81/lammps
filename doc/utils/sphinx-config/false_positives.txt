@@ -549,6 +549,7 @@ chemistries
 Chemnitz
 Cheng
 Chenoweth
+Chialvo
 chiral
 chiralIDs
 ChiralIDs
@@ -1419,6 +1420,7 @@ Gawlik
 gayberne
 gcc
 gcmc
+gcpm
 gemc
 gdot
 GeC
@@ -3097,6 +3099,7 @@ parameterized
 parameterizing
 params
 ParaView
+Paricaud
 parmchk
 parmin
 Parrinello
@@ -3216,6 +3219,7 @@ planeforce
 plastically
 Plathe
 Plimpton
+Predota
 plog
 ploop
 PloS

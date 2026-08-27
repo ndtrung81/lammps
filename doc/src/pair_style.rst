@@ -205,6 +205,8 @@ accelerated styles exist.
 * :doc:`gauss <pair_gauss>` - Gaussian potential
 * :doc:`gauss/cut <pair_gauss>` - generalized Gaussian potential
 * :doc:`gayberne <pair_gayberne>` - Gay-Berne ellipsoidal potential
+* :doc:`gcpm <pair_gcpm>` - Gaussian charge polarizable model with a reaction field
+* :doc:`gcpm/long <pair_gcpm>` - Gaussian charge polarizable model with long-range Coulombics
 * :doc:`granular <pair_granular>` - Generalized granular potential
 * :doc:`granular/superellipsoid <pair_granular_superellipsoid>` - Generalized granular potential for superellipsoids
 * :doc:`gran/hertz/history <pair_gran>` - granular potential with Hertzian interactions

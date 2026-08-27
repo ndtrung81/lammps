@@ -12,6 +12,7 @@
 .. index:: fix rigid/small/omp
 .. index:: fix rigid/nve/small
 .. index:: fix rigid/nvt/small
+.. index:: fix rigid/nvk/small
 .. index:: fix rigid/npt/small
 .. index:: fix rigid/nph/small
 
@@ -51,6 +52,9 @@ fix rigid/nve/small command
 fix rigid/nvt/small command
 ===========================
 
+fix rigid/nvk/small command
+===========================
+
 fix rigid/npt/small command
 ===========================
 
@@ -65,7 +69,7 @@ Syntax
    fix ID group-ID style bodystyle args keyword values ...
 
 * ID, group-ID are documented in :doc:`fix <fix>` command
-* style = *rigid* or *rigid/nve* or *rigid/nvt* or *rigid/npt* or *rigid/nph* or *rigid/small* or *rigid/nve/small* or *rigid/nvt/small* or *rigid/npt/small* or *rigid/nph/small*
+* style = *rigid* or *rigid/nve* or *rigid/nvt* or *rigid/npt* or *rigid/nph* or *rigid/small* or *rigid/nve/small* or *rigid/nvt/small* or *rigid/nvk/small* or *rigid/npt/small* or *rigid/nph/small*
 * bodystyle = *single* or *molecule* or *group*
 
   .. parsed-literal::
@@ -92,6 +96,8 @@ Syntax
        *temp* values = Tstart Tstop Tdamp
          Tstart,Tstop = desired temperature at start/stop of run (temperature units)
          Tdamp = temperature damping parameter (time units)
+       *temp* value = T (*rigid/nvk/small* only)
+         T = temperature the total kinetic energy is held at (temperature units)
        *mol* value = template-ID
          template-ID = ID of molecule template specified in a separate :doc:`molecule <molecule>` command
        *iso* or *aniso* values = Pstart Pstop Pdamp
@@ -141,6 +147,7 @@ Examples
    fix 1 particles rigid/npt molecule temp 1.0 1.0 5.0 x 0.5 0.5 1.0 z 0.5 0.5 1.0 couple xz
    fix 1 water rigid/nph molecule iso 0.5 0.5 1.0
    fix 1 particles rigid/npt/small molecule temp 1.0 1.0 1.0 iso 0.5 0.5 1.0
+   fix 1 water rigid/nvk/small molecule temp 298.0
 
    variable bodyid atom 1.0*gmask(clump1)+2.0*gmask(clump2)+3.0*gmask(clump3)
    fix 1 clump rigid custom v_bodyid
@@ -422,6 +429,52 @@ originally in :ref:`(Hoover) <Hoover>` and :ref:`(Martyna)
 degrees of freedom of the rigid bodies.  They are referred to below as
 the 2 NVT rigid styles.  The rigid-body algorithm used by *rigid/nvt*
 is described in the paper by :ref:`Kamberaj <Kamberaj>`.
+
+.. versionadded:: TBD
+
+The *rigid/nvk/small* style performs constant kinetic energy
+integration using a Gaussian isokinetic thermostat, as originally
+formulated for atomic systems by :ref:`Evans and Morriss <Evans4>`.  A
+single deterministic friction coefficient
+
+.. math::
+
+   \alpha = \frac{\sum_i \mathbf{F}_i \cdot \mathbf{v}_i
+                   + \sum_i \boldsymbol{\tau}_i \cdot \boldsymbol{\omega}_i}
+                  {\sum_i m_i v_i^2
+                   + \sum_i \boldsymbol{\omega}_i \cdot \mathbf{I}_i \cdot \boldsymbol{\omega}_i}
+
+is applied to the center-of-mass momentum and the angular momentum of
+every body, so that the *combined* translational and rotational kinetic
+energy of all the bodies is held fixed.  This is one constraint on the
+total kinetic energy, not separate translational and rotational
+thermostats as in the 2 NVT rigid styles.  The half-step momentum
+updates use the exact propagator of :ref:`Minary <Minary2>`, as in
+:doc:`fix nvk <fix_nvk>`.
+
+Because the friction is deterministic and averages to zero, it adds no
+drag to the motion of the bodies.  Transport properties such as the
+self-diffusion coefficient come out the same as in a constant-energy
+run, which is not true of the *langevin* keyword of the rigid styles,
+whose friction damps them.  Use this style when a run has to hold a
+temperature without disturbing the dynamics.
+
+The temperature is set with the *temp* keyword, which for this style
+takes a single value: there is no damping parameter (the constraint is
+exact, rather than relaxing toward a target) and no ramp (the kinetic
+energy is a constant of the motion).  The body velocities are rescaled once, at the start of
+the run, to land on the requested kinetic energy.  Without the *temp*
+keyword the kinetic energy is held at whatever value the bodies carry
+when the run begins.  As with the 2 NVT rigid styles, the requested
+temperature is converted using the number of rigid-body degrees of
+freedom, without subtracting the 3 center-of-mass components that
+:doc:`compute temp <compute_temp>` removes, so a thermodynamic output
+of the temperature reads a slightly higher value on a small system.
+The kinetic energy being constrained, and the temperature it
+corresponds to, are printed when the run starts.
+
+The *langevin* keyword must not be used with this style: a stochastic
+bath and an isokinetic constraint are two different thermostats.
 
 The *rigid/npt*, *rigid/nph*, *rigid/npt/small*, and *rigid/nph/small*
 styles perform constant NPT or NPH integration using a Nose/Hoover
@@ -939,6 +992,10 @@ torque.  Also Tchain = Pchain = 10, Titer = 1, Torder = 3, reinit = yes.
 
 ----------
 
+.. _Evans4:
+
+**(Evans)** Evans and Morriss, Comput Phys Rep, 1, 297 (1984).
+
 .. _Hoover:
 
 **(Hoover)** Hoover, Phys Rev A, 31, 1695 (1985).
@@ -951,6 +1008,10 @@ torque.  Also Tchain = Pchain = 10, Titer = 1, Torder = 3, reinit = yes.
 
 **(Martyna)** Martyna, Klein, Tuckerman, J Chem Phys, 97, 2635 (1992);
 Martyna, Tuckerman, Tobias, Klein, Mol Phys, 87, 1117.
+
+.. _Minary2:
+
+**(Minary)** Minary, Martyna, Tuckerman, J Chem Phys, 118, 2510 (2003).
 
 .. _Miller3:
 
