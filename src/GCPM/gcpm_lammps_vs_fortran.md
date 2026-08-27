@@ -787,6 +787,10 @@ all 500 molecules:
 | direction agreement, median cos(angle) | 0.857 (~31° off) |
 | Σ net forces (momentum), both codes | ~0 ✓ |
 
+> **Superseded (2026-08-27).** These force figures predate the polarization
+> force fixes and the COM dipole placement; see section 10.6. Current numbers:
+> section 6b (2.7 % vs the Fortran) and section 10.2 (9.1 % vs exact Ewald).
+
 In aggregate the forces agree — similar magnitude distributions, correlated
 directions, and momentum conserved in both codes — but they scatter ~70 %
 molecule by molecule, far more than the ~5 % energy difference. This is expected:
@@ -807,6 +811,9 @@ expose that far more than energies do.
    coincide — hence its near-exact match. The charge sites (H, M) are offset from
    the COM by ~1 Å, so the two conventions include/exclude different site pairs in
    the cutoff shell. This is the dominant ~4 % effect on the charge–charge energy.
+   **Section 10 quantifies this**: bare atom-atom truncation costs 154 % on
+   per-molecule net forces, the reaction field brings that to 9.1 %, and the
+   error falls as ~1/rc^1.8 once the RF is in the loop (2.3 % at rc = 24 Å).
 2. **Reaction-field self / intramolecular bookkeeping.** The Fortran sums
    *intermolecular* Coulomb plus *explicit* RF self terms; the LAMMPS per-pair
    reaction field obtains the self terms from *intramolecular* pairs, so neither
@@ -1582,3 +1589,140 @@ agree to all 12 printed digits at step 120, so the two `MPI_Allreduce` sums in
 
 `examples/PACKAGES/gcpm/in.gcpm.msd` now defaults its production leg to this
 style (`-var prod nve` switches back to constant energy).
+
+## 10. What the atom-atom cutoff actually costs (measured 2026-08-27)
+
+Sections D and E argued that the Fortran's COM-COM truncation and the LAMMPS
+atom-atom truncation are the dominant reason the electrostatics do not match,
+but never separated "truncation" from "the reaction field that compensates it",
+and never measured how the error behaves as the cutoff grows.  Both are
+measurable entirely inside LAMMPS now that `gcpm/long` provides an exact
+(Ewald) reference on the same frame: run the same configuration with
+`pair gcpm` (truncated + RF) and with `pair gcpm/long` (PPPM, no truncation),
+and compare **per-molecule net forces**, the quantity section D used.
+
+### 10.1 Method
+
+Single points (`run 0`) on `data.gcpm5` (500 molecules, L = 24.6553682 A,
+COM dipole site), forces dumped per atom and summed per molecule:
+
+```LAMMPS
+variable mode index rf          # bare | rf | ewald
+variable rc   index 11.220684
+
+units real
+atom_style hybrid full dipole sphere
+read_data data.gcpm5
+replicate ${rep} ${rep} ${rep}
+
+if "${mode} == ewald" then &
+  "pair_style gcpm/long 1 0.0 ${rc}" &          # exact reference
+elif "${mode} == rf" &
+  "pair_style gcpm 1 78.4 ${rc}" &              # what pair gcpm does
+else &
+  "pair_style gcpm 1 0.0 ${rc}"                 # bare truncation, RF off
+
+pair_coeff 1 1 0.218445 3.69 12.75 0.0   0.000
+pair_coeff 2 2 0.0      1.0  12.75 0.0   0.455
+pair_coeff 3 3 0.0      1.0  12.75 0.0   0.610
+pair_coeff 4 4 0.0      1.0  12.75 1.444 0.610
+
+if "${mode} == ewald" then &
+  "kspace_style pppm/dipole 1.0e-6" "kspace_modify gewald 0.30" &
+else &
+  "neigh_modify exclude molecule/intra all"
+
+run 0
+write_dump all custom force.${tag} id mol fx fy fz modify sort id
+```
+
+The cutoff scan needs `replicate 2 2 2` (4000 molecules, L = 49.31 A) because
+the reaction field requires `rc <= L/2`, and `neigh_modify one 60000 page
+600000` at the larger cutoffs.  Note that `enable_rf` requires
+`enable_polar = 1`, so the bare-truncation mode is "polar on, RF off", not a
+charge-charge-only calculation.
+
+### 10.2 Truncation is catastrophic; the reaction field is what rescues it
+
+500 molecules, rc = 11.220684 A, reference = Ewald:
+
+| treatment | median | mean | p90 | cos(angle) | \|F\| mean |
+|---|---|---|---|---|---|
+| bare atom truncation (`eps_rf <= 0`) | 154 % | 201 % | 397 % | 0.671 | 15.55 vs 8.50 |
+| reaction field (`eps_rf = 78.4`) | **9.1 %** | 12.6 % | 23.4 % | 0.9975 | 8.52 vs 8.50 |
+
+Bare truncation gets the net forces nearly twice too large and ~48 degrees off
+in direction.  The reaction field takes that from 154 % to 9 %.
+
+**Mechanism, and why the Fortran's convention is the better one.** Atom-atom
+truncation *splits molecules* at the cutoff shell: the O-M pair can be inside
+rc while the O-H pair is outside, so the interacting unit is no longer
+charge-neutral and a spurious monopole-monopole term survives at rc.  COM-COM
+truncation always takes a whole neutral molecule in or out, whose leading term
+is dipole-dipole (force ~ 1/r^4), so its shell error is far smaller.  Combining
+this with section 6b: the Fortran (COM truncation + RF) is within <= 2.7 % of
+exact on net forces, LAMMPS (atom truncation + RF) within 9.1 % -- the
+convention is worth roughly a factor-2 cutoff increase, not a factor of 10.
+
+### 10.3 Raising the cutoff does converge -- but only with the RF in the loop
+
+4000 molecules (`replicate 2 2 2`), reference = Ewald on the same box:
+
+| rc [A] | 11.22 | 14 | 17 | 20 | 24 |
+|---|---|---|---|---|---|
+| RF, median | 9.12 % | 6.39 % | 4.53 % | 3.29 % | **2.34 %** |
+| RF, p90 | 23.4 % | 14.6 % | 10.2 % | 7.9 % | 6.1 % |
+| bare truncation, median | 143 % | 127 % | 103 % | 85 % | 76 % |
+
+Bare truncation decays as ~1/rc^0.8 -- doubling the cutoff only halves the
+error, so it can never reach single digits at any affordable rc.  With the
+reaction field the decay is ~1/rc^1.8: a 2.1x cutoff buys a 3.9x error
+reduction, and rc = 24 A reaches 2.3 %.  **RF plus a generous cutoff is a
+viable route to few-percent forces; bare truncation is not.**
+
+Consistency check: 500 molecules gives 9.10 % at rc = 11.22 and 4000 molecules
+gives 9.12 %, so this is a local cutoff-shell error, not a finite-size effect.
+
+### 10.4 How much do the forces themselves move?
+
+Comparing the RF results against each other rather than against Ewald:
+
+| change | median \|dF\|/\|F\| | \|F\| mean |
+|---|---|---|
+| rc 11.22 -> 14 | 11.8 % | 8.517 -> 8.530 |
+| rc 11.22 -> 24 | 9.6 % | 8.517 -> 8.503 |
+
+Per-molecule net forces move by ~10 %, and the move is a systematic improvement
+(9.1 % -> 2.3 % closer to exact), not noise.  The errors at different cutoffs
+are essentially *independent* random vectors, which is why 11.22 -> 14 changes
+the forces *more* than 11.22 -> 24 does: `sqrt(9.12^2 + 6.39^2) = 11.1` and
+`sqrt(9.12^2 + 2.34^2) = 9.4` reproduce the two measurements.
+
+The `|F|` *distribution*, however, barely moves (mean 8.517 -> 8.503).  That is
+the reconciliation with sections 6 and D: aggregate and statistical quantities
+(RDF, temperature, pressure, energy) are genuinely insensitive to the cutoff
+convention, which is why they agree so well; individual molecular forces are
+not.
+
+### 10.5 Practical limits
+
+- **The production box cannot exercise this.** L = 24.6553682 A caps rc at
+  L/2 = 12.33 A, and the decks are at 11.22 A.  Without replicating, ~8 % is
+  the floor for the RF style on this system.
+- **A larger rc is a different Hamiltonian.**  `c_rf = 2*qqrd2e*(eps_rf-1) /
+  ((2*eps_rf+1)*rc^3)`, so changing rc redefines the reaction-field term
+  instead of merely extending the sum -- and it breaks the match to the
+  Fortran, whose rc is pinned at half-box minus skin (section 8.3).
+- **The cost trade is not settled here.**  The single-point wall times measured
+  (RF at rc = 24 A: 5 s; `gcpm/long`: 20 s, 20000 atoms, 8 ranks) are dominated
+  by PPPM setup and say nothing about per-step cost.  By pair count RF at
+  rc = 24 A is ~10x RF at rc = 11.22 A, and section 6 measured `gcpm/long` at
+  ~1.5x RF at rc = 11.22 A per step, which would put Ewald well ahead at large
+  N.  A timed MD run is needed to confirm.
+
+### 10.6 Correction to section D
+
+Section D's per-molecule force comparison (median 72 %, mean 86 %, cos 0.857)
+predates both the polarization force fixes and the COM dipole placement, and
+should not be quoted.  The current figures are section 6b's (Ewald + COM dipole
+vs the Fortran: forces median 2.7 %, cos 0.9998) and section 10.2's above.
