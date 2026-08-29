@@ -42,16 +42,23 @@ The example input scripts and data files can be found under examples/PACKAGES/gc
     mpirun -np 8 lammps-gcpm/build/lmp -in examples/PACKAGES/gcpm/in.water_box -v steps 100000
 ```
 
-* `in.gcpm` and `data.gcpm`: input deck for 500 water molecules converted from the Fortran code bundle at T = 298 K and density 1 g/cm^3
+* `in.gcpm` and `data.gcpm5`: input deck for 500 water molecules converted from the Fortran code bundle at T = 298.15 K and density 0.997 g/cm^3.
+  It mirrors the reference Fortran run in `MD_water/MD_water` (control file `pwat1.dat`): same box, cutoff 11.220684 Ang, skin 1.107 Ang,
+  time step 0.98213053 fs, Evans isokinetic thermostat (`fix rigid/nvk/small`), and the same RDF binning as `gofr.dat`.
+  The header of `in.gcpm` lists the full setting-by-setting correspondence and the differences that cannot be removed.
+  The three quantities the Fortran reports in `prop.dat` -- configurational energy per molecule (kcal/mol), pressure (MPa)
+  and the mean total molecular dipole (Debye) -- are printed in the thermo line as `v_pe_mol_t`, `v_p_MPa_t` and `v_mu_tot_D`,
+  and block-averaged over 4000-step blocks into `prop.txt` for a direct column-by-column comparison with `prop.dat`.
+  The energy and pressure columns include the analytic exp-6 tail corrections (`eset`, `pset` of `main.f`), as `prop.dat` does.
 
 ```
-    mpirun -np 8 lammps-gcpm/build/lmp -in examples/PACKAGES/gcpm/in.gcpm  -v steps 1000000
+    mpirun -np 8 lammps-gcpm/build/lmp -in examples/PACKAGES/gcpm/in.gcpm  -v nsteps 1000000
 ```
 
 To run with GPU acceleration:
 
 ```
-    mpirun -np 8 lammps-gcpm/build/lmp -in examples/PACKAGES/gcpm/in.gcpm  -v steps 1000000 -sf gpu -pk gpu 1 neigh no
+    mpirun -np 8 lammps-gcpm/build/lmp -in examples/PACKAGES/gcpm/in.gcpm  -v nsteps 1000000 -sf gpu -pk gpu 1 neigh no
 ```
 
 Validation 1 (Section IV B, Fig. 5):
@@ -59,8 +66,8 @@ Validation 1 (Section IV B, Fig. 5):
 The output RDFs of O-O, O-H and H-H from the run with in.gcpm are in `rdf.txt`
 is expected to match the reference RDFs of O-O, O-H and H-H from the Fortran run `gofr.dat`.
 
-Plotting column 2 (distance) versus column 3, 5, 7 and 9
-shows O-O, O-H, H-O and H-H pairs computed from LAMMPS.
+Plotting column 2 (distance) versus columns 3, 5 and 7
+shows the O-O, O-H and H-H pairs computed from LAMMPS.
 
 ```
    gnuplot> plot 'rdf.txt' u 2:3 w l, 'gofr.dat' u 1:2 w p

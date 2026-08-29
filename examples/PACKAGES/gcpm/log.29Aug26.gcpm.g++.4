@@ -1,3 +1,6 @@
+LAMMPS (4 Jul 2026 - Development - r14624-40802-gd2019d25c2-modified)
+OMP_NUM_THREADS environment is not set. Defaulting to 1 thread.
+  using 1 OpenMP thread(s) per MPI task
 # GCPM water: LAMMPS deck set up to mirror the reference Fortran run
 #
 # The reference run is the GCPM Fortran code in MD_water/MD_water, driven by
@@ -121,9 +124,42 @@ units real
 neighbor 1.107 bin
 
 atom_style hybrid full dipole sphere
+WARNING: Atom style hybrid defines both, per-type and per-atom masses; both must be set, but only per-atom masses will be used (src/atom_vec_hybrid.cpp:134)
 read_data ${datafile}
+read_data data.gcpm5
+Reading data file ...
+  orthogonal box = (0 0 0) to (24.655368 24.655368 24.655368)
+  1 by 2 by 2 MPI processor grid
+  reading atoms ...
+  2500 atoms
+Finding 1-2 1-3 1-4 neighbors ...
+  special bond factors lj:    0        0        0       
+  special bond factors coul:  0        0        0       
+     0 = max # of 1-2 neighbors
+     0 = max # of 1-3 neighbors
+     0 = max # of 1-4 neighbors
+     1 = max # of special neighbors
+  special bonds CPU = 0.000 seconds
+  read_data CPU = 0.012 seconds
 
 replicate $r $r $r
+replicate 1 $r $r
+replicate 1 1 $r
+replicate 1 1 1
+Replication is creating a 1x1x1 = 1 times larger system...
+WARNING: Atom style hybrid defines both, per-type and per-atom masses; both must be set, but only per-atom masses will be used (src/atom_vec_hybrid.cpp:134)
+  orthogonal box = (0 0 0) to (24.655368 24.655368 24.655368)
+  1 by 2 by 2 MPI processor grid
+  2500 atoms
+Finding 1-2 1-3 1-4 neighbors ...
+  special bond factors lj:    0        0        0       
+  special bond factors coul:  0        0        0       
+     0 = max # of 1-2 neighbors
+     0 = max # of 1-3 neighbors
+     0 = max # of 1-4 neighbors
+     1 = max # of special neighbors
+  special bonds CPU = 0.000 seconds
+  replicate CPU = 0.003 seconds
 
 # The Fortran masses are mo = 2.6564834e-23 g and mh = 1.6603021e-24 g, that is
 # 15.997719 and 0.9998574 amu (molecular mass 17.99743 amu), slightly lighter
@@ -133,7 +169,11 @@ replicate $r $r $r
 # mass exactly on the type-4 dipole site of data.gcpm5.  Drop these two lines
 # to use the standard isotope-averaged masses instead.
 set type 1 mass 15.997719
+Setting atom values ...
+  500 settings made for mass
 set type 2 mass 0.9998574
+Setting atom values ...
+  1000 settings made for mass
 
 # --- full GCPM (polar + reaction field), matches the Fortran method ---
 # polar/tol mirrors tol_dipole = 1e-8 (1e-4 per dipole component in the reduced
@@ -141,18 +181,20 @@ set type 2 mass 0.9998574
 # 10 iterations whether or not that is met; here the cap is left at the LAMMPS
 # default of 50 and the tolerance is reached in 10-12 iterations.
 pair_style gcpm 1 78.4 ${rc} ${rc} polar/tol 1.8e-5 polar/maxiter 50
+pair_style gcpm 1 78.4 11.220684 ${rc} polar/tol 1.8e-5 polar/maxiter 50
+pair_style gcpm 1 78.4 11.220684 11.220684 polar/tol 1.8e-5 polar/maxiter 50
 pair_coeff 1 1 0.218445 3.69 12.75 0.0   0.000
 pair_coeff 2 2 0.0      1.0  12.75 0.0   0.455  # No LJ interactions for H atoms
-if "${dipoletype} == 4" then &
-  "pair_coeff 3 3 0.0      1.0  12.75 0.0   0.610" &
-  "pair_coeff 4 4 0.0      1.0  12.75 1.444 0.610" &
-else &
-  "pair_coeff 3 3 0.0      1.0  12.75 1.444 0.610"
+if "${dipoletype} == 4" then   "pair_coeff 3 3 0.0      1.0  12.75 0.0   0.610"   "pair_coeff 4 4 0.0      1.0  12.75 1.444 0.610" else   "pair_coeff 3 3 0.0      1.0  12.75 1.444 0.610"
+pair_coeff 3 3 0.0      1.0  12.75 0.0   0.610
+pair_coeff 4 4 0.0      1.0  12.75 1.444 0.610
 
 neigh_modify exclude molecule/intra all
 
 # initialize atom velocities (the Fortran restarts from pwatin instead)
 velocity all create $T ${velseed} mom yes rot yes dist gaussian
+velocity all create 298.15 ${velseed} mom yes rot yes dist gaussian
+velocity all create 298.15 817324 mom yes rot yes dist gaussian
 
 # reduced time step 6e-4 of pwat1.dat, in fs
 timestep 0.98213053
@@ -166,6 +208,11 @@ timestep 0.98213053
 # rotational degrees of freedom without subtracting the three center-of-mass
 # ones, so the thermo Temp column reads T*3000/2997 = 298.45 K for T = 298.15.
 fix 1 all rigid/nvk/small molecule temp $T
+fix 1 all rigid/nvk/small molecule temp 298.15
+Fix rigid/nvk/small setup ...
+  create bodies CPU = 0.000 seconds
+  500 rigid bodies with 2500 atoms
+  0.82021669 = max distance from body owner to body atom
 
 # Nose-Hoover chains: canonical sampling instead of isokinetic.  Fine for
 # structure (the RDF below), but it is not what the Fortran does.
@@ -180,7 +227,10 @@ fix 1 all rigid/nvk/small molecule temp $T
 
 # data.gcpm5 has 5 sites per molecule (COM dipole site), data.gcpm has 4
 variable sites         equal (${dipoletype}==4)*5+(${dipoletype}==3)*4
+variable sites         equal (4==4)*5+(${dipoletype}==3)*4
+variable sites         equal (4==4)*5+(4==3)*4
 variable num_mols      equal atoms/${sites}
+variable num_mols      equal atoms/5
 variable water_density equal v_num_mols/vol   # molecules per Angstrom^3, expected around 0.033 for 1 g/cm^3
 
 # quantities in the units the Fortran prints them in (prop.dat, ufile):
@@ -216,6 +266,7 @@ variable eps_kcal equal 0.218445
 variable sigma_A  equal 3.69
 variable gbuck    equal 12.75
 variable rcstar   equal ${rc}/v_sigma_A
+variable rcstar   equal 11.220684/v_sigma_A
 variable vstar    equal vol/(v_sigma_A^3)
 variable expg     equal exp(v_gbuck*(1.0-v_rcstar))
 variable e_tail   equal v_eps_kcal*(v_num_mols-1)/v_vstar*2*PI/(1-6/v_gbuck)*(6/v_gbuck^4*v_expg*((v_gbuck*v_rcstar+1)^2+1)-1/(3*v_rcstar^3))
@@ -227,6 +278,8 @@ variable p_MPa_t  equal v_p_MPa+v_p_tail
 # induced dipole only: average the point-dipole magnitude over the one dipole
 # site per molecule
 group dipsite type ${dipoletype}
+group dipsite type 4
+500 atoms in group dipsite
 compute muvec all property/atom mux muy muz
 variable mumag atom sqrt(c_muvec[1]^2+c_muvec[2]^2+c_muvec[3]^2)
 compute mumean dipsite reduce ave v_mumag
@@ -244,12 +297,15 @@ variable mu_tot_D equal 4.80320471*c_mutot
 
 thermo_style custom step temp v_pe_mol_t v_p_MPa_t v_mu_tot_D v_mu_D pe evdwl ecoul etotal press v_water_density
 thermo ${nout}
+thermo 200
 
 # prop.dat equivalent: block averages of the three reported quantities over
 # nblk = 4000 steps (line 7 of pwat1.dat), capped at the run length so the
 # short default run still writes a block.
 variable nblk equal (v_nsteps>=4000)*4000+(v_nsteps<4000)*v_nsteps
 fix 4 all ave/time 1 $(v_nblk) $(v_nblk) v_pe_mol_t v_p_MPa_t v_mu_tot_D file prop.txt
+fix 4 all ave/time 1 1000 $(v_nblk) v_pe_mol_t v_p_MPa_t v_mu_tot_D file prop.txt
+fix 4 all ave/time 1 1000 1000 v_pe_mol_t v_p_MPa_t v_mu_tot_D file prop.txt
 
 # RDF of the O-O, O-H and H-H site pairs, with the Fortran binning of gofr.dat:
 # 334 bins of rdel = 0.01 sigma = 0.0369 Ang.  The Fortran histograms every
@@ -260,18 +316,88 @@ variable nbin equal 334
 variable rrdf equal 334*0.0369
 comm_modify cutoff 13.44
 compute myRDF all rdf ${nbin} 1 1 1 2 2 2 cutoff ${rrdf}
+compute myRDF all rdf 334 1 1 1 2 2 2 cutoff ${rrdf}
+compute myRDF all rdf 334 1 1 1 2 2 2 cutoff 12.3246
 fix 2 all ave/time 10 $(v_nsteps/10) ${nsteps} c_myRDF[*] file rdf.txt mode vector
+fix 2 all ave/time 10 100 ${nsteps} c_myRDF[*] file rdf.txt mode vector
+fix 2 all ave/time 10 100 1000 c_myRDF[*] file rdf.txt mode vector
 
 # mean squared displacement of the molecular centers of mass, as in meansq.dat.
 # The O site is only 0.066 Ang from the COM, so its MSD slope is the COM slope.
 group Osites type 1
+500 atoms in group Osites
 compute msdcom Osites msd com yes
 fix 3 all ave/time ${nout} 1 ${nout} c_msdcom[4] file msd.txt
+fix 3 all ave/time 200 1 ${nout} c_msdcom[4] file msd.txt
+fix 3 all ave/time 200 1 200 c_msdcom[4] file msd.txt
 
 dump 1 all custom ${nout} dump.txt id mol type q x y z mux muy muz
+dump 1 all custom 200 dump.txt id mol type q x y z mux muy muz
 dump_modify 1 sort id
 
 run ${nsteps}
+run 1000
+Generated 6 of 6 mixed pair_coeff terms from geometric mixing rule
+Neighbor list info ...
+  update: every = 1 steps, delay = 0 steps, check = yes
+  max neighbors/atom: 2000, page size: 100000
+  master list distance cutoff = 12.327684
+  ghost atom cutoff = 13.44
+  binsize = 6.163842, bins = 5 5 5
+  2 neighbor lists, perpetual/occasional/extra = 1 1 0
+  (1) pair gcpm, perpetual
+      attributes: half, newton on
+      pair build: half/bin/newton
+      stencil: half/bin/3d
+      bin: standard
+  (2) compute rdf, occasional
+      attributes: half, newton on, cut 13.4316
+      pair build: half/bin/newton
+      stencil: half/bin/3d
+      bin: standard
+Fix 1 holding the kinetic energy of 3000 rigid-body degrees of freedom at 888.72852 (T = 298.15)
+Per MPI rank memory allocation (min/avg/max) = 19.37 | 19.66 | 19.76 Mbytes
+   Step          Temp        v_pe_mol_t     v_p_MPa_t      v_mu_tot_D       v_mu_D         PotEng         E_vdwl         E_coul         TotEng         Press      v_water_density
+         0   298.44845     -10.453705     -25.108792      2.700309       0.87628801    -5201.1458      1101.4407     -6302.5864     -4312.4173     -12590.553      0.033360729  
+       200   298.44923     -10.53045      -23.726631      2.7049159      0.8845907     -5239.5186      1176.8118     -6416.3304     -4350.7878      1050.3155      0.033360729  
+       400   298.45047     -10.628067     -23.733882      2.7230353      0.89867531    -5288.327       1216.2653     -6504.5923     -4399.5925      978.75105      0.033360729  
+       600   298.45213     -10.534949     -23.789361      2.7082413      0.88620731    -5241.7682      1169.6475     -6411.4156     -4353.0287      431.21904      0.033360729  
+       800   298.45315     -10.505317     -23.804537      2.7027556      0.88092537    -5226.9522      1128.5155     -6355.4677     -4338.2097      281.44381      0.033360729  
+      1000   298.45377     -10.701295     -23.856327      2.7191585      0.89384283    -5324.9409      1122.4665     -6447.4074     -4436.1965     -229.68645      0.033360729  
+Loop time of 58.1767 on 4 procs for 1000 steps with 2500 atoms
+
+Performance: 1.459 ns/day, 16.454 hours/ns, 17.189 timesteps/s, 42.973 katom-step/s
+97.9% CPU use with 4 MPI tasks x 1 OpenMP threads
+
+GCPM induced-dipole solver stats:
+  solver calls = 1001
+  iterations/call (min/avg/max) = 10 10.91 12
+  total iterations = 10923
+
+MPI task timing breakdown:
+Section |  min time  |  avg time  |  max time  |%varavg| %total
+---------------------------------------------------------------
+Pair    | 51.443     | 51.865     | 52.118     |   3.7 | 89.15
+Bond    | 0.00012946 | 0.00014519 | 0.00016731 |   0.0 |  0.00
+Neigh   | 1.31       | 1.3835     | 1.4465     |   4.1 |  2.38
+Comm    | 0.79751    | 1.0806     | 1.5721     |  30.0 |  1.86
+Output  | 0.0078158  | 0.0080081  | 0.0081236  |   0.1 |  0.01
+Modify  | 3.7931     | 3.7966     | 3.8011     |   0.2 |  6.53
+Other   |            | 0.04301    |            |       |  0.07
+
+Nlocal:            625 ave         637 max         609 min
+Histogram: 1 0 0 0 1 0 0 0 1 1
+Nghost:        12518.5 ave       12611 max       12418 min
+Histogram: 1 0 0 0 1 0 1 0 0 1
+Neighs:         407006 ave      417899 max      396510 min
+Histogram: 1 0 0 0 1 1 0 0 0 1
+
+Total # of neighbors = 1628022
+Ave neighs/atom = 651.2088
+Ave special neighs/atom = 0
+Neighbor list builds = 88
+Dangerous builds = 0
 
 # For a self-diffusion measurement with a longer production leg and the MSD fit
 # done outside LAMMPS, use in.gcpm.msd instead.
+Total wall time: 0:00:58

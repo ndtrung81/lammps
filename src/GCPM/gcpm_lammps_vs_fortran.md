@@ -1726,3 +1726,104 @@ Section D's per-molecule force comparison (median 72 %, mean 86 %, cos 0.857)
 predates both the polarization force fixes and the COM dipole placement, and
 should not be quoted.  The current figures are section 6b's (Ewald + COM dipole
 vs the Fortran: forces median 2.7 %, cos 0.9998) and section 10.2's above.
+
+---
+
+## 11. Aligning `in.gcpm` with the Fortran run (2026-08-28)
+
+With `fix rigid/nvk/small` available (section 9), `examples/PACKAGES/gcpm/in.gcpm`
+was rewritten so that every setting with a Fortran counterpart is taken from
+`MD_water/MD_water/pwat1.dat` and `param`:
+
+| Fortran | previous `in.gcpm` | now |
+|---|---|---|
+| T = 298.15 K | 298 | 298.15 |
+| reduced dt 6e-4 = 0.98213053 fs | 0.5 fs | 0.98213053 fs |
+| Evans Gaussian isokinetic (one alpha over trans+rot) | `rigid/nvt/small` | `rigid/nvk/small` |
+| skin 0.3 sigma = 1.107 Ang | LAMMPS default 2.0 | `neighbor 1.107 bin` |
+| mo = 2.6564834e-23 g, mh = 1.6603021e-24 g (15.997719 / 0.9998574 amu) | 15.9994 / 1.008 | `set type 1/2 mass` |
+| tol_dipole 1e-8 (1e-4 per reduced component = 1.82e-5 e*Ang) | default 1e-5 | `polar/tol 1.8e-5` |
+| gofr.dat: 334 bins of rdel = 0.01 sigma = 0.0369 Ang, all intermolecular site pairs, sampled every KSORT = 10 steps | 100 bins to the pair cutoff, sampled every 100 steps | `compute rdf 334 ... cutoff 12.3246` + `comm_modify cutoff 13.44`, `fix ave/time 10 ...` |
+| meansq.dat every 200 steps | (absent) | `compute msd` on the O sites -> `msd.txt` |
+| prop.dat columns (kcal/mol per molecule, MPa, Debye) | (absent) | `v_pe_mol_t`, `v_p_MPa_t`, `v_mu_tot_D` in the thermo line |
+| exp-6 tail corrections eset, pset (main.f, added before prop.dat is written) | (absent, "add by hand") | `v_e_tail`, `v_p_tail` equal-style variables, folded into `v_pe_mol_t` and `v_p_MPa_t` |
+| dipole column = mean magnitude of the TOTAL molecular dipole, permanent + induced (force.f `dmol`) | induced only (`v_mu_D`) | `compute dipole/chunk` + `chunk/spread/atom` + `reduce ave` -> `v_mu_tot_D` (`v_mu_D` kept as the induced-only value) |
+| prop.dat block averages every nblk = 4000 steps (pwat1.dat line 7) | (absent) | `fix ave/time 1 nblk nblk ... file prop.txt` |
+
+Deliberate departures, all documented in the deck header:
+
+- **`polar/maxiter` stays at the LAMMPS default 50, not the Fortran's 10.** The
+  LAMMPS Jacobi iteration needs 10-12 sweeps to reach 1.8e-5 on this box, so
+  capping at 10 leaves ~85 % of the steps just short of the tolerance. The
+  Fortran runs with that same partial convergence; here the extra one or two
+  sweeps are cheap and remove the non-convergence warning.
+- **Neighbor list rebuild.** The Fortran rebuilds unconditionally every
+  KSORT = 10 steps; LAMMPS keeps its half-skin displacement check (88 builds in
+  1000 steps, 0 dangerous), which is at least as safe.
+- **Tail corrections.** `pair gcpm` still applies none to the forces (the
+  Fortran does not either -- `eset` and `pset` are analytic constants added to
+  the reported averages, not to the dynamics).  The deck now evaluates the same
+  two `main.f` expressions as equal-style variables in real units,
+
+      E_tail/molecule = eps*(N-1)/V* * 2*pi/(1-6/g)
+                        * (6/g^4*exp(g*(1-rc*))*((g*rc*+1)^2+1) - 1/(3*rc*^3))
+      P_tail          = eps/sigma^3 * N*(N-1)/V*^2 * 4*pi/(1-6/g)
+                        * (1/g^5*exp(g*(1-rc*))
+                           *((g*rc*)^3+3*(g*rc*)^2+6*g*rc*+6) - 1/(3*rc*^3))
+
+  with `rc* = rc/sigma`, `V* = vol/sigma^3` and 6947.6955 converting
+  kcal/mol/Ang^3 to MPa.  At 500 molecules, 0.997 g/cm3, rc = 11.220684 Ang they
+  reproduce the Fortran's own numbers exactly: `v_e_tail = -0.0514131`
+  kcal/mol per molecule (Fortran eset*factor_ener = -0.05141305) and
+  `v_p_tail = -23.8331` MPa (Fortran pset*factor_pres = -23.83305, -235.2 atm).
+  So `v_pe_mol_t` and `v_p_MPa_t` are the columns to compare with `prop.dat`;
+  `v_pe_mol` / `v_p_MPa` (and `pe` / `press`) remain the untailed values.
+
+- **Total molecular dipole.** The Fortran `prop.dat` dipole column is
+  `dp/nmol*factor_dipole` with `dmol = |mxt(i) + a3(i)*d|` (force.f:361), i.e.
+  the mean magnitude of permanent plus induced.  `compute dipole/chunk` sums
+  both the per-atom charges and the per-atom point dipoles of a chunk, so its
+  column 4 is exactly that per molecule; `compute chunk/spread/atom` puts it
+  back on the atoms and `compute reduce ave` over the one dipole site per
+  molecule averages it.  `v_mu_tot_D` = 2.700 D at step 0 of the reference run
+  against the Fortran's equilibrated 2.712 D.
+
+- **Block averages.** `fix 4 ... file prop.txt` averages `v_pe_mol_t`,
+  `v_p_MPa_t` and `v_mu_tot_D` over `nblk` = 4000-step blocks, the same
+  blocking as `prop.dat` (`nblk` is capped at the run length so a short run
+  still writes one block).
+- Gear predictor-corrector vs velocity Verlet, COM-COM vs atom-atom truncation,
+  and the RF self-term bookkeeping are unchanged from sections 3, 8 and 10.
+
+**Validation (4 ranks, 1000 steps, `log.29Aug26.gcpm.g++.4` + `prop.txt`).**
+Against the equilibrated Fortran `prop.dat` blocks at 298.15 K / 0.997 g/cm3
+(uconf = -10.58 kcal/mol per molecule, P = -26.6 MPa, total dipole = 2.712 D).
+The LAMMPS column is the `prop.txt` 1000-step block average, i.e. the same
+quantity `prop.dat` reports, tail corrections included:
+
+| quantity | LAMMPS | Fortran | note |
+|---|---|---|---|
+| energy per molecule (`v_pe_mol_t`) | -10.5703 (range -10.45 to -10.70) | -10.58 | 0.09 % |
+| mean total dipole (`v_mu_tot_D`) | 2.70994 (range 2.700 to 2.723) | 2.712 | 0.07 % |
+| pressure (`v_p_MPa_t`) | -23.80 MPa (range -25.1 to -23.7) | -26.6 MPa | within the fluctuation of a 1000-step window |
+| mean induced dipole (`v_mu_D`) | 0.876-0.894 D | (not reported separately) | the permanent part is ~1.855 D |
+| g(r) bin centers | 2.60145, 2.63835, ... | identical | same `rdel` and same offset |
+| g_OO / g_OH / g_HH at 2.601 Ang | 1.072 / 0.216 / 1.146 | 1.033 / 0.208 / 1.162 | 1000-step average vs the Fortran's long run |
+
+`Temp` reads 298.45 K for `temp 298.15`: `fix rigid/nvk/small` sets the kinetic
+energy from 3N translational plus 3N rotational degrees of freedom without
+subtracting the three center-of-mass ones, exactly as the Fortran rescale does
+(`lambdt = sqrt(3*nmol*tstar/psqr)`), while the thermo temperature divides by
+nf - 3 = 2997.
+
+`log.29Aug26.gcpm.g++.4` replaces `log.28Aug26.gcpm.g++.4` (same trajectory --
+the additions are diagnostics only -- but different thermo columns), which in
+turn replaced `log.27Aug26.gcpm.g++.4`, generated from the pre-alignment
+defaults (298 K, 0.5 fs, `rigid/nvt/small`).
+
+Everything the Fortran reports now has a directly comparable LAMMPS column. The
+remaining differences are the structural ones of sections 3, 8 and 10 (Gear vs
+velocity Verlet, COM-COM vs atom-atom truncation, the RF self-term bookkeeping)
+plus the starting state: the Fortran continues from `pwatin`, whose reduced-unit
+velocities and Gear history are not converted, so this deck draws a Gaussian
+velocity distribution and lets `fix rigid/nvk/small` rescale it.
