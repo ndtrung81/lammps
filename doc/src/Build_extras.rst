@@ -267,6 +267,9 @@ CMake build
    -D CUDA_BUILD_MULTIARCH=value  # enables building CUDA kernels for all supported GPU
                                   # architectures
                                   # value = yes (default) or no
+   -D CUDA_HOST_COMPILER=value  # host compiler that nvcc uses for GPU_API=cuda
+                                  # value = path to a C++ compiler
+                                  # (default = the C compiler)
    -D USE_STATIC_OPENCL_LOADER=value  # downloads/includes OpenCL ICD loader library,
                                       # no local OpenCL headers/libs needed
                                       # value = yes (default) or no
@@ -324,6 +327,24 @@ have code for the preferred GPU architecture directly included rather
 than having to wait for the JIT compiler of the CUDA driver to translate
 it.  This behavior can be turned off (e.g. to speed up compilation) by
 setting ``CUDA_ENABLE_MULTIARCH`` to ``no``.
+
+The compiler that ``nvcc`` uses to compile the host part of the device
+code can be selected with ``-D CUDA_HOST_COMPILER=/path/to/compiler``.
+This is needed when the default C++ compiler is newer than the CUDA
+toolkit in use supports, since ``nvcc`` then refuses to run.  Setting the
+environment variable ``CUDAHOSTCXX`` has the same effect.  The compiler
+that ends up being used is printed in the configuration summary as
+"CUDA host compiler".
+
+.. versionchanged:: TBD
+
+The GPU package compiles its device code with the ``FindCUDA`` module of
+CMake, which reads ``CUDA_HOST_COMPILER``.  It does **not** use the CUDA
+language support of CMake, so ``CMAKE_CUDA_HOST_COMPILER`` was ignored for
+this package, unlike for the KOKKOS package.  Setting
+``CMAKE_CUDA_HOST_COMPILER`` now selects the host compiler for the GPU
+package as well, so that both spellings work.  A value given for
+``CUDA_HOST_COMPILER`` takes precedence.
 
 When compiling for CUDA or HIP with CUDA, version 8.0 or later of the
 CUDA toolkit is required and a GPU architecture of Kepler or later,

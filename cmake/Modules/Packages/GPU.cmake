@@ -11,6 +11,18 @@ if(POLICY CMP0146)
   cmake_policy(SET CMP0146 OLD)
 endif()
 
+# The GPU package compiles its device code with the deprecated FindCUDA module,
+# which takes the host compiler for nvcc from CUDA_HOST_COMPILER and not from
+# CMAKE_CUDA_HOST_COMPILER, which only applies to the CUDA language support of
+# CMake.  Accept the latter as well, so that selecting a host compiler works the
+# same way as for the packages that do use the CUDA language, and so that build
+# environments setting only CMAKE_CUDA_HOST_COMPILER are not silently ignored.
+# This has to happen before find_package(CUDA), which creates the cache entry.
+if(CMAKE_CUDA_HOST_COMPILER AND NOT CUDA_HOST_COMPILER)
+  set(CUDA_HOST_COMPILER "${CMAKE_CUDA_HOST_COMPILER}" CACHE FILEPATH
+      "Host side compiler used by NVCC")
+endif()
+
 set(GPU_SOURCES_DIR ${LAMMPS_SOURCE_DIR}/GPU)
 set(GPU_SOURCES ${GPU_SOURCES_DIR}/gpu_extra.h
                 ${GPU_SOURCES_DIR}/fix_gpu.h
