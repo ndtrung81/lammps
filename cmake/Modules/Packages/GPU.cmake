@@ -69,12 +69,8 @@ if(GPU_API STREQUAL "CUDA")
   if(NOT BIN2C)
     message(FATAL_ERROR "Could not find bin2c, use -DBIN2C=/path/to/bin2c to help cmake finding it.")
   endif()
-  option(CUDPP_OPT "Enable GPU binning via CUDAPP (should be off for modern GPUs)" OFF)
   option(CUDA_MPS_SUPPORT "Enable tweaks to support CUDA Multi-process service (MPS)" OFF)
   if(CUDA_MPS_SUPPORT)
-    if(CUDPP_OPT)
-      message(FATAL_ERROR "Must use -DCUDPP_OPT=OFF with -DCUDA_MPS_SUPPORT=ON")
-    endif()
     set(GPU_CUDA_MPS_FLAGS "-DCUDA_MPS_SUPPORT")
   endif()
   option(CUDA_BUILD_MULTIARCH "Enable building CUDA kernels for all supported GPU architectures" ON)
@@ -98,12 +94,6 @@ if(GPU_API STREQUAL "CUDA")
   list(REMOVE_ITEM GPU_LIB_CU ${LAMMPS_LIB_SOURCE_DIR}/gpu/lal_pppm.cu)
 
   cuda_include_directories(${LAMMPS_LIB_SOURCE_DIR}/gpu ${LAMMPS_LIB_BINARY_DIR}/gpu)
-
-  if(CUDPP_OPT)
-    cuda_include_directories(${LAMMPS_LIB_SOURCE_DIR}/gpu/cudpp_mini)
-    file(GLOB GPU_LIB_CUDPP_SOURCES CONFIGURE_DEPENDS ${LAMMPS_LIB_SOURCE_DIR}/gpu/cudpp_mini/[^.]*.cpp)
-    file(GLOB GPU_LIB_CUDPP_CU CONFIGURE_DEPENDS ${LAMMPS_LIB_SOURCE_DIR}/gpu/cudpp_mini/[^.]*.cu)
-  endif()
 
   # build arch/gencode commands for nvcc based on CUDA toolkit version and use choice
   # --arch translates directly instead of JIT, so this should be for the preferred or most common architecture
@@ -169,12 +159,9 @@ if(GPU_API STREQUAL "CUDA")
   endif()
 
   set(NVCC_FLAGS -DUNIX -O3 --use_fast_math -Wno-deprecated-gpu-targets -allow-unsupported-compiler -DNV_KERNEL -DUCL_CUDADR ${GPU_CUDA_GENCODE} -D_${GPU_PREC_SETTING} -DLAMMPS_${LAMMPS_SIZES})
-  if(CUDPP_OPT)
-    string(APPEND NVCC_FLAGS " -DUSE_CUDPP")
-  endif()
   cuda_compile_fatbin(GPU_GEN_OBJS ${GPU_LIB_CU} OPTIONS ${CUDA_REQUEST_PIC} ${NVCC_FLAGS})
 
-  cuda_compile(GPU_OBJS ${GPU_LIB_CUDPP_CU} OPTIONS ${CUDA_REQUEST_PIC}
+  cuda_compile(GPU_OBJS OPTIONS ${CUDA_REQUEST_PIC}
           -DUNIX -O3 --use_fast_math -Wno-deprecated-gpu-targets -allow-unsupported-compiler -DUCL_CUDADR ${GPU_CUDA_GENCODE} -D_${GPU_PREC_SETTING} -DLAMMPS_${LAMMPS_SIZES})
 
   foreach(CU_OBJ ${GPU_GEN_OBJS})
@@ -188,7 +175,7 @@ if(GPU_API STREQUAL "CUDA")
   endforeach()
   set_directory_properties(PROPERTIES ADDITIONAL_MAKE_CLEAN_FILES "${LAMMPS_LIB_BINARY_DIR}/gpu/*_cubin.h")
 
-  add_library(gpu STATIC ${GPU_LIB_SOURCES} ${GPU_LIB_CUDPP_SOURCES} ${GPU_OBJS})
+  add_library(gpu STATIC ${GPU_LIB_SOURCES} ${GPU_OBJS})
   target_link_libraries(gpu PRIVATE ${CUDA_LIBRARIES} ${CUDA_CUDA_LIBRARY})
   target_include_directories(gpu PRIVATE ${LAMMPS_LIB_BINARY_DIR}/gpu ${CUDA_INCLUDE_DIRS})
   target_compile_definitions(gpu PRIVATE -DUSE_CUDA -D_${GPU_PREC_SETTING} ${GPU_CUDA_MPS_FLAGS})
@@ -196,10 +183,6 @@ if(GPU_API STREQUAL "CUDA")
     target_compile_definitions(gpu PRIVATE -DUCL_DEBUG -DGERYON_KERNEL_DUMP)
   else()
     target_compile_definitions(gpu PRIVATE -DMPI_GERYON -DUCL_NO_EXIT)
-  endif()
-  if(CUDPP_OPT)
-    target_include_directories(gpu PRIVATE ${LAMMPS_LIB_SOURCE_DIR}/gpu/cudpp_mini)
-    target_compile_definitions(gpu PRIVATE -DUSE_CUDPP)
   endif()
 
   add_executable(nvc_get_devices ${LAMMPS_LIB_SOURCE_DIR}/gpu/geryon/ucl_get_devices.cpp)
@@ -283,7 +266,6 @@ elseif(GPU_API STREQUAL "OPENCL")
 elseif(GPU_API STREQUAL "HIP")
   include(DetectHIPInstallation)
   find_package(hip REQUIRED)
-  option(HIP_USE_DEVICE_SORT "Use GPU sorting" ON)
 
   if(NOT DEFINED HIP_PLATFORM)
       if(NOT DEFINED ENV{HIP_PLATFORM})
@@ -437,60 +419,6 @@ elseif(GPU_API STREQUAL "HIP")
     target_compile_definitions(gpu PRIVATE -DMPI_GERYON -DUCL_NO_EXIT)
   endif()
   target_link_libraries(gpu PRIVATE hip::host)
-
-  if(HIP_USE_DEVICE_SORT)
-    if(HIP_PLATFORM STREQUAL "amd")
-      # ROCm 5.1+ requires c++14 for rocprim; ROCm 6+/7+ rocprim requires c++17
-      set_property(TARGET gpu PROPERTY CXX_STANDARD 17)
-    endif()
-    # add hipCUB
-    find_package(hipcub REQUIRED)
-    target_link_libraries(gpu PRIVATE hip::hipcub)
-    target_compile_definitions(gpu PRIVATE -DUSE_HIP_DEVICE_SORT)
-
-    if(HIP_PLATFORM STREQUAL "nvcc")
-      find_package(CUB)
-
-      if(CUB_FOUND)
-        set(DOWNLOAD_CUB_DEFAULT OFF)
-      else()
-        set(DOWNLOAD_CUB_DEFAULT ON)
-      endif()
-
-      option(DOWNLOAD_CUB "Download and compile the CUB library instead of using an already installed one" ${DOWNLOAD_CUB_DEFAULT})
-
-      if(DOWNLOAD_CUB)
-        message(STATUS "CUB download requested")
-        # TODO: test update to current version 1.17.2
-        set(CUB_URL "https://github.com/nvidia/cub/archive/1.12.0.tar.gz" CACHE STRING "URL for CUB tarball")
-        set(CUB_SHA256 "3b03d0cbc9549606fbeda69a920562eb563836346b39014c79dfd024165ee549" CACHE STRING "SHA256 checksum of CUB tarball")
-        mark_as_advanced(CUB_URL)
-        mark_as_advanced(CUB_SHA256)
-        GetFallbackURL(CUB_URL CUB_FALLBACK)
-
-        include(ExternalProject)
-
-        ExternalProject_Add(CUB
-          URL     ${CUB_URL} ${CUB_FALLBACK}
-          URL_HASH SHA256=${CUB_SHA256}
-          PREFIX "${CMAKE_CURRENT_BINARY_DIR}"
-          CONFIGURE_COMMAND ""
-          BUILD_COMMAND ""
-          INSTALL_COMMAND ""
-          UPDATE_COMMAND ""
-        )
-        ExternalProject_get_property(CUB SOURCE_DIR)
-        set(CUB_INCLUDE_DIR ${SOURCE_DIR})
-      else()
-        find_package(CUB)
-        if(NOT CUB_FOUND)
-          message(FATAL_ERROR "CUB library not found. Help CMake to find it by setting CUB_INCLUDE_DIR, or set DOWNLOAD_CUB=ON to download it")
-        endif()
-      endif()
-
-      target_include_directories(gpu PRIVATE ${CUB_INCLUDE_DIR})
-    endif()
-  endif()
 
   add_executable(hip_get_devices ${LAMMPS_LIB_SOURCE_DIR}/gpu/geryon/ucl_get_devices.cpp)
   target_compile_definitions(hip_get_devices PRIVATE -DUCL_HIP)

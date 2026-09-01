@@ -133,11 +133,13 @@ FixGPU::FixGPU(LAMMPS *lmp, int narg, char **arg) :
   while (iarg < narg) {
     if (strcmp(arg[iarg],"neigh") == 0) {
       if (iarg+2 > narg) utils::missing_cmd_args(FLERR,"package gpu neigh", error);
+      // neighbor lists are always binned on the host and built on the device,
+      // so "yes" and "hybrid" select the same mode
       const std::string modearg = arg[iarg+1];
       if (modearg == "hybrid")
         _gpu_mode = GPU_HYB_NEIGH;
       else if (utils::logical(FLERR, modearg, false, lmp))
-        _gpu_mode = GPU_NEIGH;
+        _gpu_mode = GPU_HYB_NEIGH;
       else
         _gpu_mode = GPU_FORCE;
       iarg += 2;
@@ -213,7 +215,7 @@ FixGPU::FixGPU(LAMMPS *lmp, int narg, char **arg) :
         error->warning(FLERR, "GPU does not support neighbor lists on device, switching to host");
       _gpu_mode = GPU_FORCE;
     } else {
-      _gpu_mode = GPU_NEIGH;
+      _gpu_mode = GPU_HYB_NEIGH;
     }
   }
 
@@ -304,7 +306,7 @@ void FixGPU::setup(int vflag)
     }
   }
 
-  if (_gpu_mode == GPU_NEIGH || _gpu_mode == GPU_HYB_NEIGH)
+  if (_gpu_mode != GPU_FORCE)
     if (neighbor->exclude_setting() != 0)
       error->all(FLERR,  Error::NOLASTLINE,
                  "Cannot use neigh_modify exclude with GPU neighbor builds");

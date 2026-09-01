@@ -22,9 +22,7 @@
 using namespace LAMMPS_AL;
 
 int Neighbor::bytes_per_atom(const int max_nbors) const {
-  if (_gpu_nbor==1)
-    return (max_nbors+2)*sizeof(int);
-  else if (_gpu_nbor==2)
+  if (_gpu_nbor==2)
     return (max_nbors+3)*sizeof(int);
   else if (_use_packing)
     return ((max_nbors+2)*2)*sizeof(int);
@@ -760,29 +758,6 @@ void Neighbor::build_nbor_list(double **x, const int inum, const int host_inum,
   _nbor_pitch=inum;
   _shared->neigh_tex.bind_float(atom.x,4);
 
-  // If binning on GPU, do this now
-  if (_gpu_nbor==1) {
-    mn = _max_nbors;
-    const auto i_cell_size=static_cast<numtyp>(1.0/_cell_size);
-    const int neigh_block=_block_cell_id;
-    const int GX=(int)ceil((double)nall/neigh_block);
-    const auto sublo0=static_cast<numtyp>(sublo[0]);
-    const auto sublo1=static_cast<numtyp>(sublo[1]);
-    const auto sublo2=static_cast<numtyp>(sublo[2]);
-    _shared->k_cell_id.set_size(GX,neigh_block);
-    _shared->k_cell_id.run(&atom.x, &atom.dev_cell_id,
-                           &atom.dev_particle_id, &sublo0, &sublo1,
-                           &sublo2, &i_cell_size, &ncellx, &ncelly, &ncellz,
-                           &nt, &nall, &cells_in_cutoff);
-
-    atom.sort_neighbor(nall);
-
-    /* calculate cell count */
-    _shared->k_cell_counts.set_size(GX,neigh_block);
-    _shared->k_cell_counts.run(&atom.dev_cell_id, &cell_counts, &nall,
-                               &ncell_3d);
-  }
-
   /* build the neighbor list */
   const int cell_block=_block_nbor_build;
 #ifndef LAL_USE_OLD_NEIGHBOR
@@ -1120,29 +1095,6 @@ void Neighbor::build_nbor_list(double **x, const int inum, const int host_inum,
 
   _nbor_pitch=inum;
   _shared->neigh_tex.bind_float(atom.x,4);
-
-  // If binning on GPU, do this now
-  if (_gpu_nbor==1) {
-    mn = _max_nbors;
-    const auto i_cell_size=static_cast<numtyp>(1.0/_cell_size);
-    const int neigh_block=_block_cell_id;
-    const int GX=(int)ceil((double)nall/neigh_block);
-    const auto sublo0=static_cast<numtyp>(sublo[0]);
-    const auto sublo1=static_cast<numtyp>(sublo[1]);
-    const auto sublo2=static_cast<numtyp>(sublo[2]);
-    _shared->k_cell_id.set_size(GX,neigh_block);
-    _shared->k_cell_id.run(&atom.x, &atom.dev_cell_id,
-                           &atom.dev_particle_id, &sublo0, &sublo1,
-                           &sublo2, &i_cell_size, &ncellx, &ncelly, &ncellz,
-                           &nt, &nall, &cells_in_cutoff);
-
-    atom.sort_neighbor(nall);
-
-    /* calculate cell count */
-    _shared->k_cell_counts.set_size(GX,neigh_block);
-    _shared->k_cell_counts.run(&atom.dev_cell_id, &cell_counts, &nall,
-                               &ncell_3d);
-  }
 
   /* build the neighbor list */
   const int cell_block=_block_nbor_build;

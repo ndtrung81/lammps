@@ -255,12 +255,6 @@ CMake build
                                 # GPU_API=HIP
    -D HIP_ARCH=value            # deprecated, use GPU_ARCH instead (still accepted,
                                 # but prints a deprecation warning)
-   -D HIP_USE_DEVICE_SORT=value # enables GPU sorting
-                                # value = yes (default) or no
-   -D CUDPP_OPT=value           # use GPU binning with CUDA (should be off for modern GPUs)
-                                # enables CUDA Performance Primitives, must be "no" for
-                                # CUDA_MPS_SUPPORT=yes
-                                # value = yes or no (default)
    -D CUDA_MPS_SUPPORT=value    # enables some tweaks required to run with active
                                 # nvidia-cuda-mps daemon
                                 # value = yes or no (default)
@@ -346,9 +340,7 @@ liblammps.so.0, not found``.  This may be worked around by also setting:
 ``-DCMAKE_EXE_LINKER_FLAGS=-Wl,--unresolved-symbols=ignore-in-shared-libs``.
 
 To support the CUDA multi-process server (MPS) you can set the define
-``-DCUDA_MPS_SUPPORT``.  Please note that in this case you must **not**
-use the CUDA performance primitives and thus set the variable
-``CUDPP_OPT`` to empty.
+``-DCUDA_MPS_SUPPORT``.
 
 If you are compiling for OpenCL, the default setting is to download,
 build, and link with a static OpenCL ICD loader library and standard
@@ -368,11 +360,6 @@ If you are compiling with HIP, note that before running CMake you will
 have to set appropriate environment variables. Some variables such as
 ``HCC_AMDGPU_TARGET`` (for ROCm <= 4.0) or ``CUDA_PATH`` are
 necessary for ``hipcc`` and the linker to work correctly.
-
-When compiling for HIP ROCm, GPU sorting with ``-D
-HIP_USE_DEVICE_SORT=on`` requires installing the ``hipcub`` library
-(https://github.com/ROCmSoftwarePlatform/hipCUB).  Setting
-``-DDOWNLOAD_CUB=yes`` will download and compile CUB.
 
 The GPU library has some multi-thread support using OpenMP.  If LAMMPS
 is built with ``-D BUILD_OMP=on`` this will also be enabled.
@@ -395,10 +382,8 @@ For a debug build, set ``GPU_DEBUG`` to be ``yes``.
 .. versionadded:: 3Aug2022
 
 Using the CHIP-SPV implementation of HIP is supported. It allows one to
-run HIP code on Intel GPUs via the OpenCL or Level Zero back ends. To use
-CHIP-SPV, you must set ``-DHIP_USE_DEVICE_SORT=OFF`` in your CMake
-command-line as CHIP-SPV does not yet support hipCUB. As of Summer 2022,
-the use of HIP for Intel GPUs is experimental. You should only use this
+run HIP code on Intel GPUs via the OpenCL or Level Zero back ends.  As of
+Summer 2022, the use of HIP for Intel GPUs is experimental. You should only use this
 option in preparations to run on Aurora system at Argonne.
 
 .. code:: bash

@@ -70,7 +70,7 @@ DeviceT::Device() : _init_count(0), _device_init(false),
                     _comm_gpu_allocated(false),
                     _gpu_mode(GPU_FORCE), _first_device(0),
                     _last_device(0), _platform_id(-1), _compiled(false),
-                    _use_old_nbor_build(0), _use_device_sort(0) {
+                    _use_old_nbor_build(0) {
 }
 
 template <class numtyp, class acctyp>
@@ -382,12 +382,6 @@ int DeviceT::init_device(MPI_Comm /*world*/, MPI_Comm replica, const int ngpu,
   _use_old_nbor_build = 1;
   #endif
 
-  #if defined(USE_CUDPP) || defined(USE_HIP_DEVICE_SORT)
-  _use_device_sort = 1;
-  #else
-  _use_device_sort = 0;
-  #endif
-
   return flag;
 }
 
@@ -527,22 +521,8 @@ int DeviceT::init(Answer<numtyp,acctyp> &ans, const bool charge,
   // Initial number of local particles
 
   int gpu_nbor=0;
-  if (_gpu_mode==Device<numtyp,acctyp>::GPU_NEIGH)
-    gpu_nbor=1;
-  else if (_gpu_mode==Device<numtyp,acctyp>::GPU_HYB_NEIGH)
+  if (_gpu_mode!=Device<numtyp,acctyp>::GPU_FORCE)
     gpu_nbor=2;
-
-  // NOTE: enforce the hybrid mode (binning on the CPU)
-  // when not using sorting on the device
-  #if !defined(USE_CUDPP) && !defined(USE_HIP_DEVICE_SORT)
-  if (gpu_nbor==1)
-    gpu_nbor=2;
-  #endif
-  // or when the device supports subgroups
-  #ifndef LAL_USE_OLD_NEIGHBOR
-  if (gpu_nbor==1)
-    gpu_nbor=2;
-  #endif
 
   if (_init_count==0) {
     // Initialize atom and nbor data
@@ -610,23 +590,10 @@ int DeviceT::init_nbor(Neighbor *nbor, const int nlocal,
                        const bool pre_cut, const int threads_per_atom,
                        const bool ilist_map) {
 
-  // NOTE: enforce the hybrid mode (binning on the CPU)
-  // when not using sorting on the device
+  // the neighbor list is always binned on the host and built on the device
   int gpu_nbor=0;
-  if (_gpu_mode==Device<numtyp,acctyp>::GPU_NEIGH)
-    gpu_nbor=1;
-  else if (_gpu_mode==Device<numtyp,acctyp>::GPU_HYB_NEIGH)
+  if (_gpu_mode!=Device<numtyp,acctyp>::GPU_FORCE)
     gpu_nbor=2;
-  #if !defined(USE_CUDPP) && !defined(USE_HIP_DEVICE_SORT)
-  if (gpu_nbor==1) {
-    gpu_nbor=2;
-    _gpu_mode=Device<numtyp,acctyp>::GPU_HYB_NEIGH;
-  }
-  #endif
-  #ifndef LAL_USE_OLD_NEIGHBOR
-  if (gpu_nbor==1)
-    gpu_nbor=2;
-  #endif
 
   #ifdef USE_OPENCL
   if (_ocl_config_name == "AMD_GPU" && gpu->shared_memory(_first_device) && gpu_nbor > 0)
@@ -938,16 +905,6 @@ void DeviceT::output_times(UCL_Timer &time_pair, Answer<numtyp,acctyp> &ans,
         fprintf(screen,"Neigh mode:      Hybrid (binning on host)");
         if (_use_old_nbor_build == 1) fprintf(screen," - legacy.\n");
         else fprintf(screen," with subgroup support.\n");
-        if (_use_device_sort == 0)
-          fprintf(screen,"Neigh sorting:   Unavailable or disabled.\n");
-      } else if (nbor.gpu_nbor()==1) {
-        fprintf(screen,"Neigh mode:      Device");
-        if (_use_old_nbor_build == 1) fprintf(screen," - legacy.\n");
-        else fprintf(screen," - with subgroup support.\n");
-        if (_use_device_sort == 1)
-          fprintf(screen,"Neigh sorting:   Enabled.\n");
-        else
-          fprintf(screen,"Neigh sorting:   Unavailable or disabled.\n");
       } else if (nbor.gpu_nbor()==0)
         fprintf(screen,"Neigh mode:      Host.\n");
 

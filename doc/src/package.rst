@@ -24,9 +24,9 @@ Syntax
       zero or more keyword/value pairs may be appended
       keywords = *neigh* or *newton* or *pair/only* or *binsize* or *gpuID* or *tpa* or *blocksize* or *omp* or *platform* or *device_type* or *ocl_args* or *split* (deprecated)
         *neigh* value = *yes* or *no* or *hybrid*
-          *yes* = neighbor list build on GPU (default)
+          *yes* = perform binning on the CPU but build neighbor list on the GPU (default)
           *no* = neighbor list build on CPU
-          *hybrid* = perform binning on the CPU but build neighbor list on the GPU
+          *hybrid* = same as *yes*
         *newton* = *off* or *on*
           *off* = set Newton pairwise flag off (default)
           *on* = set Newton pairwise flag on
@@ -225,12 +225,11 @@ default value as listed below.
 
 The *neigh* keyword specifies where neighbor lists for pair style
 computation will be built.  If *neigh* is *yes*, which is the default,
-neighbor list building is performed on the GPU.  If *neigh* is *no*,
-neighbor list building is instead performed on the CPU.  If *neigh* is
-*hybrid* the binning step of the neighbor list build is performed on the
-CPU and the list themselves on the GPU.  GPU neighbor list building
-currently is not fully compatible with a triclinic box; if the behavior
-is significantly different from the CPU case, use the *neigh no*
+the binning step of the neighbor list build is performed on the CPU and
+the lists themselves on the GPU.  If *neigh* is *no*, neighbor list
+building is instead performed entirely on the CPU.  GPU neighbor list
+building currently is not fully compatible with a triclinic box; if the
+behavior is significantly different from the CPU case, use the *neigh no*
 setting.  GPU neighbor lists are not accessible for commands that are
 not GPU-enabled.  When a non-GPU enabled command requires a neighbor
 list, it will be built on the CPU.  In these cases, it can be more
@@ -238,6 +237,14 @@ efficient to only use CPU neighbor list builds, particularly if the CPU
 neighbor list is perpetual, i.e. used in every step.  If a GPU
 environment does not support building neighbor lists on the GPU, the
 default setting it will automatically change to *neigh no*.
+
+.. versionchanged:: TBD
+
+Binning on the GPU has been removed, so *hybrid* is now accepted as a
+synonym for *yes*.  It was only available in builds using the CUDA
+performance primitives or the hipCUB library for sorting, it was never
+implemented for the neighbor list build that uses subgroups, and where it
+was available it was measurably slower than binning on the CPU.
 
 The *newton* keyword sets the Newton flags for pairwise (not bonded)
 interactions to *off* or *on*, the same as the :doc:`newton <newton>`
