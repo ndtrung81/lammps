@@ -328,10 +328,10 @@ than having to wait for the JIT compiler of the CUDA driver to translate
 it.  This behavior can be turned off (e.g. to speed up compilation) by
 setting ``CUDA_ENABLE_MULTIARCH`` to ``no``.
 
-The compiler that ``nvcc`` uses to compile the host part of the device
-code can be selected with ``-D CUDA_HOST_COMPILER=/path/to/compiler``.
-This is needed when the default C++ compiler is newer than the CUDA
-toolkit in use supports, since ``nvcc`` then refuses to run.  Setting the
+The compiler that ``nvcc`` uses to compile the host code can be
+selected with ``-D CUDA_HOST_COMPILER=/path/to/compiler``.
+This is needed when the default C++ compiler is not supported by
+``nvcc`` provided by the CUDA toolkit in use.  Setting the
 environment variable ``CUDAHOSTCXX`` has the same effect.  The compiler
 that ends up being used is printed in the configuration summary as
 "CUDA host compiler".
