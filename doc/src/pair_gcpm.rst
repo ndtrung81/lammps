@@ -25,16 +25,24 @@ Syntax
 
 .. parsed-literal::
 
-     *gcpm* args = enable_polar eps_rf cutoff (cutoff2)
+     *gcpm* args = enable_polar eps_rf cutoff (cutoff2) (keyword value ...)
        enable_polar = 1 to solve for induced dipoles (polarizable), 0 for charges only
        eps_rf   = dielectric constant of the reaction-field continuum (<= 0 disables the reaction field)
        cutoff   = global cutoff for Buckingham (and Coulombic if only 1 arg) (distance units)
        cutoff2  = global cutoff for Coulombic (optional) (distance units)
-     *gcpm/long* args = enable_polar eps_rf cutoff (cutoff2)
+       zero or more keyword/value pairs may be appended
+       keyword = *cutoff/style* or *polar/tol* or *polar/maxiter*
+         *cutoff/style* value = *atom* or *com*
+           *atom* = truncate each pair at its atom-atom distance
+           *com* = truncate each pair at the center-of-mass distance of the two molecules
+         *polar/tol* value = tolerance on the largest induced-dipole change of an iteration (dipole units)
+         *polar/maxiter* value = maximum number of induced-dipole iterations per force evaluation
+     *gcpm/long* args = enable_polar eps_rf cutoff (cutoff2) (keyword value ...)
        enable_polar = 1 to solve for induced dipoles (polarizable), 0 for charges only
        eps_rf   = must be <= 0; the reaction field is replaced by the k-space solver
        cutoff   = global cutoff for Buckingham (and Coulombic if only 1 arg) (distance units)
        cutoff2  = global cutoff for Coulombic (optional) (distance units)
+       keyword = *polar/tol* or *polar/maxiter*, as for *gcpm*
 
 Examples
 """"""""
@@ -44,6 +52,9 @@ Examples
    pair_style gcpm   1   78.0  12.0
    pair_coeff 1  1   0.1550  3.1536  12.75  0.0    0.000
    pair_coeff 3  3   0.0     1.0     12.75  1.444  0.610
+
+   pair_style gcpm   1   78.4  11.22  11.22  cutoff/style com  polar/tol 1.8e-5
+   pair_style gcpm   0   78.4  12.0
 
    pair_style gcpm/long   1   0.0   12.0
    kspace_style pppm/dipole 0.0001
@@ -83,6 +94,18 @@ become an issue for soft vdW potentials.
 
 The *gcpm* style uses the reaction field approximation
 for the long range contribution as described in :ref:`(Paricaud) <Paricaud>`.
+The reaction field is a pairwise term and does not depend on the induced
+dipoles, so it may be used either with the polarizable model
+(*enable_polar* = 1), where it corrects the charge-charge, charge-dipole and
+dipole-dipole interactions alike, or without it (*enable_polar* = 0), where it
+is an Onsager reaction field on the Gaussian-smeared Coulomb interaction alone.
+
+.. versionchanged:: TBD
+
+   *eps_rf* > 0 may now be combined with *enable_polar* = 0.  Earlier versions
+   of the *gcpm* style required *enable_polar* = 1 whenever a reaction field
+   was requested.
+
 The *gcpm/long* style instead uses the real-space term as in
 the :doc:`pair buck6d/coul/gauss/long <pair_buck6d_coul_gauss>`
 style and requires a :doc:`kspace_style pppm/dipole <kspace_style>`, which
@@ -118,6 +141,48 @@ error-function.  The cutoff :math:`r_c` truncates the interaction distance.
 If one cutoff is specified it is used for both the vdW and Coulomb
 terms.  If two cutoffs are specified, the first is used as the cutoff
 for the vdW terms, and the second is the cutoff for the Coulombic term.
+
+.. versionadded:: TBD
+
+The *cutoff/style* keyword selects the distance that the cutoffs above are
+applied to.  With the default value *atom*, every pair is truncated at the
+distance between the two atoms, as in all other LAMMPS pair styles.  With the
+value *com*, a pair is instead truncated at the distance between the centers of
+mass of the two molecules the atoms belong to, so that the dispersion,
+charge-charge, charge-dipole and dipole-dipole interactions between a pair of
+molecules are all included or all dropped together.  The interactions
+themselves are unchanged: only the cutoff test uses the center-of-mass
+distance, while the kernels keep using the atom-atom distance.
+
+The *com* setting reproduces the convention of the original Fortran
+implementation of the GCPM model, and is intended for comparing with results
+obtained from it.  Note two consequences:
+
+* The centers of mass are computed from the per-atom masses of each molecule
+  every time step, and the neighbor list is built with the cutoff enlarged by
+  twice the largest atom to center-of-mass distance in the system, so that no
+  pair of molecules inside the cutoff is missing from it.  Both add some cost,
+  and the enlarged neighbor list needs more memory.
+* Because a molecule pair is dropped as a whole, the interaction that is
+  discarded at the cutoff is the residual interaction between two neutral
+  molecules (predominantly dipole-dipole), which does not vanish there.  The
+  energy therefore has a small discontinuity at each cutoff crossing, roughly
+  an order of magnitude larger than with the *atom* setting, and the total
+  energy of a constant-energy run wanders accordingly.  The trajectory is
+  unaffected, but for production runs the *atom* setting conserves energy far
+  better.
+
+Using *cutoff/style com* requires molecule IDs, which are defined by the
+:doc:`atom_style <atom_style>` used.  It is supported only by the *gcpm* style
+on the CPU: the accelerated variants and the *gcpm/long* style, whose Ewald
+sum has to be truncated consistently in real and reciprocal space, accept only
+the *atom* setting.
+
+The *polar/tol* and *polar/maxiter* keywords control the iterative solver for
+the induced dipoles that runs when *enable_polar* = 1.  The iteration stops
+once no induced dipole changes by more than *polar/tol* between two successive
+iterations, or after *polar/maxiter* iterations.  A summary of how many
+iterations the solver needed is printed at the end of each run.
 
 The polar term is given by
 
@@ -177,6 +242,9 @@ Restrictions
 These styles are part of the GCPM package.  They are only
 enabled if LAMMPS was built with that package.  See the :doc:`Build package <Build_package>` page for more info.
 
+The *cutoff/style com* setting of the *gcpm* style requires an
+:doc:`atom_style <atom_style>` that stores molecule IDs.
+
 The *gcpm/long* style requires :doc:`kspace_style pppm/dipole <kspace_style>`,
 and must not be combined with :doc:`neigh_modify exclude <neigh_modify>`:
 excluded pairs cannot cancel the k-space contributions.  Intramolecular
@@ -190,7 +258,8 @@ Related commands
 Default
 """""""
 
-none
+The option defaults are cutoff/style = *atom*, polar/tol = 1.0e-5, and
+polar/maxiter = 50.
 
 .. _Paricaud:
 

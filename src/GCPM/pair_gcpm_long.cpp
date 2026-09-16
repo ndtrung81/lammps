@@ -165,6 +165,15 @@ void PairGCPMLong::init_style()
   // the reaction field was the stand-in for the reciprocal-space charge-dipole
   // and dipole-dipole interactions, now fully supplied by pppm/dipole
 
+  // molecule-COM truncation is a property of a plain truncated (cutoff +
+  // reaction field) sum; the Ewald split needs the real-space and
+  // reciprocal-space parts to be truncated consistently, per atom pair
+
+  if (cut_com)
+    error->all(FLERR,"Pair gcpm/long does not support cutoff/style com: the "
+                     "Ewald real-space sum must be truncated by the atom-atom "
+                     "distance to match the reciprocal-space sum");
+
   if (enable_rf)
     error->all(FLERR,"Pair gcpm/long does not support the reaction field: "
                      "set eps_rf <= 0 (the long-range interactions are computed "
@@ -264,7 +273,15 @@ void PairGCPMLong::charge_charge(int eflag, int /*vflag*/)
       // pair.
       if ((molecule[i] != 0) && (molecule[i] == molecule[j])) factor_coul = 0.0;
 
-      if (qtmp == 0.0 && q[j] == 0.0) continue;
+      // as in PairGCPM::charge_charge(): a pair with exactly one zero charge
+      // is evaluated only to accumulate efield, which nothing reads when the
+      // induced-dipole solver is off. Its reciprocal-space contribution is
+      // proportional to q_i*q_j = 0, so there is nothing left to cancel here.
+      if (enable_polar) {
+        if ((qtmp == 0.0) && (q[j] == 0.0)) continue;
+      } else {
+        if ((qtmp == 0.0) || (q[j] == 0.0)) continue;
+      }
 
       delx = xtmp - x[j][0];
       dely = ytmp - x[j][1];

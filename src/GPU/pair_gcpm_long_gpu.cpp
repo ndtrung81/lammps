@@ -202,6 +202,11 @@ void PairGCPMLongGPU::init_style()
     error->all(FLERR,
                "Pair gcpm/long/gpu requires atom attributes mu and torque for polar");
 
+  // the Ewald split requires atom-atom truncation (as in PairGCPMLong)
+
+  if (cut_com)
+    error->all(FLERR, "Pair gcpm/long/gpu does not support cutoff/style com");
+
   // Replicate parameter setup from PairGCPM::init_style() without adding
   // its own neighbor request (we add REQ_FULL below).
   double maxcut = -1.0;
@@ -223,6 +228,18 @@ void PairGCPMLongGPU::init_style()
     error->all(FLERR, "Pair style gcpm/long/gpu requires a KSpace style");
   g_ewald = force->kspace->g_ewald;
   cut_coulsq = cut_coul * cut_coul;
+
+  // this style uses the per-molecule reaction field (reaction_field_pre/post),
+  // which groups the sites by molecule ID and builds R_p from the converged
+  // induced dipoles -- unlike the pairwise reaction field of pair gcpm, it
+  // cannot run without the solver
+
+  if (enable_rf) {
+    if (!enable_polar)
+      error->all(FLERR, "Pair gcpm/long/gpu reaction field requires enable_polar = 1");
+    if (!atom->molecule_flag)
+      error->all(FLERR, "Pair gcpm/long/gpu reaction field requires atom molecule IDs");
+  }
 
   setup_reaction_field();
 

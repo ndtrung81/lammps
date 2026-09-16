@@ -56,9 +56,10 @@
 #  - The Fortran integrates with a Gear 4th-order predictor-corrector; LAMMPS
 #    uses velocity Verlet.  Trajectories diverge; averages should agree.
 #  - The Fortran truncates by molecule COM-COM distance, LAMMPS by atom-atom
-#    distance.  This shifts charge-charge (offset H/M sites) at the cutoff
-#    shell; dispersion (O ~ at the COM) is unaffected, hence its near-exact
-#    match.
+#    distance by default.  This shifts charge-charge (offset H/M sites) at the
+#    cutoff shell; dispersion (O ~ at the COM) is unaffected, hence its
+#    near-exact match.  Add 'cutoff/style com' to the pair_style line below to
+#    switch LAMMPS to the Fortran convention (see the note further down).
 #  - The Fortran sums intermolecular Coulomb + explicit reaction-field self
 #    terms; the LAMMPS per-pair RF gets the self terms from intramolecular
 #    pairs instead.
@@ -140,6 +141,14 @@ set type 2 mass 0.9998574
 # units of the Fortran, i.e. 1.82e-5 e*Ang).  The Fortran stops after maxiter =
 # 10 iterations whether or not that is met; here the cap is left at the LAMMPS
 # default of 50 and the tolerance is reached in 10-12 iterations.
+# Append 'cutoff/style com' to truncate by molecule COM-COM distance, the way
+# the Fortran does (a single r2ij test per molecule pair for the dispersion,
+# charge-charge, charge-dipole and dipole-dipole channels alike).  That removes
+# the dominant remaining difference from the Fortran -- on the pwatin frame the
+# smeared-Coulomb energy goes from 4.0% off to 0.067% off -- at the cost of a
+# larger neighbor list and a coarser energy discontinuity at the cutoff (the
+# whole molecule-pair interaction switches at once, so etotal drifts more in
+# NVE; the trajectory is unaffected).  Leave it off for production NVE runs.
 pair_style gcpm 1 78.4 ${rc} ${rc} polar/tol 1.8e-5 polar/maxiter 50
 pair_coeff 1 1 0.218445 3.69 12.75 0.0   0.000
 pair_coeff 2 2 0.0      1.0  12.75 0.0   0.455  # No LJ interactions for H atoms

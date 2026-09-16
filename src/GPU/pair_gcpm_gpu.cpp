@@ -194,6 +194,12 @@ void PairGCPMGPU::init_style()
     error->all(FLERR,
                "Pair gcpm/gpu requires atom attributes mu and torque for polar");
 
+  // the GPU kernels test the atom-atom separation against the cutoffs; the
+  // molecule-COM convention is CPU-only
+
+  if (cut_com)
+    error->all(FLERR, "Pair gcpm/gpu does not support cutoff/style com");
+
   // Replicate parameter setup from PairGCPM::init_style() without adding
   // its own neighbor request (we add REQ_FULL below).
   double maxcut = -1.0;

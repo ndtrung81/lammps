@@ -72,12 +72,31 @@ class PairGCPM : public Pair {
   // by the long-range (Ewald) derived class PairGCPMLong. The reaction-field
   // base class (this class) instead folds the reaction field into the pairwise
   // Coulomb loops and does not call reaction_field_pre/post().
+  void setup_molecules();               // count molecules, size the per-molecule tables
   void setup_reaction_field();          // size tables, c_rf; call from init_style()
   void reaction_field_pre();            // R_q -> efield; call before polar()
   void reaction_field_post(int eflag);  // U_qq^RF energy + RF site forces; after polar()
   void compute_molecular_dipoles();
   void reaction_field(double **mol_d, double **mol_R);
   void grow_mol_arrays(int n);
+
+  // molecule-COM truncation (cut_com == 1, the convention of the original
+  // Fortran GCPM code): fill dcom[i], the vector from atom i to the center of
+  // mass of its molecule. Called once per compute(), before the kernels.
+  void compute_mol_com(int comm_ghost);
+
+  // squared distance a pair is truncated at: the atom-atom separation in the
+  // default (atom) convention, the molecule COM-COM separation when cut_com is
+  // on. dcom is a difference vector (COM minus atom position), so it is image
+  // independent and del + dcom[i] - dcom[j] is the COM separation in the same
+  // periodic image as del.
+  inline double cutdistsq(int i, int j, double delx, double dely, double delz) const {
+    if (!cut_com) return delx*delx + dely*dely + delz*delz;
+    const double cx = delx + dcom[i][0] - dcom[j][0];
+    const double cy = dely + dcom[i][1] - dcom[j][1];
+    const double cz = delz + dcom[i][2] - dcom[j][2];
+    return cx*cx + cy*cy + cz*cz;
+  }
 
   // Tally the virial of a force (fx,fy,fz) on atom i from neighbor j, used
   // instead of virial_fdotr_compute() (which is wrong for the non-central
@@ -91,6 +110,10 @@ class PairGCPM : public Pair {
   double cut_lj_global;
   double **cut_lj, **cut_ljsq;
   double cut_coul, cut_coulsq;
+  double **cut_physsq;  // MAX(cut_ljsq[i][j], cut_coulsq): the physical cutoff
+                        // of a type pair. Identical to cutsq[i][j] in the atom
+                        // convention; with cut_com, cutsq carries the extra
+                        // neighbor-list padding while this stays physical.
 
   // Buckingham exp-6 parameters: phi = A*exp(-r/rho) - C6/r^6
   // where A = 6*eps*exp(gamma)/(gamma-6), rho = sigma/gamma, C6 = gamma*eps*sigma^6/(gamma-6)
@@ -114,6 +137,7 @@ class PairGCPM : public Pair {
   double tol;           // tolerance for induced dipole convergence
   int enable_polar;     // 1 if polar interactions enabled, 0 if not
   int comm_mode;        // 0 = reverse-comm efield, 1 = reverse-comm efield_pol
+  int comm_fmode;       // 0 = forward-comm mu, 1 = forward-comm dcom
   int first_polar;      // 1 on first call to polar(), 0 thereafter (warm-start flag)
 
   // induced-dipole solver convergence statistics, reset in setup() at the start
@@ -124,6 +148,18 @@ class PairGCPM : public Pair {
   int polar_niter_max;    // most iterations taken by any invocation
   int polar_nonconv;      // invocations that hit maxiter without converging
   void record_polar_iters(int niter, int converged);  // accumulate the above
+
+  // molecule center-of-mass truncation (the convention of the original Fortran
+  // GCPM code: every interaction between two molecules is included or dropped
+  // as a whole, by their COM-COM distance, instead of per atom pair)
+  int cut_com;          // 1 = truncate by molecule COM-COM distance, 0 = atom-atom
+  double **dcom;        // per-atom vector from the atom to its molecule's COM [A]
+  int ncom_max;         // allocated size of dcom
+  double com_extra;     // largest |dcom| in the system; the cutoff returned by
+                        // init_one() is padded by 2*com_extra so that no pair
+                        // with a COM-COM distance below the cutoff is missing
+                        // from the neighbor list
+  double **mol_com;     // per-molecule [cx, cy, cz, total mass]
 
   // reaction-field correction (Onsager continuum, Eqs. 11-12 of Paricaud et al.)
   int enable_rf;        // 1 if reaction-field correction enabled, 0 if not

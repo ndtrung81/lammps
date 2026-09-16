@@ -27,11 +27,15 @@ the last section of this file):
   the electrostatics differ by ~4–6%, traced to differences 2 and 5 below. (The
   FD F = −dU/dx check above only proves self-consistency of the LAMMPS forces with
   the energy, not equality with the Fortran.)
-  2. Cutoff convention (dominant electrostatic difference): the Fortran truncates
+  2. Cutoff convention (was the dominant electrostatic difference; **now
+  optional**, see "Molecule-COM truncation" below): the Fortran truncates
   ALL interactions between two molecules by their COM–COM distance
-  (if (r2ij(i,j) <= rcut2)); PairGCPM truncates per atom–atom distance. Dispersion
-  is immune (O sits ~at the COM); the charge sites (H, M) are ~1 Å off the COM, so
-  the two conventions include/exclude different site pairs in the cutoff shell.
+  (if (r2ij(i,j) <= rcut2)); PairGCPM truncates per atom–atom distance by
+  default. Dispersion is immune (O sits ~at the COM); the charge sites (H, M)
+  are ~1 Å off the COM, so the two conventions include/exclude different site
+  pairs in the cutoff shell. Since 2026-09-16 `pair_style gcpm` accepts
+  `cutoff/style com`, which adopts the Fortran convention and removes this
+  difference; `cutoff/style atom` (the default) keeps the old behavior.
   3. Induced-dipole site placement: the Fortran places the induced dipole at the
   molecular COM (x0); PairGCPM places it on the M site (mu[3] != 0), ~0.2 Å away.
   Dipole–dipole distances are COM–COM vs M–M, so the polarization energy and the
@@ -843,8 +847,204 @@ expose that far more than energies do.
 The cleanest next step is to make both codes use the **same cutoff convention**
 — either add a molecule-distance cutoff mode to the LAMMPS pair style, or switch
 the Fortran to atom–atom truncation — and align the RF self / intramolecular
-bookkeeping. Not done here; the current tooling is sufficient to diagnose each
-term.
+bookkeeping.
+
+> **DONE (2026-09-16)** for the cutoff convention: `pair_style gcpm` gained the
+> `cutoff/style com` keyword. See "Molecule-COM truncation" below for the
+> implementation and the resulting numbers. The RF self / intramolecular
+> bookkeeping (difference 5) is still open.
+
+
+# Molecule-COM truncation (`cutoff/style com`, 2026-09-16)
+
+`pair_style gcpm ... cutoff/style atom|com` selects the distance the cutoffs
+are applied to. `atom` (default) is the usual LAMMPS atom–atom truncation and
+is bit-for-bit the previous behavior. `com` truncates every channel
+(dispersion, charge–charge, charge–dipole, dipole–dipole, and the RF terms)
+by the **COM–COM distance of the two molecules**, which is what `force.f` does
+with its single `r2ij(i,j)` test built from the molecular centers `x0`.
+
+## Implementation (`src/GCPM/pair_gcpm.{h,cpp}`)
+
+- `compute_mol_com()` fills a per-atom vector `dcom[i] = COM(molecule of i) -
+  x_i`, once per `compute()`, before any kernel runs. Atoms are unwrapped with
+  their image flags and the per-molecule sums are `MPI_Allreduce`d, so molecules
+  straddling a periodic boundary or split across ranks are handled correctly.
+- `dcom` is a *difference* vector, so it is independent of the periodic image of
+  the atom. That is what lets it be forward-communicated to ghosts with no pbc
+  shift (`comm_fmode = FORWARD_DCOM` in `pack/unpack_forward_comm`), and it
+  makes `del + dcom[i] - dcom[j]` the COM separation in the same image as `del`.
+- `cutdistsq(i,j,delx,dely,delz)` (inline, in the header) returns the squared
+  distance a pair is truncated at. Every cutoff test in `dispersion()`,
+  `charge_charge()`, `compute_induced_efield()` and `polar()` goes through it;
+  the kernels themselves keep using the atom–atom `r`. With `cut_com == 0` it
+  returns `rsq` and the compiler folds it away.
+- `cut_physsq[i][j] = MAX(cut_ljsq[i][j], cut_coulsq)` was added because the
+  kernels can no longer test against `cutsq[i][j]`: with `cut_com`, `init_one()`
+  returns `cut + 2*com_extra` so that the **neighbor list** reaches far enough
+  for every molecule pair inside the cutoff, and `cutsq` carries that padding.
+  `cut_physsq` is zeroed in `allocate()` and set in `init_one()`, so type pairs
+  that never reach `init_one()` do not interact, exactly as with `cutsq`.
+- `com_extra` (the largest atom-to-COM distance) is measured in `init_style()`,
+  before `Pair::init()` calls `init_one()`. `compute_mol_com()` re-checks it
+  each step and errors out if a molecule has grown past the padding plus half
+  the neighbor skin.
+- Forbidden (and diagnosed with an explicit error) in `gcpm/long`,
+  `gcpm/gpu` and `gcpm/long/gpu`: the Ewald split needs real and reciprocal
+  space truncated consistently per atom pair, and the GPU kernels test the
+  atom–atom separation.
+
+## Validation (500-molecule pwatin frame, `examples/PACKAGES/gcpm`)
+
+| check | result |
+|---|---|
+| `cutoff/style atom`, 200 steps of `in.gcpm` vs the pre-change binary | every thermo column **bit-identical** |
+| F = −dU/dx, 18 components, `h = 1e-5`, `polar/tol 1e-9` | agrees to **1e-7 … 1e-6** relative (both cutoff styles, polar on and off) |
+| 1 rank vs 4 ranks, `cutoff/style com` | **bit-identical** thermo |
+| neighbor list completeness (skin 0.3 / 1.107 / 2.0) | `pe` identical → padding is sufficient |
+| restart write/read with `cutoff/style com` | setting preserved, `pe` reproduced |
+
+### The number that matters: pure smeared Coulomb vs the Fortran
+
+Isolation F of the section above (`pair_style gcpm 0 0.0 ${rc} ${rc}`, polar and
+RF off, `neigh_modify exclude molecule/intra all`), same frame:
+
+| quantity | Fortran (`eforce.dat`) | `cutoff/style atom` | `cutoff/style com` |
+|---|---|---|---|
+| dispersion (exp-6, no tail) | 1101.46 | 1101.4407 | **1101.4565** |
+| smeared Coulomb (no RF) | −4773.10 | −4586.75 (**−4.0 %**) | **−4776.28 (−0.067 %)** |
+
+The charge–charge discrepancy drops from 4.0 % to 0.067 %, i.e. the cutoff
+convention was indeed the dominant term (difference 2). The residual 3.2
+kcal/mol is consistent with what is left: the Fortran's Abramowitz–Stegun `cerf`
+(~1e-7 relative, summed over ~1e6 site pairs), `<=` vs `<` at the cutoff, and the
+10-decimal rounding of the converted frame.
+
+## Cost of the convention: energy discontinuity at the cutoff
+
+With `atom` truncation the per-pair shift (`e_shift_qq`, added 2026-07-18) makes
+the charge–charge energy vanish at `rc`, so only the unshifted polar channels
+jump. With `com` truncation the quantity discarded at the cutoff is the
+**residual interaction between two neutral molecules**, predominantly
+dipole–dipole, which the Onsager RF does not cancel (it cancels the *pair*
+energy, not the molecular dipole–dipole term). Measured by scanning one molecule
+through the cutoff shell in 0.002 Å steps and comparing `F` with `−dU/dx`:
+
+| cutoff style | largest energy jump per crossing |
+|---|---|
+| `atom` | ~0.026 kcal/mol (per site pair) |
+| `com` | ~0.17 kcal/mol (per molecule pair) |
+
+Consequence in `rigid/nve/small` (500 molecules, dt 0.5 fs, 500 fs, `polar/tol
+1e-7`): `atom` holds `etotal` to ±1 kcal/mol, `com` wanders by ~24 kcal/mol.
+The drift is **independent of the timestep** (dt 0.5 and dt 0.125 give the same
+≈24 kcal/mol over the same 500 fs), which identifies it as an energy-tally
+discontinuity rather than impulsive heating from a force discontinuity — the
+trajectory is unaffected. The same is true of the Fortran, which uses this
+convention with a Gear predictor–corrector and a thermostat.
+
+**Recommendation:** use `cutoff/style com` to compare with the Fortran, and the
+default `cutoff/style atom` for production NVE.
+
+
+
+# Why LAMMPS was slower than the Fortran, and two fixes (2026-09-16)
+
+Timings on one core, 500 molecules, rc = 11.22 A, 100 steps, same machine
+(gfortran -O2 for the Fortran, clang -O2 -g for LAMMPS):
+
+| run | before | after |
+|---|---|---|
+| **Fortran**, *including* its 10-iteration dipole solve | **38 ms/step** | -- |
+| LAMMPS `enable_polar 0`, 5-site `data.gcpm5` | 59 | **26** |
+| LAMMPS `enable_polar 0`, 4-site `data.gcpm` | 42 | **25** |
+| LAMMPS `enable_polar 1`, 5-site | 110 | **98** |
+
+(The Fortran figure is the slope, not the wall time: 100 steps take 4.98 s and
+200 take 8.81 s, so 1.15 s of startup plus 38.3 ms/step.)
+
+## Causes
+
+1. **Atom-based vs molecule-based neighbor list** (structural, not fixable
+   here). LAMMPS holds 1,629,391 pair entries (652 neighbors/atom x 2500 sites);
+   the Fortran holds ~65,000 *molecule*-pair entries and expands each one into
+   3x3 charge sites inline from cached body offsets. LAMMPS pays the distance
+   and cutoff test 25 times per molecule pair where the Fortran pays it once.
+   95% of the LAMMPS loop time is in `Pair`.
+2. **Dispersion evaluated on pairs with zero coefficients** -- 21% of runtime.
+   Only O-O carries exp-6 in GCPM; every other type pair has `epsilon = 0` and
+   hence `A = C6 = 0`, but `cut_lj` defaults to the global cutoff for all of
+   them, so `dispersion()` called `exp(-buck2*r)` on all 1.63M pairs and
+   multiplied by zero.
+3. **Coulomb kernel evaluated on q = 0 pairs when the solver is off** -- 31% of
+   runtime. `charge_charge()` skipped a pair only when *both* charges were zero.
+   A pair with exactly one zero charge still ran the full `erfcx`/`expmsq`
+   evaluation in order to accumulate `efield`, which only the induced-dipole
+   solver reads. Of the 25 site pairs of a 5-site molecule pair, 9 are real, 4
+   were skipped, and 12 were pure waste with `enable_polar 0`.
+4. **The 5-site COM dummy site costs 28%** (59 vs 42 ms/step before the fixes):
+   the type-4 site carries no charge and no dispersion but still occupies the
+   neighbor list. That is the price of the COM dipole placement, not a defect.
+
+## Fixes applied
+
+- **`init_one()`**: `if ((buck1[i][j] == 0.0) && (buck3[i][j] == 0.0))
+  cut_ljsq[i][j] = 0.0;` -- a type pair with no exp-6 contributes identically
+  zero energy, force and offset, so zeroing its squared vdW cutoff makes
+  `dispersion()` skip it. `cut_lj[i][j]` is untouched, so what `init_one()`
+  returns (the neighbor cutoff) and what goes into restart files are unchanged.
+  Done in `init_one()` rather than in the example decks so that every GCPM
+  input benefits, including `gcpm/gpu` (`gcpm_gpu_init()` is handed `cut_ljsq`).
+- **`charge_charge()`**, both `pair_gcpm.cpp` and `pair_gcpm_long.cpp`: skip a
+  pair when *either* charge is zero if `enable_polar == 0` (the old
+  both-are-zero test is kept for `enable_polar == 1`, where `efield` is live).
+  In `gcpm/long` this is also safe against the k-space cancellation, since the
+  reciprocal contribution of such a pair is proportional to q_i*q_j = 0.
+
+## Verification
+
+Both are numerically exact, not approximations:
+
+| check | result |
+|---|---|
+| `in.gcpm`, 200 steps, polar on, vs the pre-change HEAD binary | every thermo column **bit-identical** |
+| `in.gcpm.long`, 200 steps, 4 ranks, vs HEAD *and* vs `log.3Jul26.gcpm.long.g++.4` | **bit-identical** |
+| 5 single-point configs (polar 0/1 x eps_rf 0/78.4 x cutoff/style atom/com) | `evdwl`, `ecoul`, `pe` reproduced **to every printed digit** |
+| F = -dU/dx, polar off, both cutoff styles | unchanged forces, 1e-7 relative |
+
+## Still open: the SCF loop (`enable_polar 1`)
+
+At 98 ms/step LAMMPS is still ~2.6x the Fortran while doing the same ~10
+iterations. The Fortran builds the dipole-dipole tensor **once per step** and
+caches `txx..tzz`, `fvij`, `gvij` in `mnm x mnm` arrays (`force.f:225-230`,
+reused at `294-299` -- this is what the ~200 MB of static storage is for), so
+iterations 2-10 are cheap matrix-vector products.
+`PairGCPM::compute_induced_efield()` re-evaluates `erf`/`exp` for every pair on
+every iteration. Caching it is a much larger change -- the memory scales with
+the pair count and it has to survive MPI decomposition and neighbor rebuilds --
+so it is deliberately left alone.
+
+# Reaction field without polarization (2026-09-16)
+
+`setup_reaction_field()` used to refuse `eps_rf > 0` unless `enable_polar == 1`.
+The restriction was unnecessary for `pair gcpm`: its reaction field is a purely
+pairwise term added inside `charge_charge()`, and of the four channels (A)–(D)
+of the header comment only (A), charge–charge, exists when there are no induced
+dipoles. Channel (B) still folds `-c_rf` into `efield`, which nothing reads when
+the solver is off.
+
+`pair_style gcpm 0 78.4 <rc>` is now an Onsager/Tironi reaction field on the
+Gaussian-smeared Coulomb interaction, with no polarization. On the pwatin frame
+it gives `ecoul = -4771.68`, between bare truncation (`-4586.75`) and the full
+polarizable model (`-6302.59`); F = −dU/dx holds to ~1e-7, and
+`rigid/nve/small` conserves `etotal` to 0.12 kcal/mol over 250 fs.
+
+The `enable_polar` requirement was **moved, not dropped**: it now lives in
+`PairGCPMLongGPU::init_style()`, the one style that uses the *per-molecule*
+reaction field (`reaction_field_pre/post`), which groups sites by molecule ID
+and builds `R_p` from the converged induced dipoles and so genuinely needs both.
+`setup_reaction_field()` likewise now sizes the per-molecule tables only when
+molecule IDs exist, since the pairwise path never touches them.
 
 
 

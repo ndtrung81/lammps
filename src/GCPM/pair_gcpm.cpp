@@ -48,6 +48,17 @@
    dipole self term of (C), which has no intramolecular M-M pair, is added
    explicitly).
 
+   Cutoff convention (cutoff/style keyword): by default every channel is
+   truncated at the atom-atom distance, as everywhere else in LAMMPS. With
+   cutoff/style com the truncation uses the distance between the centers of
+   mass of the two molecules instead, which is what the Fortran GCPM code does
+   (force.f tests a single r2ij(i,j), built from the molecular centers x0, for
+   the dispersion, charge-charge, charge-dipole and dipole-dipole channels
+   alike). Only the cutoff test changes: the kernels keep using the atom-atom
+   separation. The neighbor list is built with the cutoff padded by twice the
+   largest atom-to-COM offset so that no molecule pair inside the cutoff is
+   missing from it (see compute_mol_com() and init_one()).
+
    The long-range (Ewald/PPPM) form is the derived class PairGCPMLong, which
    overrides only charge_charge()/compute_induced_efield()/polar() and the
    compute()/init_style() flow; the per-molecule reaction-field helpers below
@@ -78,6 +89,9 @@ using namespace EwaldConst;
 
 // reverse-comm selector for comm_mode (EFIELD = 0 -> efield, EFIELD_POL = 1 -> efield_pol)
 enum {EFIELD, EFIELD_POL};
+
+// forward-comm selector for comm_fmode (FORWARD_MU -> mu, FORWARD_DCOM -> dcom)
+enum {FORWARD_MU, FORWARD_DCOM};
 
 /* ---------------------------------------------------------------------- */
 
@@ -112,6 +126,7 @@ PairGCPM::PairGCPM(LAMMPS *lmp) : Pair(lmp)
   comm_forward = 4;
   comm_reverse = 3;
   comm_mode = EFIELD_POL;
+  comm_fmode = FORWARD_MU;
   first_polar = 1;
 
   // induced-dipole solver convergence statistics (reset each run in setup())
@@ -130,6 +145,14 @@ PairGCPM::PairGCPM(LAMMPS *lmp) : Pair(lmp)
   nmol = 0;
   nmol_max = 0;
   mol_mu = mol_p = mol_x = mol_Rq = mol_Rp = nullptr;
+  mol_com = nullptr;
+
+  // molecule center-of-mass truncation (disabled by default)
+
+  cut_com = 0;
+  dcom = nullptr;
+  ncom_max = 0;
+  com_extra = 0.0;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -154,6 +177,7 @@ PairGCPM::~PairGCPM()
     memory->destroy(sigmaM);
     memory->destroy(alpha_ij);
     memory->destroy(e_shift_qq);
+    memory->destroy(cut_physsq);
   }
   memory->destroy(efield);
   memory->destroy(efield_pol);
@@ -164,6 +188,8 @@ PairGCPM::~PairGCPM()
   memory->destroy(mol_x);
   memory->destroy(mol_Rq);
   memory->destroy(mol_Rp);
+  memory->destroy(mol_com);
+  memory->destroy(dcom);
 
   if (ftable) free_tables();
 }
@@ -244,6 +270,11 @@ void PairGCPM::compute(int eflag, int vflag)
     efield[i][0] = efield[i][1] = efield[i][2] = 0.0;
   }
 
+  // molecule COM truncation: refresh dcom (local atoms and ghosts) before any
+  // kernel runs, since every cutoff test below goes through cutdistsq()
+
+  if (cut_com) compute_mol_com(1);
+
   dispersion(eflag, vflag);
   charge_charge(eflag, vflag);
   if (enable_polar) {
@@ -304,7 +335,7 @@ void PairGCPM::dispersion(int eflag, int /*vflag*/)
       rsq = delx*delx + dely*dely + delz*delz;
       jtype = type[j];
 
-      if (rsq < cut_ljsq[itype][jtype]) {
+      if (cutdistsq(i,j,delx,dely,delz) < cut_ljsq[itype][jtype]) {
         r2inv = 1.0/rsq;
         r6inv = r2inv*r2inv*r2inv;
         r = sqrt(rsq);
@@ -354,7 +385,7 @@ void PairGCPM::charge_charge(int eflag, int /*vflag*/)
   double r,r2inv,forcecoul,factor_coul;
   double arg,expa,erfa,falpha;
   double efield_scalar;
-  double rsq;
+  double rsq,rsq_cut;
   int *ilist,*jlist,*numneigh,**firstneigh;
 
   ecoul = 0.0;
@@ -389,7 +420,16 @@ void PairGCPM::charge_charge(int eflag, int /*vflag*/)
       factor_coul = special_coul[sbmask(j)];
       j &= NEIGHMASK;
 
-      if (qtmp == 0.0 && q[j] == 0.0) continue;
+      // A pair contributes energy and force only when BOTH charges are
+      // non-zero; a pair with exactly one zero charge is evaluated purely to
+      // accumulate efield, which only the induced-dipole solver reads. With
+      // the solver off nothing reads it, so those pairs can be skipped -- for
+      // a 5-site GCPM molecule pair that is 12 of the 25 site pairs.
+      if (enable_polar) {
+        if ((qtmp == 0.0) && (q[j] == 0.0)) continue;
+      } else {
+        if ((qtmp == 0.0) || (q[j] == 0.0)) continue;
+      }
 
       delx = xtmp - x[j][0];
       dely = ytmp - x[j][1];
@@ -397,14 +437,18 @@ void PairGCPM::charge_charge(int eflag, int /*vflag*/)
       rsq = delx*delx + dely*dely + delz*delz;
       jtype = type[j];
 
-      if (rsq < cutsq[itype][jtype]) {
+      // distance the pair is truncated at (atom-atom, or molecule COM-COM
+      // when cut_com); the kernels below always use the atom-atom r
+      rsq_cut = cutdistsq(i,j,delx,dely,delz);
+
+      if (rsq_cut < cut_physsq[itype][jtype]) {
         r2inv = 1.0/rsq;
         r = sqrt(rsq);
 
         bool has_force = (qtmp != 0.0 && q[j] != 0.0);
 
         double prefactor = 0.0;
-        if (rsq < cut_coulsq) {
+        if (rsq_cut < cut_coulsq) {
           arg = alpha_ij[itype][jtype] * r;
           expa = MathSpecial::expmsq(arg);
           erfa = 1.0 - (MathSpecial::my_erfcx(arg) * expa);
@@ -437,7 +481,7 @@ void PairGCPM::charge_charge(int eflag, int /*vflag*/)
           fpair = forcecoul * r2inv;
 
           // (A) charge-charge reaction-field force: -qi*qj*c_rf*r_vec
-          if (enable_rf && rsq < cut_coulsq) fpair -= qtmp*q[j]*c_rf;
+          if (enable_rf && (rsq_cut < cut_coulsq)) fpair -= qtmp*q[j]*c_rf;
 
           f[i][0] += delx*fpair;
           f[i][1] += dely*fpair;
@@ -450,7 +494,7 @@ void PairGCPM::charge_charge(int eflag, int /*vflag*/)
           }
 
           if (eflag) {
-            if (rsq < cut_coulsq) {
+            if (rsq_cut < cut_coulsq) {
               ecoul = factor_coul * prefactor * erfa;
               if (enable_rf) {
                 // cutoff shift (2026-07-18, see the stage 6 section of
@@ -505,7 +549,7 @@ void PairGCPM::compute_induced_efield(int half)
 {
   int i,ii,j,jj,inum,jnum,itype,jtype;
   double xtmp,ytmp,ztmp,delx,dely,delz;
-  double rsq,r,r2inv,r3inv;
+  double rsq,rsq_cut,r,r2inv,r3inv;
   int *ilist,*jlist,*numneigh,**firstneigh;
   double sigmaM_ij,sigmaM_ij2;
   double _erf,expmsq,rdivsigmaM,f,g;
@@ -551,9 +595,10 @@ void PairGCPM::compute_induced_efield(int half)
       dely = ytmp - x[j][1];
       delz = ztmp - x[j][2];
       rsq = delx*delx + dely*dely + delz*delz;
+      rsq_cut = cutdistsq(i,j,delx,dely,delz);
       jtype = type[j];
 
-      if (rsq < cutsq[itype][jtype]) {
+      if (rsq_cut < cut_physsq[itype][jtype]) {
         r2inv = 1.0/rsq;
         r = sqrt(rsq);
         r3inv = 1.0/rsq/r;
@@ -581,7 +626,7 @@ void PairGCPM::compute_induced_efield(int half)
 
         // E_p_i += T_ij . mu_j  (+ the dipole->dipole RF field c_rf*mu_j, term C)
 
-        double rf = (enable_rf && rsq < cut_coulsq) ? c_rf : 0.0;
+        double rf = (enable_rf && (rsq_cut < cut_coulsq)) ? c_rf : 0.0;
         efield_pol[i][0] += qqrd2e * (Tij[0][0]*mu[j][0] + Tij[0][1]*mu[j][1] + Tij[0][2]*mu[j][2]) + rf*mu[j][0];
         efield_pol[i][1] += qqrd2e * (Tij[0][1]*mu[j][0] + Tij[1][1]*mu[j][1] + Tij[1][2]*mu[j][2]) + rf*mu[j][1];
         efield_pol[i][2] += qqrd2e * (Tij[0][2]*mu[j][0] + Tij[1][2]*mu[j][1] + Tij[2][2]*mu[j][2]) + rf*mu[j][2];
@@ -625,7 +670,7 @@ void PairGCPM::polar(int eflag, int vflag, int neigh_half)
 {
   int i,ii,j,jj,inum,jnum,itype,jtype;
   double qtmp,xtmp,ytmp,ztmp,delx,dely,delz,ecoul;
-  double rsq,rinv,r2inv,factor_coul;
+  double rsq,rsq_cut,rinv,r2inv,factor_coul;
   int *ilist,*jlist,*numneigh,**firstneigh;
 
   ecoul = 0.0;
@@ -687,6 +732,7 @@ void PairGCPM::polar(int eflag, int vflag, int neigh_half)
 
     // communicate updated dipoles for next iteration of induced field calculation
 
+    comm_fmode = FORWARD_MU;
     comm->forward_comm(this);
 
     // check for convergence of dipoles: max change in any dipole magnitude < tol
@@ -760,9 +806,10 @@ void PairGCPM::polar(int eflag, int vflag, int neigh_half)
       dely = ytmp - x[j][1];
       delz = ztmp - x[j][2];
       rsq = delx*delx + dely*dely + delz*delz;
+      rsq_cut = cutdistsq(i,j,delx,dely,delz);
       jtype = type[j];
 
-      if (rsq < cutsq[itype][jtype] && rsq < cut_coulsq) {
+      if ((rsq_cut < cut_physsq[itype][jtype]) && (rsq_cut < cut_coulsq)) {
         r2inv = 1.0/rsq;
         rinv = sqrt(r2inv);
         double r = 1.0/rinv;
@@ -903,9 +950,10 @@ void PairGCPM::polar(int eflag, int vflag, int neigh_half)
       dely = ytmp - x[j][1];
       delz = ztmp - x[j][2];
       rsq = delx*delx + dely*dely + delz*delz;
+      rsq_cut = cutdistsq(i,j,delx,dely,delz);
       jtype = type[j];
 
-      if (rsq < cutsq[itype][jtype]) {
+      if (rsq_cut < cut_physsq[itype][jtype]) {
         r2inv = 1.0/rsq;
         double r = sqrt(rsq);
         double r3inv = r2inv/r;
@@ -954,7 +1002,7 @@ void PairGCPM::polar(int eflag, int vflag, int neigh_half)
         double Eiz = qqrd2e*(Txz*mu[j][0] + Tyz*mu[j][1] + Tzz*mu[j][2]);
         // dipole->dipole RF field (term C) at i: E_rf = c_rf*mu_j -> torque
         // mu_i x (c_rf*mu_j). Keeps the net dipole torque mu x (E_q+E_p) ~ 0.
-        if (enable_rf && rsq < cut_coulsq) {
+        if (enable_rf && (rsq_cut < cut_coulsq)) {
           Eix += c_rf*mu[j][0]; Eiy += c_rf*mu[j][1]; Eiz += c_rf*mu[j][2];
         }
 
@@ -970,7 +1018,7 @@ void PairGCPM::polar(int eflag, int vflag, int neigh_half)
           double Ejx = qqrd2e*(Txx*mu[i][0] + Txy*mu[i][1] + Txz*mu[i][2]);
           double Ejy = qqrd2e*(Txy*mu[i][0] + Tyy*mu[i][1] + Tyz*mu[i][2]);
           double Ejz = qqrd2e*(Txz*mu[i][0] + Tyz*mu[i][1] + Tzz*mu[i][2]);
-          if (enable_rf && rsq < cut_coulsq) {
+          if (enable_rf && (rsq_cut < cut_coulsq)) {
             Ejx += c_rf*mu[i][0]; Ejy += c_rf*mu[i][1]; Ejz += c_rf*mu[i][2];
           }
           torque[j][0] += mu[j][1]*Ejz - mu[j][2]*Ejy;
@@ -990,8 +1038,22 @@ int PairGCPM::pack_forward_comm(int n, int *list, double *buf,
   int /*pbc_flag*/, int * /*pbc*/)
 {
   int i,j,m;
-  double **mu = atom->mu;
   m = 0;
+
+  // dcom is a difference vector (molecule COM minus atom position), so it is
+  // invariant under the periodic shift of a ghost image: no pbc handling here
+
+  if (comm_fmode == FORWARD_DCOM) {
+    for (i = 0; i < n; i++) {
+      j = list[i];
+      buf[m++] = dcom[j][0];
+      buf[m++] = dcom[j][1];
+      buf[m++] = dcom[j][2];
+    }
+    return m;
+  }
+
+  double **mu = atom->mu;
   for (i = 0; i < n; i++) {
     j = list[i];
     buf[m++] = mu[j][0];
@@ -1007,9 +1069,19 @@ int PairGCPM::pack_forward_comm(int n, int *list, double *buf,
 void PairGCPM::unpack_forward_comm(int n, int first, double *buf)
 {
   int i,m,last;
-  double **mu = atom->mu;
   m = 0;
   last = first + n;
+
+  if (comm_fmode == FORWARD_DCOM) {
+    for (i = first; i < last; i++) {
+      dcom[i][0] = buf[m++];
+      dcom[i][1] = buf[m++];
+      dcom[i][2] = buf[m++];
+    }
+    return;
+  }
+
+  double **mu = atom->mu;
   for (i = first; i < last; i++) {
     mu[i][0] = buf[m++];
     mu[i][1] = buf[m++];
@@ -1052,18 +1124,44 @@ void PairGCPM::unpack_reverse_comm(int n, int *list, double *buf)
 }
 
 /* ----------------------------------------------------------------------
-   reaction-field setup: validate, compute the constant prefactor c_rf, and
-   size the per-molecule tables once (molecule count is fixed for a run).
+   determine the number of molecules and size the per-molecule tables
+------------------------------------------------------------------------- */
+
+void PairGCPM::setup_molecules()
+{
+  // the molecule count (largest molecule id over all ranks) is fixed for a
+  // given run and is invariant under atom migration, so this is done once per
+  // run rather than per step
+
+  tagint maxmol_local = 0;
+  for (int i = 0; i < atom->nlocal; i++)
+    if (atom->molecule[i] > maxmol_local) maxmol_local = atom->molecule[i];
+  tagint maxmol = 0;
+  MPI_Allreduce(&maxmol_local, &maxmol, 1, MPI_LMP_TAGINT, MPI_MAX, world);
+  nmol = (int) maxmol;
+  grow_mol_arrays(nmol);
+}
+
+/* ----------------------------------------------------------------------
+   reaction-field setup: compute the constant prefactor c_rf, and size the
+   per-molecule tables when molecule IDs are available.
+
+   The reaction field of this class is a purely pairwise term added inside
+   charge_charge()/polar(), so it works with or without polarization:
+     - enable_polar 1: all four channels (A)-(D) of the header comment are
+       active, i.e. the full Paricaud et al. reaction field;
+     - enable_polar 0: there are no induced dipoles, so only the charge-charge
+       channel (A) contributes, i.e. an Onsager/Tironi reaction field on the
+       Gaussian-smeared Coulomb interaction. Channel (B) still folds -c_rf into
+       efield, which nothing reads when the solver is off.
+   Only the per-molecule form (reaction_field_pre/post, used by the Ewald GPU
+   variant) needs molecule IDs and the induced dipoles; that variant checks for
+   them itself.
 ------------------------------------------------------------------------- */
 
 void PairGCPM::setup_reaction_field()
 {
   if (!enable_rf) return;
-
-  if (!enable_polar)
-    error->all(FLERR,"Pair gcpm reaction field requires enable_polar = 1");
-  if (!atom->molecule_flag)
-    error->all(FLERR,"Pair gcpm reaction field requires atom molecule IDs");
 
   // C_RF = (eps_rf-1)/(2*pi*eps0*(2*eps_rf+1)*rc^3)
   //      = 2*qqrd2e*(eps_rf-1)/((2*eps_rf+1)*rc^3)   since qqrd2e = 1/(4*pi*eps0)
@@ -1073,16 +1171,7 @@ void PairGCPM::setup_reaction_field()
   double rc3 = cut_coul*cut_coul*cut_coul;
   c_rf = 2.0*qqrd2e*(eps_rf - 1.0) / ((2.0*eps_rf + 1.0)*rc3);
 
-  // size the per-molecule tables once: the molecule count (largest molecule
-  // id over all ranks) is fixed for a given run, invariant under migration
-
-  tagint maxmol_local = 0;
-  for (int i = 0; i < atom->nlocal; i++)
-    if (atom->molecule[i] > maxmol_local) maxmol_local = atom->molecule[i];
-  tagint maxmol = 0;
-  MPI_Allreduce(&maxmol_local, &maxmol, 1, MPI_LMP_TAGINT, MPI_MAX, world);
-  nmol = (int) maxmol;
-  grow_mol_arrays(nmol);
+  if (atom->molecule_flag) setup_molecules();
 }
 
 /* ----------------------------------------------------------------------
@@ -1220,6 +1309,7 @@ void PairGCPM::vtally_force(int i, int j, int neigh_half,
 
 void PairGCPM::grow_mol_arrays(int n)
 {
+  if (n < 1) n = 1;
   if (n <= nmol_max) return;
   nmol_max = n;
   memory->destroy(mol_mu);
@@ -1227,11 +1317,118 @@ void PairGCPM::grow_mol_arrays(int n)
   memory->destroy(mol_x);
   memory->destroy(mol_Rq);
   memory->destroy(mol_Rp);
+  memory->destroy(mol_com);
   memory->create(mol_mu, nmol_max+1, 3, "pair:mol_mu");
   memory->create(mol_p,  nmol_max+1, 3, "pair:mol_p");
   memory->create(mol_x,  nmol_max+1, 3, "pair:mol_x");
   memory->create(mol_Rq, nmol_max+1, 3, "pair:mol_Rq");
   memory->create(mol_Rp, nmol_max+1, 3, "pair:mol_Rp");
+  memory->create(mol_com, nmol_max+1, 4, "pair:mol_com");
+}
+
+/* ----------------------------------------------------------------------
+   molecule center-of-mass truncation (cut_com == 1, the convention of the
+   original Fortran GCPM code, force.f: every site-site interaction between two
+   molecules is kept or dropped as a whole according to the COM-COM distance
+   r2ij(i,j) of the two molecules).
+
+   Fill dcom[i] = (center of mass of molecule of i) - x_i for every atom, so
+   that a pair's COM-COM separation is del + dcom[i] - dcom[j] in the same
+   periodic image as del.  dcom is a difference vector, hence independent of
+   the periodic image of the atom, which is what lets it be forward-communicated
+   to ghosts without a pbc shift.
+
+   Atoms are unwrapped with their image flags before the COM is accumulated, so
+   a molecule straddling a periodic boundary gives the correct COM.  The
+   per-molecule sums are reduced over all ranks, so molecules split across
+   processors are handled correctly.  comm_ghost = 0 skips the ghost
+   communication (used from init_style(), where the ghost comm plan does not
+   exist yet and only com_extra is wanted).
+------------------------------------------------------------------------- */
+
+void PairGCPM::compute_mol_com(int comm_ghost)
+{
+  double **x = atom->x;
+  double *rmass = atom->rmass;
+  double *mass = atom->mass;
+  int *type = atom->type;
+  tagint *molecule = atom->molecule;
+  imageint *image = atom->image;
+  int nlocal = atom->nlocal;
+
+  if (atom->nmax > ncom_max) {
+    memory->destroy(dcom);
+    ncom_max = atom->nmax;
+    memory->create(dcom, ncom_max, 3, "pair:dcom");
+  }
+
+  for (int m = 0; m <= nmol; m++)
+    mol_com[m][0] = mol_com[m][1] = mol_com[m][2] = mol_com[m][3] = 0.0;
+
+  double ux[3];
+  for (int i = 0; i < nlocal; i++) {
+    int m = (int) molecule[i];
+    if ((m <= 0) || (m > nmol)) continue;
+    double massone = rmass ? rmass[i] : mass[type[i]];
+    domain->unmap(x[i], image[i], ux);
+    mol_com[m][0] += massone*ux[0];
+    mol_com[m][1] += massone*ux[1];
+    mol_com[m][2] += massone*ux[2];
+    mol_com[m][3] += massone;
+  }
+
+  MPI_Allreduce(MPI_IN_PLACE, &mol_com[0][0], 4*(nmol+1), MPI_DOUBLE, MPI_SUM, world);
+
+  for (int m = 1; m <= nmol; m++) {
+    if (mol_com[m][3] <= 0.0) continue;
+    double minv = 1.0/mol_com[m][3];
+    mol_com[m][0] *= minv;
+    mol_com[m][1] *= minv;
+    mol_com[m][2] *= minv;
+  }
+
+  // dcom for local atoms; an atom with no molecule id (or a massless molecule)
+  // is its own cavity center, i.e. dcom = 0 and the atom-atom convention
+
+  double dmaxsq = 0.0;
+  for (int i = 0; i < nlocal; i++) {
+    int m = (int) molecule[i];
+    if ((m <= 0) || (m > nmol) || (mol_com[m][3] <= 0.0)) {
+      dcom[i][0] = dcom[i][1] = dcom[i][2] = 0.0;
+      continue;
+    }
+    domain->unmap(x[i], image[i], ux);
+    dcom[i][0] = mol_com[m][0] - ux[0];
+    dcom[i][1] = mol_com[m][1] - ux[1];
+    dcom[i][2] = mol_com[m][2] - ux[2];
+    double dsq = dcom[i][0]*dcom[i][0] + dcom[i][1]*dcom[i][1] + dcom[i][2]*dcom[i][2];
+    if (dsq > dmaxsq) dmaxsq = dsq;
+  }
+
+  if (comm_ghost) {
+
+    // the neighbor list was built with the cutoff padded by 2*com_extra (see
+    // init_one()), which covers atom-COM offsets up to com_extra on both
+    // partners. If a molecule has grown well past that since init_style(), the
+    // list is missing pairs; the neighbor skin is the available headroom.
+
+    double dmax = sqrt(dmaxsq);
+    if (dmax > com_extra + 0.5*neighbor->skin)
+      error->one(FLERR,"Pair gcpm cutoff/style com: a molecule extends {:.4} "
+                 "beyond its center of mass, more than the {:.4} the neighbor "
+                 "list was padded for; increase the neighbor skin or use "
+                 "cutoff/style atom", dmax, com_extra);
+
+    comm_fmode = FORWARD_DCOM;
+    comm->forward_comm(this);
+
+  } else {
+
+    // init_style(): set the padding from the current configuration
+
+    MPI_Allreduce(&dmaxsq, &com_extra, 1, MPI_DOUBLE, MPI_MAX, world);
+    com_extra = sqrt(com_extra);
+  }
 }
 
 /* ----------------------------------------------------------------------
@@ -1340,6 +1537,12 @@ void PairGCPM::allocate()
   memory->create(sigmaM,n+1,n+1,"pair:sigmaM");
   memory->create(alpha_ij,n+1,n+1,"pair:alpha_ij");
   memory->create(e_shift_qq,n+1,n+1,"pair:e_shift_qq");
+
+  // zeroed like cutsq: type pairs that never reach init_one() must not interact
+  memory->create(cut_physsq,n+1,n+1,"pair:cut_physsq");
+  for (int i = 0; i <= n; i++)
+    for (int j = 0; j <= n; j++)
+      cut_physsq[i][j] = 0.0;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -1353,20 +1556,32 @@ void PairGCPM::settings(int narg, char **arg)
   cut_lj_global = utils::numeric(FLERR,arg[2],false,lmp);
 
   // optional 4th positional argument: Coulomb cutoff (defaults to cut_lj);
-  // then optional keyword/value pairs controlling the induced-dipole solver:
+  // then optional keyword/value pairs:
   //   polar/tol <tol>       convergence tolerance on the max dipole change
   //   polar/maxiter <n>     max SCF iterations per solver call
+  //   cutoff/style atom|com which distance the cutoffs are applied to
 
   int iarg = 3;
   cut_coul = cut_lj_global;
   if ((narg > 3) && (strcmp(arg[3],"polar/tol") != 0) &&
-      (strcmp(arg[3],"polar/maxiter") != 0)) {
+      (strcmp(arg[3],"polar/maxiter") != 0) &&
+      (strcmp(arg[3],"cutoff/style") != 0)) {
     cut_coul = utils::numeric(FLERR,arg[3],false,lmp);
     iarg = 4;
   }
 
+  cut_com = 0;
+
   while (iarg < narg) {
-    if (strcmp(arg[iarg],"polar/tol") == 0) {
+    if (strcmp(arg[iarg],"cutoff/style") == 0) {
+      if (iarg+2 > narg) error->all(FLERR,"Illegal pair_style command: "
+                                    "cutoff/style requires a value");
+      if (strcmp(arg[iarg+1],"atom") == 0) cut_com = 0;
+      else if (strcmp(arg[iarg+1],"com") == 0) cut_com = 1;
+      else error->all(FLERR,"Illegal pair_style command: cutoff/style must be "
+                      "atom or com");
+      iarg += 2;
+    } else if (strcmp(arg[iarg],"polar/tol") == 0) {
       if (iarg+2 > narg) error->all(FLERR,"Illegal pair_style command: "
                                     "polar/tol requires a value");
       tol = utils::numeric(FLERR,arg[iarg+1],false,lmp);
@@ -1460,6 +1675,24 @@ void PairGCPM::init_style()
 
   g_ewald = 0.0;
 
+  // molecule COM truncation: size the per-molecule tables and measure how far
+  // the atoms sit from their molecular centers of mass. init_one() (called by
+  // Pair::init() right after this) pads the neighbor cutoff with 2*com_extra
+  // so that every pair of molecules closer than the cutoff is in the list.
+
+  if (cut_com) {
+    if (!atom->molecule_flag)
+      error->all(FLERR,"Pair gcpm cutoff/style com requires atom molecule IDs");
+    if ((atom->rmass == nullptr) && (atom->mass == nullptr))
+      error->all(FLERR,"Pair gcpm cutoff/style com requires per-atom or "
+                       "per-type masses");
+    setup_molecules();
+    compute_mol_com(0);
+    if ((comm->me == 0) && (com_extra > 0.0))
+      utils::logmesg(lmp,"Pair gcpm: molecule center-of-mass cutoff, neighbor "
+                     "cutoff padded by {:.4} Ang\n", 2.0*com_extra);
+  }
+
   setup_reaction_field();
 }
 
@@ -1487,6 +1720,15 @@ double PairGCPM::init_one(int i, int j)
 
   cut_ljsq[i][j] = cut_lj[i][j] * cut_lj[i][j];
 
+  // A type pair with no exp-6 (A = C6 = 0, i.e. epsilon = 0) contributes
+  // identically zero energy, force and offset. Zero its squared vdW cutoff so
+  // dispersion() skips it outright instead of evaluating exp(-r/rho) and
+  // multiplying the result by zero. In GCPM water only O-O carries dispersion,
+  // so this skips 24 of the 25 site pairs of every molecule pair in a 5-site
+  // model, about 20% of the run time. cut_lj[i][j] itself is left as set, so
+  // what init_one() returns and what is written to restart files is unchanged.
+  if ((buck1[i][j] == 0.0) && (buck3[i][j] == 0.0)) cut_ljsq[i][j] = 0.0;
+
   if (offset_flag && (cut_lj[i][j] > 0.0)) {
     double rexp = exp(-buck2[i][j]*cut_lj[i][j]);
     double r6inv = pow(cut_lj[i][j],-6.0);
@@ -1494,6 +1736,17 @@ double PairGCPM::init_one(int i, int j)
   } else offset[i][j] = 0.0;
 
   double cut = MAX(cut_lj[i][j], cut_coul);
+
+  // the physical cutoff of this type pair, kept separate from cutsq[i][j]
+  // (which Pair::init() sets from the value returned below, and which carries
+  // the extra neighbor-list padding in the molecule-COM convention)
+  cut_physsq[i][j] = MAX(cut_ljsq[i][j], cut_coulsq);
+  cut_physsq[j][i] = cut_physsq[i][j];
+
+  // molecule-COM truncation: a pair whose COM-COM distance is just inside the
+  // cutoff can have its two atoms up to com_extra further apart on each side,
+  // so the neighbor list has to be built with that much extra reach
+  if (cut_com) cut += 2.0*com_extra;
 
   // per-pair Gaussian width for charge-charge interactions: 1/sqrt(2*(si^2+sj^2))
   double si = sigmaM[i][i], sj = sigmaM[j][j];
@@ -1586,6 +1839,7 @@ void PairGCPM::write_restart_settings(FILE *fp)
   fwrite(&eps_rf,sizeof(double),1,fp);
   fwrite(&tol,sizeof(double),1,fp);
   fwrite(&maxiter,sizeof(int),1,fp);
+  fwrite(&cut_com,sizeof(int),1,fp);
 }
 
 /* ---------------------------------------------------------------------- */
@@ -1602,6 +1856,7 @@ void PairGCPM::read_restart_settings(FILE *fp)
     utils::sfread(FLERR,&eps_rf,sizeof(double),1,fp,nullptr,error);
     utils::sfread(FLERR,&tol,sizeof(double),1,fp,nullptr,error);
     utils::sfread(FLERR,&maxiter,sizeof(int),1,fp,nullptr,error);
+    utils::sfread(FLERR,&cut_com,sizeof(int),1,fp,nullptr,error);
   }
   MPI_Bcast(&cut_lj_global,1,MPI_DOUBLE,0,world);
   MPI_Bcast(&cut_coul,1,MPI_DOUBLE,0,world);
@@ -1612,6 +1867,7 @@ void PairGCPM::read_restart_settings(FILE *fp)
   MPI_Bcast(&eps_rf,1,MPI_DOUBLE,0,world);
   MPI_Bcast(&tol,1,MPI_DOUBLE,0,world);
   MPI_Bcast(&maxiter,1,MPI_INT,0,world);
+  MPI_Bcast(&cut_com,1,MPI_INT,0,world);
 
   // derived flag (settings() computes it from eps_rf)
   enable_rf = (eps_rf > 0.0) ? 1 : 0;
