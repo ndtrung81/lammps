@@ -147,9 +147,10 @@ PairGCPM::PairGCPM(LAMMPS *lmp) : Pair(lmp)
   mol_mu = mol_p = mol_x = mol_Rq = mol_Rp = nullptr;
   mol_com = nullptr;
 
-  // molecule center-of-mass truncation (disabled by default)
+  // molecule center-of-mass truncation 
+  //.  enabled by default to be consistent with the reference
 
-  cut_com = 0;
+  cut_com = 1;
   dcom = nullptr;
   ncom_max = 0;
   com_extra = 0.0;
