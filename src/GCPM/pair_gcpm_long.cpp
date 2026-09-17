@@ -57,6 +57,10 @@ using MathSpecial::my_erfcx;
 
 // reverse-comm selector for comm_mode (EFIELD = 0 -> efield, EFIELD_POL = 1 -> efield_pol)
 enum {EFIELD, EFIELD_POL};
+
+// forward-comm selector for comm_fmode (FORWARD_MU -> mu, FORWARD_DCOM -> dcom),
+// duplicated from pair_gcpm.cpp like the reverse-comm selector above
+enum {FORWARD_MU, FORWARD_DCOM};
 //#define GCPM_DEBUG
 
 /* ---------------------------------------------------------------------- */
@@ -605,6 +609,7 @@ void PairGCPMLong::polar(int eflag, int vflag, int neigh_half)
 
     // communicate updated dipoles for next iteration of induced field calculation
 
+    comm_fmode = FORWARD_MU;
     comm->forward_comm(this);
 
     // check for convergence of dipoles: max change in any dipole magnitude < tol

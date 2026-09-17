@@ -58,7 +58,8 @@ int gcpm_gpu_init(const int ntypes, double **cutsq,
                   const int max_nbors, const int maxspecial,
                   const double cell_size, int &gpu_mode, FILE *screen,
                   double host_cut_coulsq, double *host_special_coul,
-                  const double qqrd2e, const double c_rf, const int enable_rf);
+                  const double qqrd2e, const double c_rf, const int enable_rf,
+                  const int cut_com);
 void gcpm_gpu_clear();
 int **gcpm_gpu_compute_n(const int ago, const int inum_full, const int nall,
                          double **host_x, int *host_type, double *sublo,
@@ -74,6 +75,7 @@ void gcpm_gpu_compute(const int ago, const int inum_full, const int nall,
                       const bool eatom, const bool vatom, int &host_start,
                       const double cpu_time, bool &success, double *host_q,
                       const int nlocal, double *boxlo, double *prd);
+void gcpm_gpu_update_dcom(double **host_dcom, const int nall);
 void gcpm_gpu_compute_efield(void **efield_ptr);
 double gcpm_gpu_bytes();
 
@@ -115,6 +117,18 @@ void PairGCPMGPU::compute(int eflag, int vflag)
   }
 
   int nall = atom->nlocal + atom->nghost;
+
+  // molecule COM truncation: refresh dcom (local atoms and ghosts) and upload
+  // it to the device before anything else. The GPU kernels test the COM-COM
+  // separation through it, and so does the CPU polar solver below via
+  // cutdistsq(), so it has to be current -- and its MPI_Allreduce and ghost
+  // forward comm must complete before the asynchronous kernel launch.
+
+  if (cut_com) {
+    compute_mol_com(1);
+    gcpm_gpu_update_dcom(dcom, nall);
+  }
+
   int inum = list->inum;
   int *ilist = list->ilist;
   int *numneigh = list->numneigh;
@@ -194,11 +208,27 @@ void PairGCPMGPU::init_style()
     error->all(FLERR,
                "Pair gcpm/gpu requires atom attributes mu and torque for polar");
 
-  // the GPU kernels test the atom-atom separation against the cutoffs; the
-  // molecule-COM convention is CPU-only
+  // reaction-field Coulomb: no KSpace style is required (g_ewald unused on GPU)
+  g_ewald = 0.0;
+  cut_coulsq = cut_coul * cut_coul;
 
-  if (cut_com)
-    error->all(FLERR, "Pair gcpm/gpu does not support cutoff/style com");
+  // molecule COM truncation: size the per-molecule tables and measure how far
+  // the atoms sit from their molecular centers of mass, before the init_one()
+  // loop below, which pads the neighbor cutoff with 2*com_extra (mirrors
+  // PairGCPM::init_style())
+
+  if (cut_com) {
+    if (!atom->molecule_flag)
+      error->all(FLERR, "Pair gcpm/gpu cutoff/style com requires atom molecule IDs");
+    if ((atom->rmass == nullptr) && (atom->mass == nullptr))
+      error->all(FLERR, "Pair gcpm/gpu cutoff/style com requires per-atom or "
+                        "per-type masses");
+    setup_molecules();
+    compute_mol_com(0);
+    if ((comm->me == 0) && (com_extra > 0.0))
+      utils::logmesg(lmp, "Pair gcpm/gpu: molecule center-of-mass cutoff, neighbor "
+                     "cutoff padded by {:.4} Ang\n", 2.0*com_extra);
+  }
 
   // Replicate parameter setup from PairGCPM::init_style() without adding
   // its own neighbor request (we add REQ_FULL below).
@@ -217,23 +247,23 @@ void PairGCPMGPU::init_style()
   }
   double cell_size = sqrt(maxcut) + neighbor->skin;
 
-  // reaction-field Coulomb: no KSpace style is required (g_ewald unused on GPU)
-  g_ewald = 0.0;
-  cut_coulsq = cut_coul * cut_coul;
-
   setup_reaction_field();
 
   int maxspecial = 0;
   if (atom->molecular != Atom::ATOMIC) maxspecial = atom->maxspecial;
   int mnf = 5e-2 * neighbor->oneatom;
 
+  // cut_physsq, not cutsq: with cutoff/style com, cutsq carries the extra
+  // 2*com_extra neighbor-list padding added by init_one(), which must not
+  // reach the in-kernel cutoff tests. cell_size above keeps the padding.
   int success = gcpm_gpu_init(
-      atom->ntypes + 1, cutsq,
+      atom->ntypes + 1, cut_physsq,
       buck1, buck2, buck3, cut_ljsq, offset, alpha_ij,
       force->special_lj,
       atom->nlocal, atom->nlocal + atom->nghost, mnf, maxspecial,
       cell_size, gpu_mode, screen,
-      cut_coulsq, force->special_coul, force->qqrd2e, c_rf, enable_rf);
+      cut_coulsq, force->special_coul, force->qqrd2e, c_rf, enable_rf,
+      cut_com);
   GPU_EXTRA::check_flag(success, error, world);
 
   if (gpu_mode == GPU_FORCE) {

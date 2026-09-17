@@ -45,7 +45,8 @@ class GCPM : public BaseCharge<numtyp, acctyp> {
            const int maxspecial, const double cell_size,
            const double gpu_split, FILE *screen,
            const double host_cut_coulsq, double *host_special_coul,
-           const double qqrd2e, const double c_rf, const int enable_rf);
+           const double qqrd2e, const double c_rf, const int enable_rf,
+           const int cut_com);
 
   /// Clear all host and device data
   /** \note This is called at the beginning of the init() routine **/
@@ -78,6 +79,20 @@ class GCPM : public BaseCharge<numtyp, acctyp> {
 
   numtyp _cut_coulsq, _qqrd2e, _c_rf;
   int _enable_rf;
+
+  /// Molecule center-of-mass truncation (PairGCPM cutoff/style com): the pair
+  /// cutoff tests use the COM-COM distance of the two molecules instead of the
+  /// atom-atom distance.  dcom holds, per atom, the vector from the atom to
+  /// the center of mass of its molecule (w unused).  It changes every step as
+  /// the molecules move and rotate, so it is re-uploaded before every kernel
+  /// launch by update_dcom().
+  int _cut_com;
+  UCL_Vector<numtyp4,numtyp4> dcom;
+  int _dcom_max;     // allocated atom capacity of dcom
+
+  /// Cast dcom for nall atoms and copy it to the device.  Must be called
+  /// before compute()/compute_n() on every step when _cut_com is set.
+  void update_dcom(double **host_dcom, const int nall);
 
   /// Compute per-atom efield from charge-charge interactions.
   /// Returns a pinned host pointer via *efield_ptr.

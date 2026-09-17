@@ -889,10 +889,10 @@ with its single `r2ij(i,j)` test built from the molecular centers `x0`.
   before `Pair::init()` calls `init_one()`. `compute_mol_com()` re-checks it
   each step and errors out if a molecule has grown past the padding plus half
   the neighbor skin.
-- Forbidden (and diagnosed with an explicit error) in `gcpm/long`,
-  `gcpm/gpu` and `gcpm/long/gpu`: the Ewald split needs real and reciprocal
-  space truncated consistently per atom pair, and the GPU kernels test the
-  atom–atom separation.
+- Forbidden (and diagnosed with an explicit error) in `gcpm/long` and
+  `gcpm/long/gpu`: the Ewald split needs real and reciprocal space truncated
+  consistently per atom pair.  `gcpm/gpu` supported only `atom` when this was
+  written; it gained `com` on 2026-09-17, see the GPU port section below.
 
 ## Validation (500-molecule pwatin frame, `examples/PACKAGES/gcpm`)
 
@@ -977,7 +977,45 @@ What was kept from the attempt:
 To make `com` the default later, the GPU kernels have to support it first;
 `gcpm/long` never can, and keeps its own `0`.
 
-## GPU port of `cutoff/style com`: what it takes
+## GPU port of `cutoff/style com` (DONE 2026-09-17)
+
+Implemented as planned below, with one addition the plan did not anticipate
+(item 2b).  Files touched: `lib/gpu/lal_gcpm.{h,cpp,cu}`,
+`lib/gpu/lal_gcpm_ext.cpp`, `src/GPU/pair_gcpm_gpu.cpp`, `doc/src/pair_gcpm.rst`.
+
+**2b. `cut_coulsq` was set too late in `PairGCPMGPU::init_style()`.** The
+original order was: run the `init_one()` loop, *then* set
+`cut_coulsq = cut_coul*cut_coul`.  That was harmless while the GPU style
+ignored `cut_physsq`, but `init_one()` computes
+`cut_physsq[i][j] = MAX(cut_ljsq[i][j], cut_coulsq)`, so with the old order the
+array the kernels now read would have been built from a stale (usually zero)
+`cut_coulsq`.  The assignment was moved above the loop, matching
+`PairGCPM::init_style()`.
+
+### Validation (500-molecule `data.gcpm5`, GTX 1050, `GPU_PREC=mixed`)
+
+100 steps of `rigid/nvk/small`, `polar/tol 1e-9`, `neigh_modify exclude
+molecule/intra all`:
+
+| check | result |
+|---|---|
+| GPU vs CPU, `cutoff/style com`, step-0 forces | rel. RMS **1.4e-6**, max abs 1.5e-4 |
+| GPU vs CPU, `cutoff/style atom`, step-0 forces (pre-existing baseline) | rel. RMS 1.8e-5 |
+| GPU vs CPU, `com`, thermo over 100 steps | tracks to ~1e-6 relative in every column |
+| GPU 1 rank vs 4 ranks, `com` | **bit-identical** thermo |
+| GPU_NEIGH (`-pk gpu 1 neigh yes`) vs CPU, `com` | agrees to the same 1e-6 |
+| neighbor cutoff padding message | `padded by 1.838 Ang`, same value as the CPU style |
+
+The `com` agreement is *better* than the `atom` baseline at step 0: with
+atom-atom truncation many site pairs sit exactly in the cutoff shell and
+single-precision rounding flips their inclusion; molecule-COM truncation puts
+far fewer molecule pairs on the boundary.
+
+Not verified here: the OpenCL build of the kernels (no OpenCL headers on this
+machine).  The CUDA build compiles the same `.cu`, and the additions use only
+constructs already present in that file.
+
+### The original plan, for reference
 
 Already handled: `pair_gcpm_gpu.cpp` derives `cell_size` from `init_one()`,
 which returns `cut + 2*com_extra` under `cut_com`, so the device neighbor

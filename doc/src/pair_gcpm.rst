@@ -173,8 +173,8 @@ obtained from it.  Note two consequences:
   better.
 
 Using *cutoff/style com* requires molecule IDs, which are defined by the
-:doc:`atom_style <atom_style>` used.  It is supported only by the *gcpm* style
-on the CPU: the accelerated variants and the *gcpm/long* style, whose Ewald
+:doc:`atom_style <atom_style>` used.  It is supported by the *gcpm* and
+*gcpm/gpu* styles.  The *gcpm/long* and *gcpm/long/gpu* styles, whose Ewald
 sum has to be truncated consistently in real and reciprocal space, accept only
 the *atom* setting.
 
@@ -242,8 +242,8 @@ Restrictions
 These styles are part of the GCPM package.  They are only
 enabled if LAMMPS was built with that package.  See the :doc:`Build package <Build_package>` page for more info.
 
-The *cutoff/style com* setting of the *gcpm* style requires an
-:doc:`atom_style <atom_style>` that stores molecule IDs.
+The *cutoff/style com* setting of the *gcpm* and *gcpm/gpu* styles requires
+an :doc:`atom_style <atom_style>` that stores molecule IDs.
 
 The *gcpm/long* style requires :doc:`kspace_style pppm/dipole <kspace_style>`,
 and must not be combined with :doc:`neigh_modify exclude <neigh_modify>`:

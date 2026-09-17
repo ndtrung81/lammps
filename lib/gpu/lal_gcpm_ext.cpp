@@ -34,7 +34,8 @@ int gcpm_gpu_init(const int ntypes, double **cutsq,
                   const int max_nbors, const int maxspecial,
                   const double cell_size, int &gpu_mode, FILE *screen,
                   double host_cut_coulsq, double *host_special_coul,
-                  const double qqrd2e, const double c_rf, const int enable_rf) {
+                  const double qqrd2e, const double c_rf, const int enable_rf,
+                  const int cut_com) {
   GCPMF.clear();
   gpu_mode=GCPMF.device->gpu_mode();
   double gpu_split=GCPMF.device->particle_split();
@@ -61,7 +62,8 @@ int gcpm_gpu_init(const int ntypes, double **cutsq,
                        host_cut_ljsq, offset, host_alpha_ij,
                        special_lj, inum, nall, max_nbors, maxspecial,
                        cell_size, gpu_split, screen,
-                       host_cut_coulsq, host_special_coul, qqrd2e, c_rf, enable_rf);
+                       host_cut_coulsq, host_special_coul, qqrd2e, c_rf, enable_rf,
+                       cut_com);
 
   GCPMF.device->world_barrier();
   if (message)
@@ -81,7 +83,8 @@ int gcpm_gpu_init(const int ntypes, double **cutsq,
                          host_cut_ljsq, offset, host_alpha_ij,
                          special_lj, inum, nall, max_nbors, maxspecial,
                          cell_size, gpu_split, screen,
-                         host_cut_coulsq, host_special_coul, qqrd2e, c_rf, enable_rf);
+                         host_cut_coulsq, host_special_coul, qqrd2e, c_rf, enable_rf,
+                         cut_com);
 
     GCPMF.device->serialize_init();
     if (message)
@@ -122,6 +125,10 @@ void gcpm_gpu_compute(const int ago, const int inum_full, const int nall,
   GCPMF.compute(ago, inum_full, nall, host_x, host_type, ilist, numj,
                 firstneigh, eflag, vflag, eatom, vatom, host_start,
                 cpu_time, success, host_q, nlocal, boxlo, prd);
+}
+
+void gcpm_gpu_update_dcom(double **host_dcom, const int nall) {
+  GCPMF.update_dcom(host_dcom, nall);
 }
 
 void gcpm_gpu_compute_efield(void **efield_ptr) {

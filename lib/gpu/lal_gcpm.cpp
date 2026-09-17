@@ -52,7 +52,8 @@ int GCPMT::init(const int ntypes, double **host_cutsq,
                 const int maxspecial, const double cell_size,
                 const double gpu_split, FILE *_screen,
                 const double host_cut_coulsq, double *host_special_coul,
-                const double qqrd2e, const double c_rf, const int enable_rf) {
+                const double qqrd2e, const double c_rf, const int enable_rf,
+                const int cut_com) {
   int success;
   success=this->init_atomic(nlocal,nall,max_nbors,maxspecial,cell_size,gpu_split,
                             _screen,gcpm,"k_gcpm");
@@ -103,6 +104,13 @@ int GCPMT::init(const int ntypes, double **host_cutsq,
   dev_efield.alloc(3*_efield_max, *(this->ucl_device), UCL_WRITE_ONLY);
   host_efield.alloc(3*_efield_max, *(this->ucl_device), UCL_READ_WRITE);
 
+  // molecule center-of-mass truncation: per-atom atom-to-COM offsets. The
+  // buffer is always allocated (the kernels take it as an argument either way)
+  // but holds a single dummy element when the convention is off.
+  _cut_com = cut_com;
+  _dcom_max = _cut_com ? nall : 1;
+  dcom.alloc(_dcom_max, *(this->ucl_device), UCL_WRITE_ONLY, UCL_READ_ONLY);
+
   coeff1.alloc(lj_types*lj_types,*(this->ucl_device),UCL_READ_ONLY);
   this->atom->type_pack4(ntypes,lj_types,coeff1,host_write,
                          arr_b1b2.data(), arr_b2.data(), arr_6b3.data(), host_cut_ljsq);
@@ -146,6 +154,7 @@ void GCPMT::clear() {
   sp_lj.clear();
   dev_efield.clear();
   host_efield.clear();
+  dcom.clear();
   this->clear_atomic();
 }
 
@@ -173,6 +182,7 @@ int GCPMT::loop(const int eflag, const int vflag) {
                           &this->ans->force, &this->ans->engv, &eflag, &vflag,
                           &ainum, &nbor_pitch, &this->atom->q, &cutsq,
                           &_cut_coulsq, &_qqrd2e, &_c_rf, &_enable_rf,
+                          &dcom, &_cut_com,
                           &this->_threads_per_atom);
   } else {
     this->k_pair.set_size(GX,BX);
@@ -181,6 +191,7 @@ int GCPMT::loop(const int eflag, const int vflag) {
                      &this->ans->force, &this->ans->engv, &eflag, &vflag,
                      &ainum, &nbor_pitch, &this->atom->q, &cutsq,
                      &_cut_coulsq, &_qqrd2e, &_c_rf, &_enable_rf,
+                     &dcom, &_cut_com,
                      &this->_threads_per_atom);
   }
   this->time_pair.stop();
@@ -205,8 +216,39 @@ void GCPMT::loop_efield() {
                &dev_efield,
                &ainum, &nbor_pitch, &this->atom->q,
                &_cut_coulsq, &_qqrd2e, &_c_rf, &_enable_rf,
+               &dcom, &_cut_com,
                &this->_threads_per_atom);
   this->time_pair.stop();
+}
+
+// ---------------------------------------------------------------------------
+// Copy the per-atom atom-to-COM offsets to the device (molecule-COM truncation)
+// ---------------------------------------------------------------------------
+template <class numtyp, class acctyp>
+void GCPMT::update_dcom(double **host_dcom, const int nall) {
+  if (!_cut_com) return;
+
+  // atoms migrate between subdomains at reneighboring, so a rank's atom count
+  // can grow; resize as the efield buffers do
+  if (nall > _dcom_max) {
+    _dcom_max = nall;
+    dcom.clear();
+    dcom.alloc(_dcom_max, *(this->ucl_device), UCL_WRITE_ONLY, UCL_READ_ONLY);
+  }
+
+  for (int i = 0; i < nall; i++) {
+    numtyp4 v;
+    v.x = (numtyp)host_dcom[i][0];
+    v.y = (numtyp)host_dcom[i][1];
+    v.z = (numtyp)host_dcom[i][2];
+    v.w = (numtyp)0;
+    dcom[i] = v;
+  }
+
+  // asynchronous on the device default command queue, which is also the queue
+  // the pair and efield kernels run on, so the copy is complete before they
+  // read the buffer
+  dcom.update_device(nall, true);
 }
 
 template <class numtyp, class acctyp>

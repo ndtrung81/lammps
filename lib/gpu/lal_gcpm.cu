@@ -84,6 +84,7 @@ __kernel void k_gcpm(const __global numtyp4 *restrict x_,
                      const __global numtyp *restrict cutsq,
                      const numtyp cut_coulsq, const numtyp qqrd2e,
                      const numtyp c_rf, const int enable_rf,
+                     const __global numtyp4 *restrict dcom_, const int cut_com,
                      const int t_per_atom) {
   int tid, ii, offset;
   atom_info(t_per_atom,ii,tid,offset);
@@ -120,6 +121,14 @@ __kernel void k_gcpm(const __global numtyp4 *restrict x_,
     numtyp qtmp; fetch(qtmp,i,q_tex);
     int itype=ix.w;
 
+    // molecule-COM truncation (cut_com): dcom_[i] is the vector from atom i to
+    // the center of mass of its molecule, so del + dcom_[i] - dcom_[j] is the
+    // COM-COM separation in the same periodic image as del.  Mirrors
+    // PairGCPM::cutdistsq(); the kernels below keep using the atom-atom rsq.
+    numtyp4 idc;
+    idc.x=(numtyp)0; idc.y=(numtyp)0; idc.z=(numtyp)0;
+    if (cut_com) idc=dcom_[i];
+
     for ( ; nbor<nbor_end; nbor+=n_stride) {
       ucl_prefetch(dev_packed+nbor+n_stride);
       int j=dev_packed[nbor];
@@ -137,8 +146,17 @@ __kernel void k_gcpm(const __global numtyp4 *restrict x_,
       numtyp delz = ix.z-jx.z;
       numtyp rsq = delx*delx+dely*dely+delz*delz;
 
+      numtyp rsq_cut = rsq;
+      if (cut_com) {
+        numtyp4 jdc = dcom_[j];
+        numtyp cx = delx + idc.x - jdc.x;
+        numtyp cy = dely + idc.y - jdc.y;
+        numtyp cz = delz + idc.z - jdc.z;
+        rsq_cut = cx*cx + cy*cy + cz*cz;
+      }
+
       int mtype=itype*lj_types+jtype;
-      if (rsq<cutsq[mtype]) {
+      if (rsq_cut<cutsq[mtype]) {
         numtyp r2inv=ucl_recip(rsq);
         numtyp forcecoul=(numtyp)0.0, force_lj=(numtyp)0.0;
         numtyp r6inv=(numtyp)0.0, rexp=(numtyp)0.0;
@@ -148,7 +166,7 @@ __kernel void k_gcpm(const __global numtyp4 *restrict x_,
         numtyp ecoul_rfA=(numtyp)0.0;
 
         // Buckingham dispersion
-        if (rsq < coeff1[mtype].w) {
+        if (rsq_cut < coeff1[mtype].w) {
           r = ucl_sqrt(rsq);
           rexp = ucl_exp(-coeff1[mtype].y*r);
           r6inv = r2inv*r2inv*r2inv;
@@ -160,7 +178,7 @@ __kernel void k_gcpm(const __global numtyp4 *restrict x_,
         // Guard: skip if either charge is zero (matches CPU charge_charge);
         // alpha_ij can be +INF for zero-sigma atoms, INF*0 = NaN in falpha.
         numtyp qj; fetch(qj,j,q_tex);
-        if (rsq < cut_coulsq && qtmp != (numtyp)0.0 && qj != (numtyp)0.0) {
+        if (rsq_cut < cut_coulsq && qtmp != (numtyp)0.0 && qj != (numtyp)0.0) {
           r = ucl_sqrt(rsq);
           numtyp aij = coeff2[mtype].w;
           numtyp aijr = aij * r;
@@ -196,12 +214,12 @@ __kernel void k_gcpm(const __global numtyp4 *restrict x_,
         f.z+=delz*force;
 
         if (EVFLAG && eflag) {
-          if (rsq < coeff1[mtype].w) {
+          if (rsq_cut < coeff1[mtype].w) {
             // energy = factor_lj*(buck1*rexp - buck3*r6inv - offset)
             numtyp e = coeff2[mtype].x*rexp - coeff2[mtype].y*r6inv - coeff2[mtype].z;
             energy += factor_lj * e;
           }
-          if (rsq < cut_coulsq) {
+          if (rsq_cut < cut_coulsq) {
             e_coul += ecoul_smeared + ecoul_rfA;
           }
         }
@@ -237,6 +255,7 @@ __kernel void k_gcpm_fast(const __global numtyp4 *restrict x_,
                           const __global numtyp *restrict cutsq,
                           const numtyp cut_coulsq, const numtyp qqrd2e,
                           const numtyp c_rf, const int enable_rf,
+                          const __global numtyp4 *restrict dcom_, const int cut_com,
                           const int t_per_atom) {
   int tid, ii, offset;
   atom_info(t_per_atom,ii,tid,offset);
@@ -276,6 +295,14 @@ __kernel void k_gcpm_fast(const __global numtyp4 *restrict x_,
     int iw=ix.w;
     int itype=fast_mul((int)MAX_SHARED_TYPES,iw);
 
+    // molecule-COM truncation (cut_com): dcom_[i] is the vector from atom i to
+    // the center of mass of its molecule, so del + dcom_[i] - dcom_[j] is the
+    // COM-COM separation in the same periodic image as del.  Mirrors
+    // PairGCPM::cutdistsq(); the kernels below keep using the atom-atom rsq.
+    numtyp4 idc;
+    idc.x=(numtyp)0; idc.y=(numtyp)0; idc.z=(numtyp)0;
+    if (cut_com) idc=dcom_[i];
+
     for ( ; nbor<nbor_end; nbor+=n_stride) {
       ucl_prefetch(dev_packed+nbor+n_stride);
       int j=dev_packed[nbor];
@@ -293,7 +320,16 @@ __kernel void k_gcpm_fast(const __global numtyp4 *restrict x_,
       numtyp delz = ix.z-jx.z;
       numtyp rsq = delx*delx+dely*dely+delz*delz;
 
-      if (rsq<cutsq[mtype]) {
+      numtyp rsq_cut = rsq;
+      if (cut_com) {
+        numtyp4 jdc = dcom_[j];
+        numtyp cx = delx + idc.x - jdc.x;
+        numtyp cy = dely + idc.y - jdc.y;
+        numtyp cz = delz + idc.z - jdc.z;
+        rsq_cut = cx*cx + cy*cy + cz*cz;
+      }
+
+      if (rsq_cut<cutsq[mtype]) {
         numtyp r2inv=ucl_recip(rsq);
         numtyp forcecoul=(numtyp)0.0, force_lj=(numtyp)0.0;
         numtyp r6inv=(numtyp)0.0, rexp=(numtyp)0.0;
@@ -303,7 +339,7 @@ __kernel void k_gcpm_fast(const __global numtyp4 *restrict x_,
         numtyp ecoul_rfA=(numtyp)0.0;
 
         // Buckingham dispersion
-        if (rsq < coeff1[mtype].w) {
+        if (rsq_cut < coeff1[mtype].w) {
           r = ucl_sqrt(rsq);
           rexp = ucl_exp(-coeff1[mtype].y*r);
           r6inv = r2inv*r2inv*r2inv;
@@ -313,7 +349,7 @@ __kernel void k_gcpm_fast(const __global numtyp4 *restrict x_,
         // Guard: skip if either charge is zero (matches CPU charge_charge);
         // alpha_ij can be +INF for zero-sigma atoms, INF*0 = NaN in falpha.
         numtyp qj; fetch(qj,j,q_tex);
-        if (rsq < cut_coulsq && qtmp != (numtyp)0.0 && qj != (numtyp)0.0) {
+        if (rsq_cut < cut_coulsq && qtmp != (numtyp)0.0 && qj != (numtyp)0.0) {
           r = ucl_sqrt(rsq);
           numtyp aij = coeff2[mtype].w;
           numtyp arg = aij * r;
@@ -346,11 +382,11 @@ __kernel void k_gcpm_fast(const __global numtyp4 *restrict x_,
         f.z+=delz*force;
 
         if (EVFLAG && eflag) {
-          if (rsq < coeff1[mtype].w) {
+          if (rsq_cut < coeff1[mtype].w) {
             numtyp e = coeff2[mtype].x*rexp - coeff2[mtype].y*r6inv - coeff2[mtype].z;
             energy += factor_lj * e;
           }
-          if (rsq < cut_coulsq) {
+          if (rsq_cut < cut_coulsq) {
             e_coul += ecoul_smeared + ecoul_rfA;
           }
         }
@@ -388,6 +424,7 @@ __kernel void k_gcpm_efield(
                 const __global numtyp *restrict q_,
                 const numtyp cut_coulsq, const numtyp qqrd2e,
                 const numtyp c_rf, const int enable_rf,
+                const __global numtyp4 *restrict dcom_, const int cut_com,
                 const int t_per_atom) {
   int tid, ii, offset;
   atom_info(t_per_atom, ii, tid, offset);
@@ -411,6 +448,14 @@ __kernel void k_gcpm_efield(
     numtyp4 ix; fetch4(ix, i, pos_tex);
     int itype = (int)ix.w * lj_types;
 
+    // molecule-COM truncation (cut_com): dcom_[i] is the vector from atom i to
+    // the center of mass of its molecule, so del + dcom_[i] - dcom_[j] is the
+    // COM-COM separation in the same periodic image as del.  Mirrors
+    // PairGCPM::cutdistsq(); the kernels below keep using the atom-atom rsq.
+    numtyp4 idc;
+    idc.x=(numtyp)0; idc.y=(numtyp)0; idc.z=(numtyp)0;
+    if (cut_com) idc=dcom_[i];
+
     // no q[i] gate here: the field receiver need not carry a charge (the
     // induced-dipole site may be chargeless, e.g. a COM dipole site), only
     // the sources q[j] must be nonzero (matches CPU charge_charge)
@@ -431,7 +476,16 @@ __kernel void k_gcpm_efield(
       numtyp delz = ix.z - jx.z;
       numtyp rsq = delx*delx + dely*dely + delz*delz;
 
-      if (rsq < cut_coulsq) {
+      numtyp rsq_cut = rsq;
+      if (cut_com) {
+        numtyp4 jdc = dcom_[j];
+        numtyp cx = delx + idc.x - jdc.x;
+        numtyp cy = dely + idc.y - jdc.y;
+        numtyp cz = delz + idc.z - jdc.z;
+        rsq_cut = cx*cx + cy*cy + cz*cz;
+      }
+
+      if (rsq_cut < cut_coulsq) {
         numtyp r = ucl_sqrt(rsq);
         numtyp r2inv = ucl_recip(rsq);
 
