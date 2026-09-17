@@ -147,10 +147,15 @@ PairGCPM::PairGCPM(LAMMPS *lmp) : Pair(lmp)
   mol_mu = mol_p = mol_x = mol_Rq = mol_Rp = nullptr;
   mol_com = nullptr;
 
-  // molecule center-of-mass truncation 
-  //.  enabled by default to be consistent with the reference
+  // molecule center-of-mass truncation (opt-in via cutoff/style com).
+  // It is NOT the default even though the reference Fortran GCPM code uses
+  // that convention: gcpm/long cannot support it at all (its Ewald split needs
+  // atom-atom truncation) and the GPU kernels do not implement it yet, so
+  // defaulting to com would break every derived style. Revisit once
+  // lib/gpu/lal_gcpm.cu handles the COM offsets.
 
-  cut_com = 1;
+  cut_com_default = 0;
+  cut_com = cut_com_default;
   dcom = nullptr;
   ncom_max = 0;
   com_extra = 0.0;
@@ -1571,7 +1576,10 @@ void PairGCPM::settings(int narg, char **arg)
     iarg = 4;
   }
 
-  cut_com = 0;
+  // per-style default, so that a second pair_style command without the keyword
+  // does not inherit the setting of the first one
+
+  cut_com = cut_com_default;
 
   while (iarg < narg) {
     if (strcmp(arg[iarg],"cutoff/style") == 0) {

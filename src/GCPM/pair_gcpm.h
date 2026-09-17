@@ -153,6 +153,10 @@ class PairGCPM : public Pair {
   // GCPM code: every interaction between two molecules is included or dropped
   // as a whole, by their COM-COM distance, instead of per atom pair)
   int cut_com;          // 1 = truncate by molecule COM-COM distance, 0 = atom-atom
+  int cut_com_default;  // value cut_com takes when the pair_style command gives
+                        // no cutoff/style keyword. 1 for gcpm (the convention of
+                        // the reference Fortran code), 0 for the derived styles
+                        // whose Ewald split requires atom-atom truncation.
   double **dcom;        // per-atom vector from the atom to its molecule's COM [A]
   int ncom_max;         // allocated size of dcom
   double com_extra;     // largest |dcom| in the system; the cutoff returned by

@@ -948,6 +948,87 @@ default `cutoff/style atom` for production NVE.
 
 
 
+
+# Why `cutoff/style` defaults to `atom`, and what a GPU port needs (2026-09-16)
+
+## The default
+
+`com` was briefly made the default, on the grounds that it is the convention of
+the reference Fortran code. It was reverted the same day. The reason is not a
+preference: `PairGCPMLong`, `PairGCPMGPU` and `PairGCPMLongGPU` all inherit
+`PairGCPM::settings()`, and all three reject `cutoff/style com` in their
+`init_style()`, so a `com` default makes them fail at startup.
+`examples/PACKAGES/gcpm/in.gcpm.long` died with
+
+    ERROR: Pair gcpm/long does not support cutoff/style com
+
+and `log.29Aug26.gcpm.g++.4` / `log.27Aug26.water_box.g++.4` both went stale,
+which would also have failed `quick-regression.yml` (`get_quick_list.py` picks
+up any example whose commands changed, so `in.gcpm` is in that set).
+
+What was kept from the attempt:
+
+- `cut_com_default`, a per-style default that `settings()` applies. Without a
+  reset in `settings()` a second `pair_style` command with no `cutoff/style`
+  keyword silently inherits the first one's setting.
+- `PairGCPMLong` pins `cut_com_default = 0` in its own constructor, so changing
+  the base default cannot silently break it (or `gcpm/long/gpu`) again.
+
+To make `com` the default later, the GPU kernels have to support it first;
+`gcpm/long` never can, and keeps its own `0`.
+
+## GPU port of `cutoff/style com`: what it takes
+
+Already handled: `pair_gcpm_gpu.cpp` derives `cell_size` from `init_one()`,
+which returns `cut + 2*com_extra` under `cut_com`, so the device neighbor
+binning already reaches far enough. No change needed there.
+
+1. **`dcom` on the device.** `GCPM` derives from `BaseCharge`, which has no
+   `extra_fields` support (only `BaseDPD`, `BaseSPH` and `BaseAmoeba` do), so
+   do not extend the shared base class. Follow the local pattern already in
+   `lal_gcpm.h`, which owns `dev_efield`/`host_efield`: add a
+   `UCL_Vector<numtyp4,numtyp4> dcom`. It must be re-uploaded every step
+   (molecules rotate), i.e. one extra `nall * numtyp4` transfer alongside `x`.
+   Note `PairGCPM::dcom` is `memory->create(dcom, n, 3)`, 3-wide contiguous, so
+   either repack to 4-wide before the cast or widen the CPU allocation.
+
+2. **Split padded from physical cutoff.** The kernels test `rsq < cutsq[mtype]`
+   and `gcpm_gpu_init()` is handed `cutsq`, which under `cut_com` carries the
+   `2*com_extra` padding. Pass `cut_physsq` (already maintained on the CPU) for
+   the in-kernel tests and keep the padded value only for `cell_size`.
+
+3. **The kernels.** `lal_gcpm.cu`: `k_gcpm` (line 72), `k_gcpm_fast` (226),
+   `k_gcpm_efield` (379) -- 11 cutoff tests at lines 141, 151, 163, 199, 204,
+   296, 306, 316, 349, 353, 434. Each becomes
+
+   ```c
+   numtyp4 idc = dcom_[i], jdc = dcom_[j];
+   numtyp cx = delx + idc.x - jdc.x;      // and cy, cz
+   numtyp rsq_cut = cut_com ? cx*cx+cy*cy+cz*cz : rsq;
+   ```
+
+   with `cut_com` as a new kernel argument. Only the tests change: the physics
+   keeps using the atom-atom `rsq`, and the RF energy shift keeps `cut_coulsq`
+   as rc^2, exactly as on the CPU (`PairGCPM::cutdistsq()` is the reference).
+
+4. **Host side.** Drop the `if (cut_com) error->all(...)` guard in
+   `PairGCPMGPU::init_style()`, and call `compute_mol_com()` **before** the
+   async kernel launch -- its `MPI_Allreduce` and ghost forward-comm must
+   complete first, and `PairGCPMGPU::compute()` runs the CPU polar solver while
+   the GPU works, so the ordering matters.
+
+5. **Neighbor lists.** GCPM decks need `neigh_modify exclude molecule/intra
+   all`, which the GPU neighbor build rejects, so these runs already use
+   `-pk gpu 1 neigh no` with a host list -- which already carries the padding.
+   Device binning is therefore a non-issue for realistic GCPM decks.
+
+6. **Validation.** GPU vs CPU on the pwatin frame under `cutoff/style com`,
+   expecting ~1e-7 relative agreement (GPU accumulation-order noise), the same
+   cross-check used for the `e_shift_qq` fix in the stage 6 section above.
+
+`gcpm/long/gpu` stays atom-only regardless: the Ewald split needs real and
+reciprocal space truncated consistently per atom pair.
+
 # Why LAMMPS was slower than the Fortran, and two fixes (2026-09-16)
 
 Timings on one core, 500 molecules, rc = 11.22 A, 100 steps, same machine

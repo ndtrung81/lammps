@@ -69,6 +69,14 @@ PairGCPMLong::PairGCPMLong(LAMMPS *lmp) : PairGCPM(lmp)
   // the pppm/dipole solver.
   ewaldflag = pppmflag = dipoleflag = 1;
   pppm_dipole = nullptr;
+
+  // the Ewald split needs real and reciprocal space truncated consistently per
+  // atom pair, so this style can never use the molecule-COM convention (it
+  // rejects cutoff/style com in init_style()). Pinned here as well as in the
+  // base class, so that changing the base default cannot silently break it.
+
+  cut_com_default = 0;
+  cut_com = cut_com_default;
 }
 
 /* ----------------------------------------------------------------------
