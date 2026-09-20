@@ -894,6 +894,156 @@ with its single `r2ij(i,j)` test built from the molecular centers `x0`.
   consistently per atom pair.  `gcpm/gpu` supported only `atom` when this was
   written; it gained `com` on 2026-09-17, see the GPU port section below.
 
+## Why `com` keeps every pair of an interacting molecule pair, and `atom` does not
+
+Two separate statements are hiding behind "the COM convention includes all the
+pairs": one about which *site* pairs make up a *molecule* pair (the physics),
+and one about the neighbor list reaching far enough to offer them (the
+bookkeeping that makes the first statement true).
+
+### 1. The molecule pair is the interacting unit, and `atom` splits it
+
+A GCPM water is 5 sites (O, H, H, the negative charge site, and the M dipole
+site), so a molecule pair owns 25 site pairs, 9 of them charge-charge. Let `R`
+be the COM-COM separation of two molecules and `d_i = |x_i - COM|` the offset of
+a site from its own center; `com_extra = max_i d_i` over the whole system, which
+for this model is the hydrogen offset, **0.919 Ang** (the setup message prints
+twice that, `cutoff padded by 1.838 Ang`).
+
+By the triangle inequality the 25 site-site distances of one molecule pair are
+spread over
+
+    R - (d_i + d_j)  <=  r_ij  <=  R + (d_i + d_j)
+
+i.e. a window up to `2*(d_i + d_j) <= 4*com_extra ~ 3.7 Ang` wide around `R`.
+With `cutoff/style atom` the test is applied to `r_ij`, once per site pair, so
+**every molecule pair whose COM separation falls in the shell
+`rc - 2*com_extra < R < rc + 2*com_extra` can have part of its site pairs inside
+the cutoff and part outside**. That shell is not a small correction: at
+`rc = 11.22 Ang`,
+
+    ((rc + 1.838)^3 - (rc - 1.838)^3) / rc^3 = 0.99
+
+an upper bound on the split fraction that is as large as the fully-inside
+sphere itself. Counted exactly on the 500-molecule frame (section 3 below),
+**18.1 % of all molecule pairs are actually split, 0.59 for every pair that is
+fully inside `rc`** -- not a boundary correction, a bulk effect.
+
+What survives truncation for a split pair is not a molecule, it is an
+orientation-dependent subset of its sites. The included site charges no longer
+sum to zero, so the pair contributes a spurious charge-charge `1/r` term instead
+of the dipole-dipole `1/r^3` tail one gets from truncating *neutral* units --
+and, because the surviving subset changes whenever the molecules rotate or
+translate by a fraction of an Angstrom, that error fluctuates in time. This is
+the mechanism behind the two numbers measured elsewhere in this file: the 4.0 %
+error in the smeared Coulomb energy (section "The number that matters"), and the
+factor-of-two suppression of `D` (section 12) -- a fluctuating force error acts
+as friction.
+
+With `cutoff/style com` there is a single test per molecule pair, on `R` alone,
+exactly as in `force.f`'s `r2ij(i,j)`. All 25 site pairs are evaluated or none
+of them is: **the inclusion criterion is a function of the molecule pair only,
+never of which site of it happens to be closest.** The interacting units are
+always complete, neutral molecules, and the quantity discarded at the cutoff is
+the well-behaved residual between two neutral molecules.
+
+Note that the two conventions are *different pair sets*, not one being a superset
+of the other: `com` also deliberately drops site pairs closer than `rc` when
+their molecules' centers are farther apart than `rc`. That is the same rule seen
+from the other side, and it is equally necessary -- admitting those pairs would
+put fragments of a molecule pair back into the sum.
+
+### 2. The neighbor list has to offer all 25, so the cutoff is padded
+
+LAMMPS builds neighbor lists from atom positions, so a pair the `com` test would
+accept is only evaluated if it is in the list. The same inequality gives the
+needed reach: `R < rc` implies
+
+    r_ij <= R + d_i + d_j < rc + 2*com_extra
+
+Hence `PairGCPM::init_one()` returns `cut + 2*com_extra` under `cut_com`, and
+`Pair::init()` propagates that into `cutsq[i][j]` and `cutneighmax`, so the list
+(and the ghost shell, which is sized from the same cutoff) contains **every**
+site pair that a molecule pair inside `rc` can own. `com_extra` itself is
+measured over all atoms with an `MPI_Allreduce(MPI_MAX)` in `init_style()`,
+which runs just before `Pair::init()` calls `init_one()`, and `compute_mol_com()`
+re-checks it every step against `com_extra + 0.5*neighbor->skin`, erroring out
+rather than silently losing pairs if a molecule ever grows past the padding.
+
+The padding is why the kernels can no longer test against `cutsq[i][j]`: that
+array now carries the extra reach. `cut_physsq[i][j] = MAX(cut_ljsq[i][j],
+cut_coulsq)` holds the unpadded physical cutoff, and every cutoff test in
+`dispersion()`, `charge_charge()`, `compute_induced_efield()` and `polar()` reads
+`cutdistsq(i,j,delx,dely,delz) < cut_physsq[itype][jtype]`. The two halves have
+to go together: the padded `cutsq` supplies the candidates, `cut_physsq` applied
+to the COM distance selects them.
+
+The last piece is image consistency. `dcom[i]` is a *difference* vector
+(`COM - x_i`), so it does not depend on which periodic image of atom `i` is in
+hand; `del + dcom[i] - dcom[j]` is therefore the COM separation in the same image
+as `del`, for local atoms and ghosts alike, with no minimum-image call and no
+pbc shift when `dcom` is forward-communicated. Without that property a molecule
+pair straddling a boundary could be tested against one image and evaluated in
+another, which would reintroduce exactly the missing-pair problem the convention
+is meant to remove.
+
+### 3. Measured: the net charge in range is exactly zero under `com`, 3.8 e under `atom` (2026-09-19)
+
+The claim above is checkable directly, without running LAMMPS: for every site
+`i`, sum the charges of the sites the pair style lets `i` interact with
+(intramolecular pairs excluded, as in the decks). Script:
+`examples/PACKAGES/gcpm/net_charge_census.py`, brute force with minimum image on
+`data.gcpm5` (500 molecules, `rc = 11.220684 Ang`, `L/2 = 12.328 Ang`). Each
+molecule is neutralized exactly first, so the residual reported is the
+truncation and not the data file's 8-decimal rounding of the site charges
+(`1e-8 e` per molecule).
+
+| net charge `Q_i` in range of a site | mean | RMS | max abs |
+|---|---|---|---|
+| `cutoff/style atom` | -8.66e-02 e | **3.833 e** | **14.06 e** |
+| `cutoff/style com` | 0.0 e | **0.0 e** | **0.0 e** |
+
+The `com` column is zero *identically*, not to some tolerance: the included set
+is a union of whole molecules, each of which sums to zero, so the result is zero
+term by term. The `atom` column is worse than "not zero" -- each site sits in a
+sphere carrying a fluctuating net charge of several `e`, up to 14 `e`. For
+scale, the entire simulation cell carries 0.
+
+Molecule-pair census on the same frame (what fraction of pairs `atom` splits):
+
+| molecule pairs (124750 total) | count | share |
+|---|---|---|
+| all 25 site pairs inside `rc` | 38459 | 30.8 % |
+| **split: some site pairs in, some out** | **22577** | **18.1 %** |
+| none inside `rc` | 63714 | 51.1 % |
+
+**The spurious monopole accounts for the whole 4 % energy error.** The part of
+`Q_i` that produces an energy rather than noise is the charge-weighted average
+`<q_i Q_i> = +0.0051 e^2`. Treating the dropped charge as sitting at the cutoff
+(`erf(alpha_ij*rc) = 1` to 15 digits at this `rc`, so smeared equals bare there):
+
+    0.5 * 332.06 * sum_i q_i Q_i / rc = +188.0 kcal/mol
+
+Measured, same frame, `pair_style gcpm 0 0.0 ${rc} ${rc}` with polar and RF off
+and `neigh_modify exclude molecule/intra all`, `build-gcpm/lmp`:
+
+| `cutoff/style` | `E_vdwl` | `E_coul` |
+|---|---|---|
+| `atom` | 1101.4407 | -4586.7539 |
+| `com` | 1101.4551 | -4776.2302 |
+| difference | 0.0144 | **+189.476** |
+
+`+188.0` predicted vs `+189.5` observed: the net charge left inside the cutoff
+by atom-atom truncation *is* the 4 % charge-charge discrepancy against the
+Fortran, to better than 1 %. The reaction field cannot repair it -- Onsager
+cancels the interaction of a neutral cavity with its continuum, and these
+fragments are not neutral.
+
+(The `com` numbers here differ from the 2026-09-16 table below in the 5th digit,
+`-4776.2302` vs `-4776.28`; both are skin-independent, checked at skin 0.3 /
+1.107 / 2.0 / 3.0, and 1 vs 4 MPI ranks is bit-identical. The 0.05 kcal/mol is a
+code-revision difference, 1e-5 relative, and changes nothing here.)
+
 ## Validation (500-molecule pwatin frame, `examples/PACKAGES/gcpm`)
 
 | check | result |
@@ -920,6 +1070,11 @@ kcal/mol is consistent with what is left: the Fortran's Abramowitz–Stegun `cer
 (~1e-7 relative, summed over ~1e6 site pairs), `<=` vs `<` at the cutoff, and the
 10-decimal rounding of the converted frame.
 
+The *origin* of the 4.0 % is measured in subsection 3 above: the net charge left
+inside the cutoff by atom-atom truncation (RMS 3.8 e per site, exactly 0 under
+`com`) predicts +188.0 kcal/mol of spurious monopole energy against the +189.5
+actually separating the two columns.
+
 ## Cost of the convention: energy discontinuity at the cutoff
 
 With `atom` truncation the per-pair shift (`e_shift_qq`, added 2026-07-18) makes
@@ -945,6 +1100,15 @@ convention with a Gear predictor–corrector and a thermostat.
 
 **Recommendation:** use `cutoff/style com` to compare with the Fortran, and the
 default `cutoff/style atom` for production NVE.
+
+> **Revised 2026-09-17 for anything that measures dynamics.** The recommendation
+> above is about *energy conservation*, and it still holds for that. It must not
+> be read as "the convention only matters for comparing with the Fortran":
+> `cutoff/style atom` suppresses the self-diffusion coefficient by a factor of
+> ~2 (D = 0.12-0.15 vs 0.246 at eps_rf = 78.4, same code, same rc). For D,
+> tau_1, tau_2, viscosity or any other transport property, `com` is the setting
+> that reproduces the reference, and `atom` is the one that is wrong. See
+> section 12 below.
 
 
 
@@ -995,15 +1159,18 @@ array the kernels now read would have been built from a stale (usually zero)
 ### Validation (500-molecule `data.gcpm5`, GTX 1050, `GPU_PREC=mixed`)
 
 100 steps of `rigid/nvk/small`, `polar/tol 1e-9`, `neigh_modify exclude
-molecule/intra all`:
+molecule/intra all`.  Run with **both** `GPU_API=cuda` and `GPU_API=opencl`
+(the same `.cu` is compiled by nvcc in one case and JIT-compiled by the OpenCL
+driver in the other); the two agree with each other to within their own
+mixed-precision noise, so only one set of numbers is given:
 
 | check | result |
 |---|---|
 | GPU vs CPU, `cutoff/style com`, step-0 forces | rel. RMS **1.4e-6**, max abs 1.5e-4 |
 | GPU vs CPU, `cutoff/style atom`, step-0 forces (pre-existing baseline) | rel. RMS 1.8e-5 |
 | GPU vs CPU, `com`, thermo over 100 steps | tracks to ~1e-6 relative in every column |
-| GPU 1 rank vs 4 ranks, `com` | **bit-identical** thermo |
-| GPU_NEIGH (`-pk gpu 1 neigh yes`) vs CPU, `com` | agrees to the same 1e-6 |
+| GPU 1 rank vs 4 ranks, `com` | **bit-identical** (forces agree to all 12 printed digits) |
+| GPU_NEIGH (`-pk gpu 1 neigh yes`) vs CPU, `com` | rel. RMS 4.7e-6 at step 0 |
 | neighbor cutoff padding message | `padded by 1.838 Ang`, same value as the CPU style |
 
 The `com` agreement is *better* than the `atom` baseline at step 0: with
@@ -1011,9 +1178,16 @@ atom-atom truncation many site pairs sit exactly in the cutoff shell and
 single-precision rounding flips their inclusion; molecule-COM truncation puts
 far fewer molecule pairs on the boundary.
 
-Not verified here: the OpenCL build of the kernels (no OpenCL headers on this
-machine).  The CUDA build compiles the same `.cu`, and the additions use only
-constructs already present in that file.
+The GPU_NEIGH row has to drop `neigh_modify exclude molecule/intra all` (the
+device neighbor build rejects it), so its absolute energies are not physical.
+It is there only to confirm that `dcom` is indexed consistently with a
+device-built neighbor list -- LAL's cell-list sort keeps the original particle
+index, so the same per-atom array works for both neighbor modes.
+
+A `com` run needs a larger `neigh_modify one` than the CPU run: the GPU styles
+use a full neighbor list (roughly 2x the entries) and the COM padding widens
+the list further.  With 500 molecules at rc = 11.22 Ang the default 2000
+overflows; `neigh_modify one 8000 page 800000` is enough.
 
 ### The original plan, for reference
 
@@ -2146,3 +2320,124 @@ velocity Verlet, COM-COM vs atom-atom truncation, the RF self-term bookkeeping)
 plus the starting state: the Fortran continues from `pwatin`, whose reduced-unit
 velocities and Gear history are not converted, so this deck draws a Gaussian
 velocity distribution and lets `fix rigid/nvk/small` rescale it.
+
+
+## 12. `cutoff/style com` reproduces the Fortran's D: the dynamics gap was the
+## truncation convention, not an implementation difference (2026-09-17)
+
+Sections 6-11 chased a persistent discrepancy: every *static* GCPM observable
+agreed between the codes to a fraction of a percent, while every *dynamic* one
+differed by ~1.4x. The 2026-09-14 matched-estimator table (N = 256, same start
+configuration, same windowed estimator on both sides) was:
+
+| | D (Ang^2/ps) | tau_1 (ps) | tau_2 (ps) |
+|---|---|---|---|
+| Fortran RF, COM-COM, rc 8.75 | 0.235 +/- 0.007 | 4.21 | 1.96 |
+| LAMMPS RF, atom-atom, rc 8.75 | 0.12 - 0.15 | 6.61 | 3.25 |
+| LAMMPS Ewald (pppm/dipole) | 0.169 +/- 0.005 | 5.68 | 2.98 |
+
+**The cause was the cutoff convention combined with the reaction field.** With
+`cutoff/style com` (section "Molecule-COM truncation" above) and the RF on,
+LAMMPS reproduces the Fortran:
+
+What atom-atom truncation does to make the dynamics slow is measured in
+"Why `com` keeps every pair of an interacting molecule pair", subsection 3: each
+site sees a net charge of RMS 3.8 e (max 14 e) inside its cutoff, and that
+charge changes as the molecules move, so the force error is not a static bias
+but a fluctuating one -- which is what acts as friction and suppresses D. Under
+`com` the same quantity is identically zero.
+
+
+| | D (Ang^2/ps) |
+|---|---|
+| **LAMMPS RF, COM-COM, eps_rf 78.4, rc 8.7, N = 500** | **0.246 +/- 0.002** |
+| Fortran RF, COM-COM, rc 8.75, N = 256 | 0.235 +/- 0.007 |
+| LAMMPS RF, atom-atom, rc 8.75, N = 256 | 0.12 - 0.15 |
+| Paricaud Table IV / experiment | 0.226 / ~0.23 |
+
+Run: `pair_style gcpm 1 78.4 8.7 8.7 cutoff/style com polar/tol 1.8e-5`,
+`data.gcpm5.999` (N = 500, rho = 0.999), T = 298.15 K, `fix rigid/nvk/small`,
+dt = 0.98213053 fs, 10 ps equilibration + 117 ps production on 4 MPI ranks
+(~34 timesteps/s). D from the windowed estimator
+(`Self-Diffusion-Study/analysis-2026-09-14/tools/wmsd.py`) on the type-4 COM
+site, read 0.250 / 0.246 / 0.245 over the 2-10 / 5-20 / 10-30 ps fit windows,
+block s.e. 0.001-0.006, with `MSD/6t` flat from ~15 ps. N = 500 vs N = 256 is
+worth about +0.007 Ang^2/ps by Yeh-Hummer, so like-for-like this is ~0.239
+against the Fortran's 0.235.
+
+**Mechanism** (established in the `eps_rf = 1` experiment, section 10 and the
+memory note): atom-based truncation slices molecules, so a cutoff sphere carries
+net charge; worse, the sites of a *rotating* molecule cross `rc` at different
+times, so the force error fluctuates at the librational frequency. A fluctuating
+force error acts as friction. COM truncation admits only whole neutral molecules
+and switches once per diffusive crossing.
+
+### Do not generalize the `eps_rf = 1` number
+
+The earlier note that `cutoff/style com` gives "D = 0.17, matching full Ewald"
+is the **eps_rf = 1 (no reaction field)** value. With the RF on it gives 0.246.
+COM truncation and Ewald are *not* interchangeable once the RF is present, and
+reading that row the other way cost a session of mis-reasoning.
+
+### What is now open: Ewald sits 33 % below RF+COM
+
+0.169 (Ewald) vs 0.246 (RF+COM) for the same Hamiltonian. Two readings:
+
+1. **RF+COM is systematically too fast** and Ewald is right. Then GCPM's true D
+   is ~0.17-0.20, the published 0.226 is protocol-specific, and its agreement
+   with experiment is a coincidence. Note this is self-consistent: GCPM's
+   parameters were fitted with the RF+COM Fortran, so they absorb that
+   truncation's bias. The force field and the electrostatics protocol are a
+   package deal, and swapping in Ewald should be *expected* to shift properties.
+2. **The Ewald arm is biased low.** Remaining suspect: the intramolecular
+   k-space subtraction in `gcpm/long`, the one piece with no CPU/GPU
+   cross-check.
+
+**Eliminated for (2):** the PPPM mesh. See section 13.
+
+**Decisive test:** run `gcpm/long` on this same N = 500 configuration with the
+identical protocol, so Ewald and RF+COM differ *only* in electrostatics -- no
+N, thermostat or estimator difference. ~2.6 h on 4 MPI ranks with the mesh of
+section 13. Deck saved as `in.ewald` in the 2026-09-17 scratchpad; it is
+`in.com` with `pair_style gcpm/long 1 0.0 8.7`, `kspace_style pppm/dipole
+1.0e-5`, `kspace_modify gewald 0.35` and no `neigh_modify exclude`.
+
+**Also eliminated 2026-09-17:** a hidden H-bond force term in the Fortran.
+`diel_cerf_hbond.f:146` defines `subroutine hbond`, but nothing calls it -- it
+only histograms H-bond geometry. `pair gcpm` is not missing a term.
+
+
+## 13. Tuning `pppm/dipole`: `g_ewald` must track `cut_coul` (2026-09-17)
+
+`kspace_modify gewald 0.30` appears in `in.gcpm.long`, `in.water_box.long` and
+`in.sp.com`, pinned there for **rc = 11.22** by the criterion in that deck's own
+comment (`g_ewald * cut_coul >= ~3.3`, giving `erfc = 1.9e-6`). Carrying it to
+rc = 8.7 gives `g*rc = 2.61` and `erfc = 3.3e-4`, 100x worse. Re-tune `gewald`
+whenever `cut_coul` changes.
+
+Measured force error, N = 500 `data.gcpm5.999`, `pair gcpm/long` rc = 8.7,
+`polar/tol 1e-10`, against a converged reference (rc = 12, gewald 0.35,
+accuracy 1e-7, grid 108^3; rms|F| = 29.85 kcal/mol/Ang):
+
+| gewald | accuracy | grid | rel. rms force error | single-point |
+|---|---|---|---|---|
+| 0.30 | 1e-6 | 50^3 | 1.07e-3 | 3.5 s |
+| 0.30 | 1e-5 | 30^3 | 1.07e-3 | 0.8 s |
+| **0.35** | **1e-5** | **36^3** | **1.2e-4** | **1.5 s** |
+| 0.35 | 1e-6 | 60^3 | 1.2e-4 | 5.5 s |
+| 0.40 | 1e-6 | 72^3 | 6.7e-5 | 9.6 s |
+
+Two lessons. (1) At fixed `gewald` the error is **flat in the accuracy target**
+-- it is real-space-truncation limited, so asking for 1e-6 buys a finer mesh and
+nothing else (60^3 vs 36^3, identical error). (2) Raising `gewald` shifts work
+into k-space and inflates the grid: 0.40 / 1e-6 needs 72^3 and ran GCPM MD at
+2.6 timesteps/s on 4 MPI ranks (~14 h for 130k steps), while 0.35 / 1e-5 needs
+36^3 and runs 14.0 timesteps/s (~2.6 h) -- **5.4x faster at 9x better accuracy
+than the inherited 0.30.**
+
+**Do not blame D on the mesh without measuring it.** 1e-3 relative force error
+sounds alarming but is far too small to explain the 33 % Ewald/RF+COM gap of
+section 12 -- for scale, the `eps_rf = 1` case that collapsed D by 10x involved
+a **25 %** force error. A `run 0` force diff against a converged reference
+settles this in seconds; do that before hypothesizing. (This entry exists
+because the hypothesis was raised first and the measurement refuted it.)
